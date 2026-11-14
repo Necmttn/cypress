@@ -20,6 +20,7 @@ Cached Theme Material Design.pak
 packages/data-context/src/**/*.js
 packages/errors/src/**/*.js
 packages/errors/test/**/*.js
+!packages/errors/test/.mocharc.js
 
 # from driver
 packages/driver/cypress/videos
@@ -44,6 +45,9 @@ packages/proxy/lib/**/*.js
 
 # npm packages
 npm/**/cypress/screenshots
+
+# from example, compiled .js files
+packages/example/lib/**/*.js
 
 # from example
 packages/example/app
@@ -280,7 +284,9 @@ typings/
 # Output of 'npm pack'
 *.tgz
 
-# Yarn Integrity file
+# Yarn files that shouldn't be checked in
+.yarnrc
+.yarn/
 .yarn-integrity
 
 # dotenv environment variables file
@@ -293,15 +299,11 @@ typings/
 # next.js build output
 .next
 
-# nuxt.js build output
-.nuxt
-
 # rollup.js default build output
 dist/
 
 # Uncomment the public line if your project uses Gatsby
 # https://nextjs.org/blog/next-9-1#public-directory-support
-# https://create-react-app.dev/docs/using-the-public-folder/#docsNav
 # public
 
 # Storybook build outputs
@@ -398,3 +400,24 @@ tooling/v8-snapshot/cache/prod-win32
 
 # Cloud API validations
 system-tests/lib/validations
+
+.nx/cache
+.nx/workspace-data
+
+# IDE files
+.cursor/*
+!.cursor/BUGBOT.md
+!.cursor/environment.json
+!.cursor/Dockerfile
+!.cursor/skills
+
+settings.local.json
+
+.claude/*
+!.claude/settings.json
+!.claude/skills
+!.claude/rules
+
+# chunk active sidecar tracking
+.chunk/sidecar.json
+.chunk/sidecar.*.json

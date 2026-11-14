@@ -1,4 +1,5 @@
 import { defineConfig } from 'cypress'
+import express from 'express'
 import webpackConfig from './webpack.config'
 import WP from '../../npm/webpack-preprocessor'
 
@@ -16,11 +17,8 @@ export default defineConfig({
   },
 
   e2e: {
-    experimentalStudio: true,
     baseUrl: 'http://localhost:5006',
     setupNodeEvents (on, config) {
-      const express = require('express')
-
       express().use(express.static('dist')).listen(5006)
 
       on('file:preprocessor', WP({

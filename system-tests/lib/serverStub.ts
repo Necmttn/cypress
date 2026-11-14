@@ -1,11 +1,12 @@
 import crypto from 'crypto'
 import _ from 'lodash'
-import Bluebird from 'bluebird'
+import { setTimeout as delay } from 'node:timers/promises'
 import bodyParser from 'body-parser'
 import Debug from 'debug'
 import type { RequestHandler } from 'express'
 
-import { getExample, assertSchema, RecordSchemaVersions } from './validations/cloudValidations'
+import type { RecordSchemaVersions } from './validations/cloudValidations'
+import { getExample, assertSchema } from './validations/cloudValidations'
 
 import * as jose from 'jose'
 import base64Url from 'base64url'
@@ -14,6 +15,8 @@ import systemTests from './system-tests'
 
 let CAPTURE_PROTOCOL_ENABLED = false
 let CAPTURE_PROTOCOL_MESSAGE: string | undefined
+let CAPTURE_PROTOCOL_UPLOAD_ENABLED = true
+let CAPTURE_PROTOCOL_INVALID_SIG = false
 
 import {
   TEST_PRIVATE,
@@ -32,7 +35,7 @@ postInstanceTestsResponse.actions = []
 export const postRunResponse = _.assign({}, postRunResponseWithWarnings, { warnings: [] })
 
 // mocked here rather than attempting to intercept and mock an s3 req
-export const CAPTURE_PROTOCOL_UPLOAD_URL = '/capture-protocol/upload/'
+export const CAPTURE_PROTOCOL_UPLOAD_URL = '/capture-protocol/upload/?x-amz-credential=1234abcd&x-amz-signature=1a2b3c-4d5e6f'
 
 let protocolStub: {
   value: string
@@ -70,7 +73,7 @@ export const postRunResponseWithProtocolDisabled = (response = postRunResponse) 
 
 type DeepPartial<T> = {
   [P in keyof T]?: DeepPartial<T[P]>;
-};
+}
 const sendUploadUrls = function (req, res) {
   const { body } = req
 
@@ -94,7 +97,11 @@ const sendUploadUrls = function (req, res) {
   json.screenshotUploadUrls = screenshotUploadUrls
 
   if (CAPTURE_PROTOCOL_ENABLED) {
-    json.captureUploadUrl = `http://localhost:1234${CAPTURE_PROTOCOL_UPLOAD_URL}`
+    if (CAPTURE_PROTOCOL_UPLOAD_ENABLED) {
+      json.captureUploadUrl = `http://localhost:1234${CAPTURE_PROTOCOL_UPLOAD_URL}`
+    } else {
+      json.captureUploadUrl = `http://fake.test/url`
+    }
   }
 
   return res.json(json)
@@ -130,6 +137,7 @@ type RouteHandler = {
   resSchema?: {
     [K in keyof RecordSchemaVersions]: [K, keyof RecordSchemaVersions[K]]
   }[keyof RecordSchemaVersions]
+  onReqBody?: (body: Record<string, unknown>) => void
   res?: RequestHandler | object
 }
 
@@ -218,11 +226,10 @@ export const routeHandlers: Record<string, RouteHandler> = {
   putScreenshots: {
     method: 'put',
     url: '/screenshots/:name',
-    res (req, res) {
-      return Bluebird.delay(300)
-      .then(() => {
-        return res.sendStatus(200)
-      })
+    async res (req, res) {
+      await delay(300)
+
+      return res.sendStatus(200)
     },
   },
   getCaptureScript: {
@@ -231,11 +238,18 @@ export const routeHandlers: Record<string, RouteHandler> = {
     res: async (req, res) => {
       if (protocolStub) {
         res.header('Content-Encoding', 'gzip')
-        res.header('x-cypress-signature', protocolStub.sign)
+        res.header('x-cypress-signature', CAPTURE_PROTOCOL_INVALID_SIG ? 'some-invalid-sig' : protocolStub.sign)
         res.status(200).send(protocolStub.compressed)
       } else {
         res.status(404).send('')
       }
+    },
+  },
+  putCaptureScript: {
+    method: 'put',
+    url: '/capture-protocol/script/*',
+    res: async (_, res) => {
+      res.status(413).send('')
     },
   },
   putCaptureProtocolUpload: {
@@ -256,7 +270,7 @@ export const routeHandlers: Record<string, RouteHandler> = {
   },
 }
 
-export const createRoutes = (props: DeepPartial<typeof routeHandlers>) => {
+export const createRoutes = (props: DeepPartial<typeof routeHandlers> = {}) => {
   return _.values(_.merge(_.cloneDeep(routeHandlers), props))
 }
 
@@ -285,7 +299,7 @@ const getResponse = function (responseSchema) {
 
   const [name, version] = responseSchema
 
-  // @ts-expect-error
+  // @ts-expect-error - the schema name and version come from an untyped tuple, which cannot satisfy the generated schema keys
   return getExample(name, version, 'res')
 }
 
@@ -324,7 +338,7 @@ const ensureSchema = function (onRequestBody, expectedRequestSchema, responseBod
 
     try {
       if (expectedRequestSchema) {
-        // @ts-expect-error
+        // @ts-expect-error - the schema name and version come from an untyped tuple, which cannot satisfy the generated schema keys
         assertSchema(reqName, reqVersion, 'req')(body)
       }
 
@@ -339,7 +353,6 @@ const ensureSchema = function (onRequestBody, expectedRequestSchema, responseBod
         body,
       })
     } catch (err) {
-      // eslint-disable-next-line no-console
       console.log('Schema Error:', err.message)
       debug(err)
 
@@ -375,7 +388,6 @@ const assertResponseBodySchema = function (req, res, next) {
       try {
         assertSchema(resName, resVersion, 'res')(body)
       } catch (err) {
-        // eslint-disable-next-line no-console
         console.log('Schema Error:', err.message)
 
         return res.status(412).json(err)
@@ -430,6 +442,7 @@ const onServer = (routes) => {
   })
 }
 
+/* eslint-disable mocha/no-sibling-hooks -- each helper registers its hooks in the suite that calls it, so they are never siblings */
 export const enableCaptureProtocol = (stub = PROTOCOL_STUB_VALID) => {
   beforeEach(() => {
     protocolStub = stub
@@ -454,6 +467,27 @@ export const disableCaptureProtocolWithMessage = (message: string) => {
     CAPTURE_PROTOCOL_MESSAGE = undefined
   })
 }
+
+export const enableInvalidProtocolSignature = () => {
+  beforeEach(() => {
+    CAPTURE_PROTOCOL_INVALID_SIG = true
+  })
+
+  afterEach(() => {
+    CAPTURE_PROTOCOL_INVALID_SIG = false
+  })
+}
+
+export const disableCaptureProtocolUploadUrl = () => {
+  beforeEach(() => {
+    CAPTURE_PROTOCOL_UPLOAD_ENABLED = false
+  })
+
+  afterEach(() => {
+    CAPTURE_PROTOCOL_ENABLED = true
+  })
+}
+/* eslint-enable mocha/no-sibling-hooks */
 
 export const setupStubbedServer = (routes) => {
   systemTests.setup({

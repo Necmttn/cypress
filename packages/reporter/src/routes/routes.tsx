@@ -2,14 +2,13 @@ import cs from 'classnames'
 import _ from 'lodash'
 import { observer } from 'mobx-react'
 import React from 'react'
-// @ts-ignore
-import Tooltip from '@cypress/react-tooltip'
+import Tooltip from '../lib/tooltip'
 
 import Collapsible from '../collapsible/collapsible'
 import Tag from '../lib/tag'
-import RouteModel from './route-model'
+import type RouteModel from './route-model'
 
-export interface RouteProps {
+interface RouteProps {
   model: RouteModel
 }
 
@@ -23,32 +22,36 @@ const Route = observer(({ model }: RouteProps) => (
         tooltipMessage={`Aliased this route as: '${model.alias}'`}
         type='route'
         customClassName='route-alias-name'
-        content={model.alias}
+        // a route's alias is always the string passed to cy.intercept, never
+        // one of the object/array shapes the shared Alias type also allows
+        content={model.alias as string}
       />
     </td>
     <td className='route-num-responses'>{model.numResponses || '-'}</td>
   </tr>
 ))
 
-export interface RouteListModel {
+interface RouteListModel {
   routes: Array<RouteModel>
 }
 
-export interface RouteListProps {
+interface RouteListProps {
   model: RouteListModel
 }
 
-const RoutesList = observer(({ model }: RouteListProps) => (
+const RoutesList: React.FC<RouteListProps> = observer(({ model }: RouteListProps) => (
   <tbody>
     {_.map(model.routes, (route) => <Route key={route.id} model={route} />)}
   </tbody>
 ))
 
-export interface RoutesProps {
+RoutesList.displayName = 'RoutesList'
+
+interface RoutesProps {
   model: RouteListModel
 }
 
-const Routes = observer(({ model }: RoutesProps) => {
+const Routes: React.FC<RoutesProps> = observer(({ model }: RoutesProps) => {
   if (!model.routes.length) {
     return null
   }
@@ -91,6 +94,6 @@ const Routes = observer(({ model }: RoutesProps) => {
   )
 })
 
-export { Route, RoutesList }
+Routes.displayName = 'Routes'
 
 export default Routes

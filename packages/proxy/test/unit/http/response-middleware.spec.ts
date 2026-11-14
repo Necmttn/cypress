@@ -1,23 +1,59 @@
+import type { Mock, MockInstance } from 'vitest'
+import { describe, expect, beforeEach, afterEach, it, vi } from 'vitest'
 import _ from 'lodash'
+import zlib from 'zlib'
+import http from 'http'
+import { Socket } from 'net'
 import ResponseMiddleware from '../../../lib/http/response-middleware'
 import { debugVerbose } from '../../../lib/http'
-import { expect } from 'chai'
-import sinon from 'sinon'
+import EventEmitter from 'events'
 import { testMiddleware } from './helpers'
-import { RemoteStates } from '@packages/server/lib/remote_states'
+import { RemoteStates, DocumentDomainInjection } from '@packages/network-tools'
 import { Readable } from 'stream'
 import * as rewriter from '../../../lib/http/util/rewriter'
 import { nonceDirectives, problematicCspDirectives, unsupportedCSPDirectives } from '../../../lib/http/util/csp-header'
+import * as serviceWorkerInjector from '../../../lib/http/util/service-worker-injector'
+import { DISABLE_NAVIGATION_PRELOAD_EXPRESSION } from '../../../lib/http/util/disable-navigation-preload'
+
+async function flushPromises () {
+  return new Promise((resolve) => setTimeout(resolve, 0))
+}
+
+async function streamToString (stream: NodeJS.ReadableStream): Promise<string> {
+  const chunks: Buffer[] = []
+
+  for await (const chunk of stream) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+  }
+
+  return Buffer.concat(chunks).toString('utf8')
+}
 
 describe('http/response-middleware', function () {
+  const serverPort = 3030
+  const fileServerPort = 3030
+
+  const remoteStateConfig = () => {
+    return { server: serverPort, fileServer: fileServerPort }
+  }
+
+  let remoteStates: RemoteStates
+  let documentDomainInjection: DocumentDomainInjection
+
+  beforeEach(() => {
+    documentDomainInjection = DocumentDomainInjection.InjectionBehavior({ injectDocumentDomain: false, testingType: 'e2e' })
+    remoteStates = new RemoteStates(remoteStateConfig, documentDomainInjection)
+  })
+
   it('exports the members in the correct order', function () {
-    expect(_.keys(ResponseMiddleware)).to.have.ordered.members([
+    expect(_.keys(ResponseMiddleware)).toEqual([
       'LogResponse',
       'FilterNonProxiedResponse',
       'AttachPlainTextStreamFn',
       'InterceptResponse',
       'PatchExpressSetHeader',
       'OmitProblematicHeaders',
+      'MaybeSetOriginAgentClusterHeader',
       'SetInjectionLevel',
       'MaybePreventCaching',
       'MaybeStripDocumentDomainFeaturePolicy',
@@ -28,57 +64,126 @@ describe('http/response-middleware', function () {
       'MaybeEndWithEmptyBody',
       'MaybeInjectHtml',
       'MaybeRemoveSecurity',
-      'GzipBody',
+      'MaybeInjectServiceWorker',
+      'NotifyResponseStreamReceived',
+      'CompressBody',
       'SendResponseBodyToClient',
     ])
   })
 
+  describe('ClearCyInitialCookie', function () {
+    const { ClearCyInitialCookie } = ResponseMiddleware
+
+    function prepareContext (resProps = {}) {
+      const cookie = vi.fn()
+
+      const ctx = {
+        req: { proxiedUrl: 'https://localhost:3502/fixtures/primary-origin.html', cookies: {} },
+        res: {
+          cookie,
+          wantsInjection: 'full',
+          isInitial: false,
+          on: () => {},
+          off: () => {},
+          ...resProps,
+        },
+        remoteStates: {
+          current: () => ({ domainName: 'localhost' }),
+        },
+      }
+
+      return { ctx, cookie }
+    }
+
+    it('expires the __cypress.unload cookie when serving an injected document, even if not the initial request', async function () {
+      const { ctx, cookie } = prepareContext({ wantsInjection: 'full', isInitial: false })
+
+      await testMiddleware([ClearCyInitialCookie], ctx)
+
+      expect(cookie).toHaveBeenCalledWith('__cypress.unload', '', { domain: 'localhost', expires: new Date(0) })
+    })
+
+    it('does not modify the __cypress.unload cookie when nothing is being injected', async function () {
+      const { ctx, cookie } = prepareContext({ wantsInjection: false, isInitial: false })
+
+      await testMiddleware([ClearCyInitialCookie], ctx)
+
+      expect(cookie).not.toHaveBeenCalledWith('__cypress.unload', '', expect.anything())
+    })
+
+    // https://github.com/cypress-io/cypress/issues/34143
+    it('omits the domain attribute for IPv6 literal hosts so the cookie serializer does not throw', async function () {
+      const { ctx, cookie } = prepareContext({ wantsInjection: 'full', isInitial: false })
+
+      ctx.remoteStates.current = () => ({ domainName: '[::1]' })
+
+      await testMiddleware([ClearCyInitialCookie], ctx)
+
+      // host-only cookie: no `domain` option, so express/cookie does not reject it
+      expect(cookie).toHaveBeenCalledWith('__cypress.unload', '', { expires: new Date(0) })
+    })
+
+    it('keeps the domain attribute for IPv4 literal hosts', async function () {
+      const { ctx, cookie } = prepareContext({ wantsInjection: 'full', isInitial: false })
+
+      ctx.remoteStates.current = () => ({ domainName: '127.0.0.1' })
+
+      await testMiddleware([ClearCyInitialCookie], ctx)
+
+      expect(cookie).toHaveBeenCalledWith('__cypress.unload', '', { domain: '127.0.0.1', expires: new Date(0) })
+    })
+  })
+
   describe('multiple this.next invocations', () => {
-    context('within the same middleware', () => {
-      it('throws an error', function (done) {
+    describe('within the same middleware', () => {
+      it('throws an error', function () {
         const middleware = function () {
           this.next()
           this.next()
         }
 
-        testMiddleware([middleware], {
-          res: {
-            on: (event, listener) => {},
-            off: (event, listener) => {},
-          },
-          onError (err) {
-            expect(err.message).to.equal('Internal error while proxying "undefined undefined" in 0:\nError running proxy middleware: Detected `this.next()` was called more than once in the same middleware function, but a middleware can only be completed once.')
+        return new Promise<void>((resolve) => {
+          testMiddleware([middleware], {
+            res: {
+              on: (event, listener) => {},
+              off: (event, listener) => {},
+            },
+            onError (err) {
+              expect(err.message).toEqual('Internal error while proxying "undefined undefined" in 0:\nError running proxy middleware: Detected `this.next()` was called more than once in the same middleware function, but a middleware can only be completed once.')
 
-            done()
-          },
+              resolve()
+            },
+          })
         })
       })
 
-      it('includes a previous context error in error message if one exists', (done) => {
+      it('includes a previous context error in error message if one exists', () => {
         const middleware = function () {
           this.next()
           this.next()
         }
         const error = new Error('previous error')
 
-        testMiddleware([middleware], {
-          error,
-          res: {
-            on: (event, listener) => {},
-            off: (event, listener) => {},
-          },
-          onError (err) {
-            expect(err.message).to.contain('This middleware invocation previously encountered an error which may be related, see `error.cause`')
-            expect(err['cause']).to.equal(error)
-            done()
-          },
-          method: 'GET',
-          proxiedUrl: 'url',
+        return new Promise<void>((resolve) => {
+          testMiddleware([middleware], {
+            error,
+            res: {
+              on: (event, listener) => {},
+              off: (event, listener) => {},
+            },
+            onError (err) {
+              expect(err.message).toContain('This middleware invocation previously encountered an error which may be related, see `error.cause`')
+              expect(err['cause']).toEqual(error)
+              resolve()
+            },
+            method: 'GET',
+            proxiedUrl: 'url',
+          })
         })
       })
     })
 
-    context('across different middleware', () => {
+    describe('across different middleware', () => {
       it('does not throw an error', function () {
         const middleware1 = function () {
           this.next()
@@ -108,42 +213,51 @@ describe('http/response-middleware', function () {
     beforeEach(() => {
       headers = { 'header-name': 'header-value' }
       ctx = {
-        onlyRunMiddleware: sinon.stub(),
         incomingRes: { headers },
         req: {},
         res: {
-          set: sinon.stub(),
+          set: vi.fn(),
           off: (event, listener) => {},
         },
       }
     })
 
-    it('sets headers on response and runs minimal subsequent middleware if request is from an extra target', () => {
+    it('sets headers on response and runs minimal subsequent middleware if request is from an extra target', async () => {
       ctx.req.isFromExtraTarget = true
+      let allowedMiddlewareRan = false
+      let skippedMiddlewareRan = false
 
-      return testMiddleware([FilterNonProxiedResponse], ctx)
-      .then(() => {
-        expect(ctx.res.set).to.be.calledWith(headers)
+      await testMiddleware({
+        FilterNonProxiedResponse,
+        AttachPlainTextStreamFn () {
+          allowedMiddlewareRan = true
+          this.next()
+        },
+        OmitProblematicHeaders () {
+          skippedMiddlewareRan = true
+          this.next()
+        },
+      }, ctx)
 
-        expect(ctx.onlyRunMiddleware).to.be.calledWith([
-          'AttachPlainTextStreamFn',
-          'PatchExpressSetHeader',
-          'MaybeSendRedirectToClient',
-          'CopyResponseStatusCode',
-          'MaybeEndWithEmptyBody',
-          'GzipBody',
-          'SendResponseBodyToClient',
-        ])
-      })
+      expect(ctx.res.set).toHaveBeenCalledWith(headers)
+
+      expect(allowedMiddlewareRan).toBe(true)
+      expect(skippedMiddlewareRan).toBe(false)
     })
 
-    it('runs all subsequent middleware if request is not from an extra target', () => {
+    it('runs all subsequent middleware if request is not from an extra target', async () => {
       ctx.req.isFromMainTarget = false
+      let subsequentMiddlewareRan = false
 
-      return testMiddleware([FilterNonProxiedResponse], ctx)
-      .then(() => {
-        expect(ctx.onlyRunMiddleware).not.to.be.called
-      })
+      await testMiddleware({
+        FilterNonProxiedResponse,
+        OmitProblematicHeaders () {
+          subsequentMiddlewareRan = true
+          this.next()
+        },
+      }, ctx)
+
+      expect(subsequentMiddlewareRan).toBe(true)
     })
   })
 
@@ -166,11 +280,9 @@ describe('http/response-middleware', function () {
         prepareContext()
       })
 
-      it(`doesn't do anything`, function () {
-        return testMiddleware([MaybeStripDocumentDomainFeaturePolicy], ctx)
-        .then(() => {
-          expect(ctx.res.set).not.to.be.called
-        })
+      it(`doesn't do anything`, async () => {
+        await testMiddleware([MaybeStripDocumentDomainFeaturePolicy], ctx)
+        expect(ctx.res.set).not.toHaveBeenCalled()
       })
     })
 
@@ -180,11 +292,9 @@ describe('http/response-middleware', function () {
         prepareContext()
       })
 
-      it(`doesn't do anything`, function () {
-        return testMiddleware([MaybeStripDocumentDomainFeaturePolicy], ctx)
-        .then(() => {
-          expect(ctx.res.set).not.to.be.called
-        })
+      it(`doesn't do anything`, async () => {
+        await testMiddleware([MaybeStripDocumentDomainFeaturePolicy], ctx)
+        expect(ctx.res.set).not.toHaveBeenCalled()
       })
     })
 
@@ -194,16 +304,14 @@ describe('http/response-middleware', function () {
           prepareContext()
         })
 
-        it('removes the document-domain directive from the header and keeps the rest', function () {
-          return testMiddleware([MaybeStripDocumentDomainFeaturePolicy], ctx)
-          .then(() => {
-            const [, featurePolicy] = ctx.res.set.args[0]
-            const directives = _.fromPairs(featurePolicy.split('; ').map((directive) => directive.split(' ')))
+        it('removes the document-domain directive from the header and keeps the rest', async () => {
+          await testMiddleware([MaybeStripDocumentDomainFeaturePolicy], ctx)
+          const [, featurePolicy] = ctx.res.set.mock.calls[0]
+          const directives = _.fromPairs(featurePolicy.split('; ').map((directive) => directive.split(' ')))
 
-            expect(directives['document-domain']).not.to.exist
-            expect(directives['autoplay']).to.exist
-            expect(directives['camera']).to.exist
-          })
+          expect(directives['document-domain']).toBeUndefined()
+          expect(directives['autoplay']).toBeDefined()
+          expect(directives['camera']).toBeDefined()
         })
       })
 
@@ -213,11 +321,9 @@ describe('http/response-middleware', function () {
           prepareContext()
         })
 
-        it('removes the whole header', function () {
-          return testMiddleware([MaybeStripDocumentDomainFeaturePolicy], ctx)
-          .then(() => {
-            expect(ctx.res.removeHeader).to.be.calledWith('feature-policy')
-          })
+        it('removes the whole header', async () => {
+          await testMiddleware([MaybeStripDocumentDomainFeaturePolicy], ctx)
+          expect(ctx.res.removeHeader).toHaveBeenCalledWith('feature-policy')
         })
       })
     })
@@ -237,8 +343,8 @@ describe('http/response-middleware', function () {
       ctx = {
         res: {
           getHeaders: () => headers,
-          set: sinon.stub(),
-          removeHeader: sinon.stub(),
+          set: vi.fn(),
+          removeHeader: vi.fn(),
           on: (event, listener) => {},
           off: (event, listener) => {},
         },
@@ -260,16 +366,56 @@ describe('http/response-middleware', function () {
       'transfer-encoding',
       'connection',
     ].forEach((prop) => {
-      it(`always removes "${prop}" from incoming headers`, function () {
+      it(`always removes "${prop}" from incoming headers`, async function () {
         prepareContext({ [prop]: 'foo' })
 
-        return testMiddleware([OmitProblematicHeaders], ctx)
-        .then(() => {
-          expect(ctx.res.set).to.be.calledWith(sinon.match(function (actual) {
-            return actual[prop] === undefined
-          }))
-        })
+        await testMiddleware([OmitProblematicHeaders], ctx)
+        expect(ctx.res.set).toHaveBeenCalledWith(expect.not.objectContaining({ [prop]: expect.anything() }))
       })
+    })
+
+    it('records incomingResHadEmptyBody=true when origin sent Content-Length: 0', async function () {
+      prepareContext({ 'content-length': '0' })
+
+      await testMiddleware([OmitProblematicHeaders], ctx)
+      expect(ctx.incomingResHadEmptyBody).toBe(true)
+    })
+
+    it('records incomingResHadEmptyBody=false when Content-Length is non-zero', async function () {
+      prepareContext({ 'content-length': '42' })
+
+      await testMiddleware([OmitProblematicHeaders], ctx)
+      expect(ctx.incomingResHadEmptyBody).toBe(false)
+    })
+
+    it('records incomingResHadEmptyBody=false when Content-Length is absent', async function () {
+      prepareContext()
+      delete ctx.incomingRes.headers['content-length']
+
+      await testMiddleware([OmitProblematicHeaders], ctx)
+      expect(ctx.incomingResHadEmptyBody).toBe(false)
+    })
+
+    const badHeaders = {
+      'bad-header ': 'value', //(contains trailling space)
+      'Content Type': 'value', //(contains a space)
+      'User-Agent:': 'value', //(contains a colon)
+      'Accept-Encoding;': 'value', //(contains a semicolon)
+      '@Origin': 'value', //(contains an at symbol)
+      'Authorization?': 'value', //(contains a question mark)
+      'X-My-Header/Version': 'value', //(contains a slash)
+      'Referer[1]': 'value', //(contains square brackets)
+      'If-None-Match{1}': 'value', //(contains curly braces)
+      'X-Forwarded-For<1>': 'value', //(contains angle brackets)
+    }
+
+    it('removes invalid headers and leaves valid headers', async function () {
+      prepareContext({ ...badHeaders, 'good-header': 'value' })
+
+      await testMiddleware([OmitProblematicHeaders], ctx)
+      expect(ctx.res.set).toHaveBeenCalledOnce()
+      expect(ctx.res.set).toHaveBeenCalledWith(expect.not.objectContaining({ ...badHeaders }))
+      expect(ctx.res.set).toHaveBeenCalledWith(expect.objectContaining({ 'good-header': 'value' }))
     })
 
     const validCspHeaderNames = [
@@ -281,133 +427,117 @@ describe('http/response-middleware', function () {
 
     unsupportedCSPDirectives.forEach((directive) => {
       validCspHeaderNames.forEach((headerName) => {
-        it(`always removes "${directive}" directive from "${headerName}" headers 'when experimentalCspAllowList is true`, () => {
+        it(`always removes "${directive}" directive from "${headerName}" headers 'when experimentalCspAllowList is true`, async () => {
           prepareContext({
             [`${headerName}`]: `${directive} 'fake-csp-${directive}-value'; fake-csp-directive fake-csp-value`,
           }, {
             experimentalCspAllowList: true,
           })
 
-          return testMiddleware([OmitProblematicHeaders], ctx)
-          .then(() => {
-            expect(ctx.res.setHeader).to.be.calledWith(headerName.toLowerCase(), [
-              'fake-csp-directive fake-csp-value',
-            ])
-          })
+          await testMiddleware([OmitProblematicHeaders], ctx)
+          expect(ctx.res.setHeader).toHaveBeenCalledWith(headerName.toLowerCase(), [
+            'fake-csp-directive fake-csp-value',
+          ])
         })
 
-        it(`always removes "${directive}" from "${headerName}" headers when experimentalCspAllowList is an empty array`, () => {
+        it(`always removes "${directive}" from "${headerName}" headers when experimentalCspAllowList is an empty array`, async () => {
           prepareContext({
             [`${headerName}`]: `${directive} 'fake-csp-${directive}-value'; fake-csp-directive fake-csp-value`,
           }, {
             experimentalCspAllowList: [],
           })
 
-          return testMiddleware([OmitProblematicHeaders], ctx)
-          .then(() => {
-            expect(ctx.res.setHeader).to.be.calledWith(headerName.toLowerCase(), [
-              'fake-csp-directive fake-csp-value',
-            ])
-          })
+          await testMiddleware([OmitProblematicHeaders], ctx)
+          expect(ctx.res.setHeader).toHaveBeenCalledWith(headerName.toLowerCase(), [
+            'fake-csp-directive fake-csp-value',
+          ])
         })
 
-        it(`always removes "${directive}" from "${headerName}" headers when experimentalCspAllowList is an array including "${directive}"`, () => {
+        it(`always removes "${directive}" from "${headerName}" headers when experimentalCspAllowList is an array including "${directive}"`, async () => {
           prepareContext({
             [`${headerName}`]: `${directive} 'fake-csp-${directive}-value'; fake-csp-directive fake-csp-value`,
           }, {
             experimentalCspAllowList: [`${directive}`],
           })
 
-          return testMiddleware([OmitProblematicHeaders], ctx)
-          .then(() => {
-            expect(ctx.res.setHeader).to.be.calledWith(headerName.toLowerCase(), [
-              'fake-csp-directive fake-csp-value',
-            ])
-          })
-        })
-      })
-    })
-
-    validCspHeaderNames.forEach((headerName) => {
-      it(`removes "${headerName}" headers when experimentalCspAllowList is false`, () => {
-        prepareContext({
-          [`${headerName}`]: `fake-csp-directive fake-csp-value`,
-        }, {
-          experimentalCspAllowList: false,
-        })
-
-        return testMiddleware([OmitProblematicHeaders], ctx)
-        .then(() => {
-          expect(ctx.res.removeHeader).to.be.calledWith(headerName.toLowerCase())
-        })
-      })
-    })
-
-    validCspHeaderNames.forEach((headerName) => {
-      it(`will not remove invalid problematicCspDirectives directives provided from "${headerName}" headers when experimentalCspAllowList is an array of directives`, () => {
-        prepareContext({
-          [`${headerName}`]: `fake-csp-directive-0 fake-csp-value-0; fake-csp-directive-1 fake-csp-value-1; fake-csp-directive-2 fake-csp-value-2`,
-        }, {
-          experimentalCspAllowList: ['fake-csp-directive-1'],
-        })
-
-        return testMiddleware([OmitProblematicHeaders], ctx)
-        .then(() => {
-          expect(ctx.res.setHeader).to.be.calledWith(headerName.toLowerCase(), [
-            'fake-csp-directive-0 fake-csp-value-0; fake-csp-directive-1 fake-csp-value-1; fake-csp-directive-2 fake-csp-value-2',
+          await testMiddleware([OmitProblematicHeaders], ctx)
+          expect(ctx.res.setHeader).toHaveBeenCalledWith(headerName.toLowerCase(), [
+            'fake-csp-directive fake-csp-value',
           ])
         })
       })
     })
 
     validCspHeaderNames.forEach((headerName) => {
+      it(`removes "${headerName}" headers when experimentalCspAllowList is false`, async () => {
+        prepareContext({
+          [`${headerName}`]: `fake-csp-directive fake-csp-value`,
+        }, {
+          experimentalCspAllowList: false,
+        })
+
+        await testMiddleware([OmitProblematicHeaders], ctx)
+        expect(ctx.res.removeHeader).toHaveBeenCalledWith(headerName.toLowerCase())
+      })
+    })
+
+    validCspHeaderNames.forEach((headerName) => {
+      it(`will not remove invalid problematicCspDirectives directives provided from "${headerName}" headers when experimentalCspAllowList is an array of directives`, async () => {
+        prepareContext({
+          [`${headerName}`]: `fake-csp-directive-0 fake-csp-value-0; fake-csp-directive-1 fake-csp-value-1; fake-csp-directive-2 fake-csp-value-2`,
+        }, {
+          experimentalCspAllowList: ['fake-csp-directive-1'],
+        })
+
+        await testMiddleware([OmitProblematicHeaders], ctx)
+        expect(ctx.res.setHeader).toHaveBeenCalledWith(headerName.toLowerCase(), [
+          'fake-csp-directive-0 fake-csp-value-0; fake-csp-directive-1 fake-csp-value-1; fake-csp-directive-2 fake-csp-value-2',
+        ])
+      })
+    })
+
+    validCspHeaderNames.forEach((headerName) => {
       problematicCspDirectives.forEach((directive) => {
-        it(`will allow problematicCspDirectives provided from "${headerName}" headers when experimentalCspAllowList is an array including "${directive}"`, () => {
+        it(`will allow problematicCspDirectives provided from "${headerName}" headers when experimentalCspAllowList is an array including "${directive}"`, async () => {
           prepareContext({
             [`${headerName}`]: `fake-csp-directive fake-csp-value; ${directive} fake-csp-${directive}-value`,
           }, {
             experimentalCspAllowList: [directive],
           })
 
-          return testMiddleware([OmitProblematicHeaders], ctx)
-          .then(() => {
-            expect(ctx.res.setHeader).to.be.calledWith(headerName.toLowerCase(), [
-              `fake-csp-directive fake-csp-value; ${directive} fake-csp-${directive}-value`,
-            ])
-          })
+          await testMiddleware([OmitProblematicHeaders], ctx)
+          expect(ctx.res.setHeader).toHaveBeenCalledWith(headerName.toLowerCase(), [
+            `fake-csp-directive fake-csp-value; ${directive} fake-csp-${directive}-value`,
+          ])
         })
 
         problematicCspDirectives.forEach((otherDirective) => {
           if (directive === otherDirective) return
 
-          it(`will still remove other problematicCspDirectives provided from "${headerName}" headers when experimentalCspAllowList is an array including singe directives "${directive}"`, () => {
+          it(`will still remove other problematicCspDirectives provided from "${headerName}" headers when experimentalCspAllowList is an array including singe directives "${directive}"`, async () => {
             prepareContext({
               [`${headerName}`]: `${directive} fake-csp-${directive}-value; fake-csp-directive fake-csp-value; ${otherDirective} fake-csp-${otherDirective}-value`,
             }, {
               experimentalCspAllowList: [directive],
             })
 
-            return testMiddleware([OmitProblematicHeaders], ctx)
-            .then(() => {
-              expect(ctx.res.setHeader).to.be.calledWith(headerName.toLowerCase(), [
+            await testMiddleware([OmitProblematicHeaders], ctx)
+            expect(ctx.res.setHeader).toHaveBeenCalledWith(headerName.toLowerCase(), [
                 `${directive} fake-csp-${directive}-value; fake-csp-directive fake-csp-value`,
-              ])
-            })
+            ])
           })
 
-          it(`will allow both problematicCspDirectives provided from "${headerName}" headers when experimentalCspAllowList is an array including multiple directives ["${directive}","${otherDirective}"]`, () => {
+          it(`will allow both problematicCspDirectives provided from "${headerName}" headers when experimentalCspAllowList is an array including multiple directives ["${directive}","${otherDirective}"]`, async () => {
             prepareContext({
               [`${headerName}`]: `${directive} fake-csp-${directive}-value; fake-csp-directive fake-csp-value; ${otherDirective} fake-csp-${otherDirective}-value`,
             }, {
               experimentalCspAllowList: [directive, otherDirective],
             })
 
-            return testMiddleware([OmitProblematicHeaders], ctx)
-            .then(() => {
-              expect(ctx.res.setHeader).to.be.calledWith(headerName.toLowerCase(), [
+            await testMiddleware([OmitProblematicHeaders], ctx)
+            expect(ctx.res.setHeader).toHaveBeenCalledWith(headerName.toLowerCase(), [
                 `${directive} fake-csp-${directive}-value; fake-csp-directive fake-csp-value; ${otherDirective} fake-csp-${otherDirective}-value`,
-              ])
-            })
+            ])
           })
         })
       })
@@ -436,21 +566,90 @@ describe('http/response-middleware', function () {
           },
         },
         res: {
-          removeHeader: sinon.stub(),
-          set: sinon.stub(),
-          setHeader: sinon.stub(),
+          removeHeader: vi.fn(),
+          set: vi.fn(),
+          setHeader: vi.fn(),
+          on: (event, listener) => {},
+          off: (event, listener) => {},
+          getHeaderNames: () => Object.keys(ctx.incomingRes.headers),
+        },
+      }
+    }
+  })
+
+  describe('PatchExpressSetHeader', function () {
+    const { PatchExpressSetHeader } = ResponseMiddleware
+    let ctx
+
+    beforeEach(async function () {
+      ctx = {
+        incomingRes: {
+          headers: {},
+        },
+        res: new http.ServerResponse(new http.IncomingMessage(new Socket())),
+      }
+
+      await testMiddleware([PatchExpressSetHeader], ctx)
+    })
+
+    it('returns the response when the header is valid', function () {
+      expect(ctx.res.setHeader('x-valid', 'value')).toBe(ctx.res)
+      expect(ctx.res.getHeader('x-valid')).toBe('value')
+    })
+
+    it('sets the header and returns the response when the value has an invalid character', function () {
+      expect(ctx.res.setHeader('x-invalid', 'a\u0000b')).toBe(ctx.res)
+      expect(ctx.res.getHeader('x-invalid')).toBe('a\u0000b')
+    })
+  })
+
+  describe('MaybeSetOriginAgentClusterHeader', function () {
+    const { MaybeSetOriginAgentClusterHeader } = ResponseMiddleware
+    let ctx
+
+    beforeEach(function () {
+      vi.unstubAllEnvs()
+      ctx = {
+        req: {
+          proxiedUrl: 'http://localhost:4455',
+        },
+        res: {
+          setHeader: vi.fn(),
           on: (event, listener) => {},
           off: (event, listener) => {},
         },
       }
-    }
+    })
+
+    it('doesn\'t set the Origin-Agent-Cluster for the request if cypress-in-cypress testing is off', async function () {
+      vi.stubEnv('CYPRESS_INTERNAL_E2E_TESTING_SELF_PARENT_PROJECT', undefined)
+
+      await testMiddleware([MaybeSetOriginAgentClusterHeader], ctx)
+      expect(ctx.res.setHeader).not.toHaveBeenCalled()
+    })
+
+    it('doesn\'t set the Origin-Agent-Cluster for the request if cypress-in-cypress testing is on but url does NOT match http proxy', async function () {
+      vi.stubEnv('CYPRESS_INTERNAL_E2E_TESTING_SELF_PARENT_PROJECT', '1')
+      vi.stubEnv('HTTP_PROXY_TARGET_FOR_ORIGIN_REQUESTS', 'http://localhost:4456')
+
+      await testMiddleware([MaybeSetOriginAgentClusterHeader], ctx)
+      expect(ctx.res.setHeader).not.toHaveBeenCalled()
+    })
+
+    it('sets the Origin-Agent-Cluster for the request if cypress-in-cypress testing is on and url matches http proxy', async function () {
+      vi.stubEnv('CYPRESS_INTERNAL_E2E_TESTING_SELF_PARENT_PROJECT', '1')
+      vi.stubEnv('HTTP_PROXY_TARGET_FOR_ORIGIN_REQUESTS', 'http://localhost:4455')
+
+      await testMiddleware([MaybeSetOriginAgentClusterHeader], ctx)
+      expect(ctx.res.setHeader).toHaveBeenCalledWith('Origin-Agent-Cluster', '?0')
+    })
   })
 
   describe('SetInjectionLevel', function () {
     const { SetInjectionLevel } = ResponseMiddleware
     let ctx
 
-    it('doesn\'t inject anything when not html', function () {
+    it('doesn\'t inject anything when not html', async function () {
       prepareContext({
         req: {
           cookies: {},
@@ -458,13 +657,11 @@ describe('http/response-middleware', function () {
         },
       })
 
-      return testMiddleware([SetInjectionLevel], ctx)
-      .then(() => {
-        expect(ctx.res.wantsInjection).to.be.false
-      })
+      await testMiddleware([SetInjectionLevel], ctx)
+      expect(ctx.res.wantsInjection).toBe(false)
     })
 
-    it('doesn\'t inject anything when not rendered html', function () {
+    it('doesn\'t inject anything when not rendered html', async function () {
       prepareContext({
         renderedHTMLOrigins: {},
         getRenderedHTMLOrigins () {
@@ -481,13 +678,11 @@ describe('http/response-middleware', function () {
         },
       })
 
-      return testMiddleware([SetInjectionLevel], ctx)
-      .then(() => {
-        expect(ctx.res.wantsInjection).to.be.false
-      })
+      await testMiddleware([SetInjectionLevel], ctx)
+      expect(ctx.res.wantsInjection).toBe(false)
     })
 
-    it('doesn\'t inject anything when not AUT frame', function () {
+    it('doesn\'t inject anything when not AUT frame', async function () {
       prepareContext({
         req: {
           cookies: {},
@@ -500,13 +695,11 @@ describe('http/response-middleware', function () {
         },
       })
 
-      return testMiddleware([SetInjectionLevel], ctx)
-      .then(() => {
-        expect(ctx.res.wantsInjection).to.be.false
-      })
+      await testMiddleware([SetInjectionLevel], ctx)
+      expect(ctx.res.wantsInjection).toBe(false)
     })
 
-    it('injects "fullCrossOrigin" when request is cross-origin html', function () {
+    it('injects "fullCrossOrigin" when request is cross-origin html', async function () {
       prepareContext({
         req: {
           proxiedUrl: 'http://example.com',
@@ -521,13 +714,11 @@ describe('http/response-middleware', function () {
         },
       })
 
-      return testMiddleware([SetInjectionLevel], ctx)
-      .then(() => {
-        expect(ctx.res.wantsInjection).to.equal('fullCrossOrigin')
-      })
+      await testMiddleware([SetInjectionLevel], ctx)
+      expect(ctx.res.wantsInjection).toEqual('fullCrossOrigin')
     })
 
-    it('performs full injection on initial AUT html origin', function () {
+    it('performs full injection on initial AUT html origin', async function () {
       prepareContext({
         req: {
           isAUTFrame: true,
@@ -543,13 +734,11 @@ describe('http/response-middleware', function () {
         },
       })
 
-      return testMiddleware([SetInjectionLevel], ctx)
-      .then(() => {
-        expect(ctx.res.wantsInjection).to.equal('full')
-      })
+      await testMiddleware([SetInjectionLevel], ctx)
+      expect(ctx.res.wantsInjection).toEqual('full')
     })
 
-    it('otherwise, partial injection is set', function () {
+    it('otherwise, partial injection is set', async function () {
       prepareContext({
         renderedHTMLOrigins: {},
         getRenderedHTMLOrigins () {
@@ -573,13 +762,11 @@ describe('http/response-middleware', function () {
         },
       })
 
-      return testMiddleware([SetInjectionLevel], ctx)
-      .then(() => {
-        expect(ctx.res.wantsInjection).to.equal('partial')
-      })
+      await testMiddleware([SetInjectionLevel], ctx)
+      expect(ctx.res.wantsInjection).toEqual('partial')
     })
 
-    it('injects partial when request is for top-level origin', function () {
+    it('injects partial when request is for top-level origin', async function () {
       prepareContext({
         renderedHTMLOrigins: {},
         getRenderedHTMLOrigins () {
@@ -603,22 +790,18 @@ describe('http/response-middleware', function () {
         },
       })
 
-      return testMiddleware([SetInjectionLevel], ctx)
-      .then(() => {
-        expect(ctx.res.wantsInjection).to.equal('partial')
-      })
+      await testMiddleware([SetInjectionLevel], ctx)
+      expect(ctx.res.wantsInjection).toEqual('partial')
     })
 
-    it('does not set Origin-Agent-Cluster header to false when injection is not expected', function () {
+    it('does not set Origin-Agent-Cluster header to false when injection is not expected', async function () {
       prepareContext({})
 
-      return testMiddleware([SetInjectionLevel], ctx)
-      .then(() => {
-        expect(ctx.res.setHeader).not.to.be.calledWith('Origin-Agent-Cluster', '?0')
-      })
+      await testMiddleware([SetInjectionLevel], ctx)
+      expect(ctx.res.setHeader).not.toHaveBeenCalledWith('Origin-Agent-Cluster', '?0')
     })
 
-    it('sets Origin-Agent-Cluster header to false when injection is expected', function () {
+    it('sets Origin-Agent-Cluster header to false when injection is expected', async function () {
       prepareContext({
         incomingRes: {
           headers: {
@@ -628,10 +811,8 @@ describe('http/response-middleware', function () {
         },
       })
 
-      return testMiddleware([SetInjectionLevel], ctx)
-      .then(() => {
-        expect(ctx.res.setHeader).to.be.calledWith('Origin-Agent-Cluster', '?0')
-      })
+      await testMiddleware([SetInjectionLevel], ctx)
+      expect(ctx.res.setHeader).toHaveBeenCalledWith('Origin-Agent-Cluster', '?0')
     })
 
     describe('CSP header nonce injection', () => {
@@ -644,132 +825,145 @@ describe('http/response-middleware', function () {
       ].forEach((headerName) => {
         describe(`${headerName}`, () => {
           nonceDirectives.forEach((validNonceDirectiveName) => {
-            it(`modifies existing "${validNonceDirectiveName}" directive for "${headerName}" header if injection is requested, header exists, and "${validNonceDirectiveName}" directive exists`, () => {
+            it(`modifies existing "${validNonceDirectiveName}" directive for "${headerName}" header if injection is requested, header exists, and "${validNonceDirectiveName}" directive exists`, async function () {
               prepareContext({
                 res: {
                   getHeaders () {
                     return {
-                      [`${headerName}`]: `fake-csp-directive fake-csp-value; ${validNonceDirectiveName} \'fake-src\'`,
+                      [`${headerName}`]: `fake-csp-directive fake-csp-value; ${validNonceDirectiveName} 'fake-src'`,
                     }
                   },
                   wantsInjection: 'full',
                 },
               })
 
-              return testMiddleware([SetInjectionLevel], ctx)
-              .then(() => {
-                expect(ctx.res.setHeader).to.be.calledWith(headerName.toLowerCase(),
-                  [sinon.match(new RegExp(`^fake-csp-directive fake-csp-value; ${validNonceDirectiveName} 'fake-src' 'nonce-[^-A-Za-z0-9+/=]|=[^=]|={3,}'$`))])
-              })
+              await testMiddleware([SetInjectionLevel], ctx)
+              expect(ctx.res.setHeader).toHaveBeenCalledWith(
+                headerName.toLowerCase(),
+                expect.arrayContaining([
+                  expect.stringMatching(
+                    new RegExp(`^fake-csp-directive fake-csp-value; ${validNonceDirectiveName} 'fake-src' 'nonce-([A-Za-z0-9+/=]+|=[^=]|={3,})'$`),
+                  ),
+                ]),
+              )
             })
 
-            it(`modifies all existing "${validNonceDirectiveName}" directives for "${headerName}" header if injection is requested, and multiple headers exist with "${validNonceDirectiveName}" directives`, () => {
+            it(`modifies all existing "${validNonceDirectiveName}" directives for "${headerName}" header if injection is requested, and multiple headers exist with "${validNonceDirectiveName}" directives`, async function () {
               prepareContext({
                 res: {
                   getHeaders () {
                     return {
-                      [`${headerName}`]: `fake-csp-directive-0 fake-csp-value-0; ${validNonceDirectiveName} \'fake-src-0\',${validNonceDirectiveName} \'fake-src-1\'`,
+                      [`${headerName}`]: `fake-csp-directive-0 fake-csp-value-0; ${validNonceDirectiveName} 'fake-src-0',${validNonceDirectiveName} 'fake-src-1'`,
                     }
                   },
                   wantsInjection: 'full',
                 },
               })
 
-              return testMiddleware([SetInjectionLevel], ctx)
-              .then(() => {
-                expect(ctx.res.setHeader).to.be.calledWith(headerName.toLowerCase(),
-                  [
-                    sinon.match(new RegExp(`^fake-csp-directive-0 fake-csp-value-0; ${validNonceDirectiveName} 'fake-src-0' 'nonce-[^-A-Za-z0-9+/=]|=[^=]|={3,}'$`)),
-                    sinon.match(new RegExp(`^${validNonceDirectiveName} 'fake-src-1' 'nonce-[^-A-Za-z0-9+/=]|=[^=]|={3,}'$`)),
-                  ])
-              })
+              await testMiddleware([SetInjectionLevel], ctx)
+
+              expect(ctx.res.setHeader).toHaveBeenCalledWith(
+                headerName.toLowerCase(),
+                expect.arrayContaining([
+                  expect.stringMatching(
+                    new RegExp(`^fake-csp-directive-0 fake-csp-value-0; ${validNonceDirectiveName} 'fake-src-0' 'nonce-([A-Za-z0-9+/=]+|=[^=]|={3,})'$`),
+                  ),
+                  expect.stringMatching(
+                    new RegExp(`^${validNonceDirectiveName} 'fake-src-1' 'nonce-([A-Za-z0-9+/=]+|=[^=]|={3,})'$`),
+                  ),
+                ]),
+              )
             })
 
-            it(`does not modify existing "${validNonceDirectiveName}" directive for "${headerName}" header if injection is not requested`, () => {
+            it(`does not modify existing "${validNonceDirectiveName}" directive for "${headerName}" header if injection is not requested`, async () => {
               prepareContext({
                 res: {
                   getHeaders () {
                     return {
-                      [`${headerName}`]: `fake-csp-directive fake-csp-value; ${validNonceDirectiveName} \'fake-src\'`,
+                      [`${headerName}`]: `fake-csp-directive fake-csp-value; ${validNonceDirectiveName} 'fake-src'`,
                     }
                   },
                   wantsInjection: false,
                 },
               })
 
-              return testMiddleware([SetInjectionLevel], ctx)
-              .then(() => {
-                expect(ctx.res.setHeader).not.to.be.calledWith(headerName, sinon.match.array)
-                expect(ctx.res.setHeader).not.to.be.calledWith(headerName.toLowerCase(), sinon.match.array)
-              })
+              await testMiddleware([SetInjectionLevel], ctx)
+              expect(ctx.res.setHeader).not.toHaveBeenCalledWith(headerName, expect.any(Array))
+              expect(ctx.res.setHeader).not.toHaveBeenCalledWith(headerName.toLowerCase(), expect.any(Array))
             })
 
-            it(`does not modify existing "${validNonceDirectiveName}" directive for non-csp headers`, () => {
+            it(`does not modify existing "${validNonceDirectiveName}" directive for non-csp headers`, async () => {
               const nonCspHeader = 'Non-Csp-Header'
 
               prepareContext({
                 res: {
                   getHeaders () {
                     return {
-                      [`${nonCspHeader}`]: `${validNonceDirectiveName} \'fake-src\'`,
+                      [`${nonCspHeader}`]: `${validNonceDirectiveName} 'fake-src'`,
                     }
                   },
                   wantsInjection: 'full',
                 },
               })
 
-              return testMiddleware([SetInjectionLevel], ctx)
-              .then(() => {
-                expect(ctx.res.setHeader).not.to.be.calledWith(nonCspHeader, sinon.match.array)
-                expect(ctx.res.setHeader).not.to.be.calledWith(nonCspHeader.toLowerCase(), sinon.match.array)
-              })
+              await testMiddleware([SetInjectionLevel], ctx)
+              expect(ctx.res.setHeader).not.toHaveBeenCalledWith(nonCspHeader, expect.any(Array))
+              expect(ctx.res.setHeader).not.toHaveBeenCalledWith(nonCspHeader.toLowerCase(), expect.any(Array))
             })
 
             nonceDirectives.filter((directive) => directive !== validNonceDirectiveName).forEach((otherNonceDirective) => {
-              it(`modifies existing "${otherNonceDirective}" directive for "${headerName}" header if injection is requested, header exists, and "${validNonceDirectiveName}" directive exists`, () => {
+              it(`modifies existing "${otherNonceDirective}" directive for "${headerName}" header if injection is requested, header exists, and "${validNonceDirectiveName}" directive exists`, async () => {
                 prepareContext({
                   res: {
                     getHeaders () {
                       return {
-                        [`${headerName}`]: `${validNonceDirectiveName} \'self\'; fake-csp-directive fake-csp-value; ${otherNonceDirective} \'fake-src\'`,
+                        [`${headerName}`]: `${validNonceDirectiveName} 'self'; fake-csp-directive fake-csp-value; ${otherNonceDirective} 'fake-src'`,
                       }
                     },
                     wantsInjection: 'full',
                   },
                 })
 
-                return testMiddleware([SetInjectionLevel], ctx)
-                .then(() => {
-                  expect(ctx.res.setHeader).to.be.calledWith(headerName.toLowerCase(),
-                    [sinon.match(new RegExp(`^${validNonceDirectiveName} 'self' 'nonce-[^-A-Za-z0-9+/=]|=[^=]|={3,}'; fake-csp-directive fake-csp-value; ${otherNonceDirective} 'fake-src' 'nonce-[^-A-Za-z0-9+/=]|=[^=]|={3,}'$`))])
-                })
+                await testMiddleware([SetInjectionLevel], ctx)
+                expect(ctx.res.setHeader).toHaveBeenCalledWith(
+                  headerName.toLowerCase(),
+                  expect.arrayContaining([
+                    expect.stringMatching(
+                      new RegExp(`^${validNonceDirectiveName} 'self' 'nonce-([A-Za-z0-9+/=]+|=[^=]|={3,})'; fake-csp-directive fake-csp-value; ${otherNonceDirective} 'fake-src' 'nonce-([A-Za-z0-9+/=]+|=[^=]|={3,})'$`),
+                    ),
+                  ]),
+                )
               })
 
-              it(`modifies existing "${otherNonceDirective}" directive for "${headerName}" header if injection is requested, header exists, and "${validNonceDirectiveName}" directive exists in a different header`, () => {
+              it(`modifies existing "${otherNonceDirective}" directive for "${headerName}" header if injection is requested, header exists, and "${validNonceDirectiveName}" directive exists in a different header`, async () => {
                 prepareContext({
                   res: {
                     getHeaders () {
                       return {
-                        [`${headerName}`]: `${validNonceDirectiveName} \'self\',fake-csp-directive fake-csp-value; ${otherNonceDirective} \'fake-src\'`,
+                        [`${headerName}`]: `${validNonceDirectiveName} 'self',fake-csp-directive fake-csp-value; ${otherNonceDirective} 'fake-src'`,
                       }
                     },
                     wantsInjection: 'full',
                   },
                 })
 
-                return testMiddleware([SetInjectionLevel], ctx)
-                .then(() => {
-                  expect(ctx.res.setHeader).to.be.calledWith(headerName.toLowerCase(),
-                    [
-                      sinon.match(new RegExp(`^${validNonceDirectiveName} 'self' 'nonce-[^-A-Za-z0-9+/=]|=[^=]|={3,}'`)),
-                      sinon.match(new RegExp(`^fake-csp-directive fake-csp-value; ${otherNonceDirective} 'fake-src' 'nonce-[^-A-Za-z0-9+/=]|=[^=]|={3,}'$`)),
-                    ])
-                })
+                await testMiddleware([SetInjectionLevel], ctx)
+                expect(ctx.res.setHeader).toHaveBeenCalledWith(
+                  headerName.toLowerCase(),
+                  expect.arrayContaining([
+                    expect.stringMatching(
+                      new RegExp(`^${validNonceDirectiveName} 'self' 'nonce-([A-Za-z0-9+/=]+|=[^=]|={3,})'`),
+                    ),
+                    expect.stringMatching(
+                      new RegExp(`^fake-csp-directive fake-csp-value; ${otherNonceDirective} 'fake-src' 'nonce-([A-Za-z0-9+/=]+|=[^=]|={3,})'$`),
+                    ),
+                  ]),
+                )
               })
             })
           })
 
-          it(`does not append script-src directive in "${headerName}" headers if injection is requested, header exists, but no valid directive exists`, () => {
+          it(`does not append script-src directive in "${headerName}" headers if injection is requested, header exists, but no valid directive exists`, async () => {
             prepareContext({
               res: {
                 getHeaders () {
@@ -781,15 +975,13 @@ describe('http/response-middleware', function () {
               },
             })
 
-            return testMiddleware([SetInjectionLevel], ctx)
-            .then(() => {
-              // If directive doesn't exist, it shouldn't be updated
-              expect(ctx.res.setHeader).not.to.be.calledWith(headerName, sinon.match.array)
-              expect(ctx.res.setHeader).not.to.be.calledWith(headerName.toLowerCase(), sinon.match.array)
-            })
+            await testMiddleware([SetInjectionLevel], ctx)
+            // If directive doesn't exist, it shouldn't be updated
+            expect(ctx.res.setHeader).not.toHaveBeenCalledWith(headerName, expect.any(Array))
+            expect(ctx.res.setHeader).not.toHaveBeenCalledWith(headerName.toLowerCase(), expect.any(Array))
           })
 
-          it(`does not append script-src directive in "${headerName}" headers if injection is requested, and multiple headers exists, but no valid directive exists`, () => {
+          it(`does not append script-src directive in "${headerName}" headers if injection is requested, and multiple headers exists, but no valid directive exists`, async () => {
             prepareContext({
               res: {
                 getHeaders: () => {
@@ -801,15 +993,13 @@ describe('http/response-middleware', function () {
               },
             })
 
-            return testMiddleware([SetInjectionLevel], ctx)
-            .then(() => {
-              // If directive doesn't exist, it shouldn't be updated
-              expect(ctx.res.setHeader).not.to.be.calledWith(headerName, sinon.match.array)
-              expect(ctx.res.setHeader).not.to.be.calledWith(headerName.toLowerCase(), sinon.match.array)
-            })
+            await testMiddleware([SetInjectionLevel], ctx)
+            // If directive doesn't exist, it shouldn't be updated
+            expect(ctx.res.setHeader).not.toHaveBeenCalledWith(headerName, expect.any(Array))
+            expect(ctx.res.setHeader).not.toHaveBeenCalledWith(headerName.toLowerCase(), expect.any(Array))
           })
 
-          it(`does not modify "${headerName}" header if full injection is requested, and header does not exist`, () => {
+          it(`does not modify "${headerName}" header if full injection is requested, and header does not exist`, async () => {
             prepareContext({
               res: {
                 getHeaders: () => {
@@ -819,14 +1009,12 @@ describe('http/response-middleware', function () {
               },
             })
 
-            return testMiddleware([SetInjectionLevel], ctx)
-            .then(() => {
-              expect(ctx.res.setHeader).not.to.be.calledWith(headerName, sinon.match.array)
-              expect(ctx.res.setHeader).not.to.be.calledWith(headerName.toLowerCase(), sinon.match.array)
-            })
+            await testMiddleware([SetInjectionLevel], ctx)
+            expect(ctx.res.setHeader).not.toHaveBeenCalledWith(headerName, expect.any(Array))
+            expect(ctx.res.setHeader).not.toHaveBeenCalledWith(headerName.toLowerCase(), expect.any(Array))
           })
 
-          it(`does not modify "${headerName}" header when no injection is requested, and header exists`, () => {
+          it(`does not modify "${headerName}" header when no injection is requested, and header exists`, async () => {
             prepareContext({
               res: {
                 getHeaders: () => {
@@ -838,18 +1026,16 @@ describe('http/response-middleware', function () {
               },
             })
 
-            return testMiddleware([SetInjectionLevel], ctx)
-            .then(() => {
-              expect(ctx.res.setHeader).not.to.be.calledWith(headerName, sinon.match.array)
-              expect(ctx.res.setHeader).not.to.be.calledWith(headerName.toLowerCase(), sinon.match.array)
-            })
+            await testMiddleware([SetInjectionLevel], ctx)
+            expect(ctx.res.setHeader).not.toHaveBeenCalledWith(headerName, expect.any(Array))
+            expect(ctx.res.setHeader).not.toHaveBeenCalledWith(headerName.toLowerCase(), expect.any(Array))
           })
         })
       })
     })
 
     describe('wantsSecurityRemoved', () => {
-      it('removes security if full injection is requested', () => {
+      it('removes security if full injection is requested', async () => {
         prepareContext({
           res: {
             wantsInjection: 'full',
@@ -859,13 +1045,11 @@ describe('http/response-middleware', function () {
           },
         })
 
-        return testMiddleware([SetInjectionLevel], ctx)
-        .then(() => {
-          expect(ctx.res.wantsSecurityRemoved).to.be.true
-        })
+        await testMiddleware([SetInjectionLevel], ctx)
+        expect(ctx.res.wantsSecurityRemoved).toBe(true)
       })
 
-      it('removes security if fullCrossOrigin injection is requested', () => {
+      it('removes security if fullCrossOrigin injection is requested', async () => {
         prepareContext({
           res: {
             wantsInjection: 'fullCrossOrigin',
@@ -875,14 +1059,14 @@ describe('http/response-middleware', function () {
           },
         })
 
-        return testMiddleware([SetInjectionLevel], ctx)
-        .then(() => {
-          expect(ctx.res.wantsSecurityRemoved).to.be.true
-        })
+        await testMiddleware([SetInjectionLevel], ctx)
+        expect(ctx.res.wantsSecurityRemoved).toBe(true)
       })
 
-      ;['application/javascript', 'application/x-javascript', 'text/javascript'].forEach((javascriptMIME) => {
-        it(`removes security if the MIME type is ${javascriptMIME} and is on the currently active remote state`, () => {
+      const javascriptMIMEs = ['application/javascript', 'application/x-javascript', 'text/javascript']
+
+      javascriptMIMEs.forEach((javascriptMIME) => {
+        it(`removes security if the MIME type is ${javascriptMIME} and is on the currently active remote state`, async () => {
           prepareContext({
             incomingRes: {
               headers: {
@@ -894,14 +1078,12 @@ describe('http/response-middleware', function () {
             },
           })
 
-          return testMiddleware([SetInjectionLevel], ctx)
-          .then(() => {
-            expect(ctx.res.wantsSecurityRemoved).to.be.true
-          })
+          await testMiddleware([SetInjectionLevel], ctx)
+          expect(ctx.res.wantsSecurityRemoved).toBe(true)
         })
       })
 
-      it('otherwise, does not try to remove security on other MIME Types', () => {
+      it('otherwise, does not try to remove security on other MIME Types', async () => {
         prepareContext({
           incomingRes: {
             headers: {
@@ -913,14 +1095,12 @@ describe('http/response-middleware', function () {
           },
         })
 
-        return testMiddleware([SetInjectionLevel], ctx)
-        .then(() => {
-          expect(ctx.res.wantsSecurityRemoved).to.be.false
-        })
+        await testMiddleware([SetInjectionLevel], ctx)
+        expect(ctx.res.wantsSecurityRemoved).toBe(false)
       })
 
       describe('experimentalModifyObstructiveThirdPartyCode', () => {
-        it('continues to "modifyObstructiveCode" when "experimentalModifyObstructiveThirdPartyCode" is true, even if "modifyObstructiveCode" is set to false.', () => {
+        it('continues to "modifyObstructiveCode" when "experimentalModifyObstructiveThirdPartyCode" is true, even if "modifyObstructiveCode" is set to false.', async () => {
           prepareContext({
             res: {
               wantsInjection: 'full',
@@ -931,14 +1111,14 @@ describe('http/response-middleware', function () {
             },
           })
 
-          return testMiddleware([SetInjectionLevel], ctx)
-          .then(() => {
-            expect(ctx.res.wantsSecurityRemoved).to.be.true
-          })
+          await testMiddleware([SetInjectionLevel], ctx)
+          expect(ctx.res.wantsSecurityRemoved).toBe(true)
         })
 
-        ;['text/html', 'application/javascript', 'application/x-javascript', 'text/javascript'].forEach((MIMEType) => {
-          it(`removes security for ${MIMEType} MIME when "experimentalModifyObstructiveThirdPartyCode" is true, regardless of injection or request origin.`, () => {
+        const otherMIMEs = ['text/html', 'application/javascript', 'application/x-javascript', 'text/javascript']
+
+        otherMIMEs.forEach((MIMEType) => {
+          it(`removes security for ${MIMEType} MIME when "experimentalModifyObstructiveThirdPartyCode" is true, regardless of injection or request origin.`, async () => {
             prepareContext({
               req: {
                 proxiedUrl: 'http://www.some-third-party-script-or-html.com/',
@@ -955,14 +1135,12 @@ describe('http/response-middleware', function () {
               },
             })
 
-            return testMiddleware([SetInjectionLevel], ctx)
-            .then(() => {
-              expect(ctx.res.wantsSecurityRemoved).to.be.true
-            })
+            await testMiddleware([SetInjectionLevel], ctx)
+            expect(ctx.res.wantsSecurityRemoved).toBe(true)
           })
         })
 
-        it(`removes security when the request will render html when "experimentalModifyObstructiveThirdPartyCode" is true, regardless of injection or request origin.`, () => {
+        it(`removes security when the request will render html when "experimentalModifyObstructiveThirdPartyCode" is true, regardless of injection or request origin.`, async () => {
           prepareContext({
             renderedHTMLOrigins: {},
             getRenderedHTMLOrigins () {
@@ -981,13 +1159,11 @@ describe('http/response-middleware', function () {
             },
           })
 
-          return testMiddleware([SetInjectionLevel], ctx)
-          .then(() => {
-            expect(ctx.res.wantsSecurityRemoved).to.be.true
-          })
+          await testMiddleware([SetInjectionLevel], ctx)
+          expect(ctx.res.wantsSecurityRemoved).toBe(true)
         })
 
-        it(`does not remove security or inject when the request will not render html (csv).`, () => {
+        it(`does not remove security or inject when the request will not render html (csv).`, async () => {
           prepareContext({
             renderedHTMLOrigins: {},
             getRenderedHTMLOrigins () {
@@ -1011,18 +1187,14 @@ describe('http/response-middleware', function () {
             },
           })
 
-          return testMiddleware([SetInjectionLevel], ctx)
-          .then(() => {
-            expect(ctx.res.wantsSecurityRemoved).to.be.false
-            expect(ctx.res.wantsInjection).to.be.false
-          })
+          await testMiddleware([SetInjectionLevel], ctx)
+          expect(ctx.res.wantsSecurityRemoved).toBe(false)
+          expect(ctx.res.wantsInjection).toBe(false)
         })
       })
     })
 
     function prepareContext (props) {
-      const remoteStates = new RemoteStates(() => {})
-
       // set the primary remote state
       remoteStates.set('http://127.0.0.1:3501')
 
@@ -1033,10 +1205,10 @@ describe('http/response-middleware', function () {
         },
         res: {
           headers: {},
-          getHeaders: sinon.stub().callsFake(() => {
+          getHeaders: vi.fn().mockImplementation(() => {
             return ctx.res.headers
           }),
-          setHeader: sinon.stub(),
+          setHeader: vi.fn(),
           on: (event, listener) => {},
           off: (event, listener) => {},
           ...props.res,
@@ -1075,9 +1247,9 @@ describe('http/response-middleware', function () {
 
       await testMiddleware([MaybeCopyCookiesFromIncomingRes], ctx)
 
-      expect(appendStub).to.be.calledTwice
-      expect(appendStub).to.be.calledWith('Set-Cookie', 'cookie1=value1')
-      expect(appendStub).to.be.calledWith('Set-Cookie', 'cookie2=value2')
+      expect(appendStub).toHaveBeenCalledTimes(2)
+      expect(appendStub).toHaveBeenCalledWith('Set-Cookie', 'cookie1=value1')
+      expect(appendStub).toHaveBeenCalledWith('Set-Cookie', 'cookie2=value2')
     })
 
     it('appends cookies on the response when a string', async function () {
@@ -1085,12 +1257,11 @@ describe('http/response-middleware', function () {
 
       await testMiddleware([MaybeCopyCookiesFromIncomingRes], ctx)
 
-      expect(appendStub).to.be.calledOnce
-      expect(appendStub).to.be.calledWith('Set-Cookie', 'cookie=value')
+      expect(appendStub).toHaveBeenCalledExactlyOnceWith('Set-Cookie', 'cookie=value')
     })
 
     it('is a noop when cookies are undefined', async function () {
-      const appendStub = sinon.stub()
+      const appendStub = vi.fn()
       const ctx = prepareContext({
         res: {
           append: appendStub,
@@ -1099,15 +1270,16 @@ describe('http/response-middleware', function () {
 
       await testMiddleware([MaybeCopyCookiesFromIncomingRes], ctx)
 
-      expect(appendStub).not.to.be.called
+      expect(appendStub).not.toHaveBeenCalled()
     })
 
-    it('is a noop in the cookie jar when top does NOT need simulating', async function () {
-      const appendStub = sinon.stub()
+    it('records cookie in jar but skips browser automation sync when top does not need simulating', async function () {
+      const appendStub = vi.fn()
 
       const cookieJar = {
         getAllCookies: () => [{ key: 'cookie', value: 'value' }],
-        setCookie: sinon.stub(),
+        getCookies: () => [],
+        setCookie: vi.fn(),
       }
 
       const ctx = prepareContext({
@@ -1128,22 +1300,87 @@ describe('http/response-middleware', function () {
 
       await testMiddleware([MaybeCopyCookiesFromIncomingRes], ctx)
 
-      expect(cookieJar.setCookie).not.to.have.been.called
-      expect(appendStub).to.be.calledWith('Set-Cookie', 'cookie=value')
+      // the cookie is still recorded in the server-side cookie jar so it does not
+      // go stale and overwrite fresh browser cookies on a later top-level
+      // navigation. See https://github.com/cypress-io/cypress/issues/25841
+      expect(cookieJar.setCookie).toHaveBeenCalledWith(expect.objectContaining({
+        key: 'cookie',
+        value: 'value',
+      }), 'http://www.foobar.com/login', 'strict')
+
+      // the browser sets the cookie itself since the AUT is the primary origin,
+      // so we do not need to sync the cookie into the browser via automation
+      expect(ctx.serverBus.emit).not.toHaveBeenCalled()
+      expect(appendStub).toHaveBeenCalledExactlyOnceWith('Set-Cookie', 'cookie=value')
+    })
+
+    // https://github.com/cypress-io/cypress/issues/25841
+    // A same-origin fetch/XHR response that sets a cookie does not need top to be
+    // simulated (the AUT is the primary origin and is not the AUT frame), but the
+    // cookie must still be recorded in the server-side jar. Otherwise the jar
+    // keeps a stale value and overwrites the browser's fresh cookie on the next
+    // top-level navigation (e.g. a reload following the request).
+    ;['fetch', 'xhr'].forEach((resourceType) => {
+      it(`records same-origin ${resourceType} response cookie in jar without browser automation sync`, async function () {
+        const appendStub = vi.fn()
+
+        const cookieJar = {
+          getAllCookies: () => [],
+          getCookies: () => [],
+          setCookie: vi.fn(),
+        }
+
+        const ctx = prepareContext({
+          cookieJar,
+          res: {
+            append: appendStub,
+          },
+          req: {
+            // a same-origin, non-AUT-frame request: top does not need simulating
+            resourceType,
+            credentialsLevel: resourceType === 'fetch' ? 'same-origin' : true,
+            proxiedUrl: 'http://www.foobar.com/messages',
+            isAUTFrame: false,
+          },
+          incomingRes: {
+            headers: {
+              'set-cookie': '_venuu_flash=fresh-value',
+            },
+          },
+        })
+
+        ctx.getAUTUrl = () => 'http://www.foobar.com/index.html'
+        // the AUT is the primary super domain origin, so top does NOT need simulating
+        ctx.remoteStates.isPrimarySuperDomainOrigin = () => true
+
+        await testMiddleware([MaybeCopyCookiesFromIncomingRes], ctx)
+
+        // the fresh cookie is recorded in the jar so a subsequent navigation does
+        // not reuse a stale value
+        expect(cookieJar.setCookie).toHaveBeenCalledWith(expect.objectContaining({
+          key: '_venuu_flash',
+          value: 'fresh-value',
+        }), 'http://www.foobar.com/messages', 'strict')
+
+        // the browser sets the cookie natively for a same-origin request, so no
+        // automation sync is needed
+        expect(ctx.serverBus.emit).not.toHaveBeenCalled()
+        expect(appendStub).toHaveBeenCalledExactlyOnceWith('Set-Cookie', '_venuu_flash=fresh-value')
+      })
     })
 
     const getCookieJarStub = () => {
       return {
-        getAllCookies: sinon.stub().returns([{ key: 'cookie', value: 'value' }]),
-        getCookies: sinon.stub().returns([]),
-        setCookie: sinon.stub(),
+        getAllCookies: vi.fn().mockReturnValue([{ key: 'cookie', value: 'value' }]),
+        getCookies: vi.fn().mockReturnValue([]),
+        setCookie: vi.fn(),
       }
     }
 
     describe('same-origin', () => {
       ['same-origin', 'include'].forEach((credentialLevel) => {
         it(`sets first-party cookie context in the jar when simulating top if credentials included with fetch with credential ${credentialLevel}`, async function () {
-          const appendStub = sinon.stub()
+          const appendStub = vi.fn()
           const cookieJar = getCookieJarStub()
           const ctx = prepareContext({
             cookieJar,
@@ -1170,35 +1407,35 @@ describe('http/response-middleware', function () {
           await testMiddleware([MaybeCopyCookiesFromIncomingRes], ctx)
 
           // should work as this would be set in the browser if the AUT url was top
-          expect(cookieJar.setCookie).to.have.been.calledWith(sinon.match({
+          expect(cookieJar.setCookie).toHaveBeenCalledWith(expect.objectContaining({
             key: 'cookie1',
             value: 'value1',
             sameSite: 'strict',
           }), 'https://www.foobar.com/test-request', 'strict')
 
           // should work as this would be set in the browser if the AUT url was top
-          expect(cookieJar.setCookie).to.have.been.calledWith(sinon.match({
+          expect(cookieJar.setCookie).toHaveBeenCalledWith(expect.objectContaining({
             key: 'cookie2',
             value: 'value2',
             sameSite: 'lax',
           }), 'https://www.foobar.com/test-request', 'strict')
 
           // should work as this would be set in the browser if the AUT url was top, just sets a third party cookie
-          expect(cookieJar.setCookie).to.have.been.calledWith(sinon.match({
+          expect(cookieJar.setCookie).toHaveBeenCalledWith(expect.objectContaining({
             key: 'cookie3',
             value: 'value3',
             sameSite: 'none',
           }), 'https://www.foobar.com/test-request', 'strict')
 
-          expect(appendStub).to.be.calledWith('Set-Cookie', 'cookie1=value1; SameSite=Strict')
-          expect(appendStub).to.be.calledWith('Set-Cookie', 'cookie2=value2; SameSite=Lax')
-          expect(appendStub).to.be.calledWith('Set-Cookie', 'cookie3=value3; SameSite=None; Secure')
+          expect(appendStub).toHaveBeenCalledWith('Set-Cookie', 'cookie1=value1; SameSite=Strict')
+          expect(appendStub).toHaveBeenCalledWith('Set-Cookie', 'cookie2=value2; SameSite=Lax')
+          expect(appendStub).toHaveBeenCalledWith('Set-Cookie', 'cookie3=value3; SameSite=None; Secure')
         })
       })
 
       ;[true, false].forEach((credentialLevel) => {
         it(`sets first-party cookie context in the jar when simulating top if withCredentials ${credentialLevel} with xhr`, async function () {
-          const appendStub = sinon.stub()
+          const appendStub = vi.fn()
           const cookieJar = getCookieJarStub()
           const ctx = prepareContext({
             cookieJar,
@@ -1225,34 +1462,34 @@ describe('http/response-middleware', function () {
           await testMiddleware([MaybeCopyCookiesFromIncomingRes], ctx)
 
           // should work as this would be set in the browser if the AUT url was top
-          expect(cookieJar.setCookie).to.have.been.calledWith(sinon.match({
+          expect(cookieJar.setCookie).toHaveBeenCalledWith(expect.objectContaining({
             key: 'cookie1',
             value: 'value1',
             sameSite: 'strict',
           }), 'https://www.foobar.com/test-request', 'strict')
 
           // should work as this would be set in the browser if the AUT url was top
-          expect(cookieJar.setCookie).to.have.been.calledWith(sinon.match({
+          expect(cookieJar.setCookie).toHaveBeenCalledWith(expect.objectContaining({
             key: 'cookie2',
             value: 'value2',
             sameSite: 'lax',
           }), 'https://www.foobar.com/test-request', 'strict')
 
           // should work as this would be set in the browser if the AUT url was top, just sets a third party cookie
-          expect(cookieJar.setCookie).to.have.been.calledWith(sinon.match({
+          expect(cookieJar.setCookie).toHaveBeenCalledWith(expect.objectContaining({
             key: 'cookie3',
             value: 'value3',
             sameSite: 'none',
           }), 'https://www.foobar.com/test-request', 'strict')
 
-          expect(appendStub).to.be.calledWith('Set-Cookie', 'cookie1=value1; SameSite=Strict')
-          expect(appendStub).to.be.calledWith('Set-Cookie', 'cookie2=value2; SameSite=Lax')
-          expect(appendStub).to.be.calledWith('Set-Cookie', 'cookie3=value3; SameSite=None; Secure')
+          expect(appendStub).toHaveBeenCalledWith('Set-Cookie', 'cookie1=value1; SameSite=Strict')
+          expect(appendStub).toHaveBeenCalledWith('Set-Cookie', 'cookie2=value2; SameSite=Lax')
+          expect(appendStub).toHaveBeenCalledWith('Set-Cookie', 'cookie3=value3; SameSite=None; Secure')
         })
       })
 
       it(`sets no cookies if fetch level is omit`, async function () {
-        const appendStub = sinon.stub()
+        const appendStub = vi.fn()
         const cookieJar = getCookieJarStub()
         const ctx = prepareContext({
           cookieJar,
@@ -1279,36 +1516,36 @@ describe('http/response-middleware', function () {
         await testMiddleware([MaybeCopyCookiesFromIncomingRes], ctx)
 
         // should not work as this wouldn't be set in the browser if the AUT url was top
-        expect(cookieJar.setCookie).not.to.have.been.calledWith(sinon.match({
+        expect(cookieJar.setCookie).not.toHaveBeenCalledWith(expect.objectContaining({
           key: 'cookie1',
           value: 'value1',
           sameSite: 'strict',
         }), 'https://www.foobar.com/test-request', 'strict')
 
         // should not work as this wouldn't be set in the browser if the AUT url was top
-        expect(cookieJar.setCookie).not.to.have.been.calledWith(sinon.match({
+        expect(cookieJar.setCookie).not.toHaveBeenCalledWith(expect.objectContaining({
           key: 'cookie2',
           value: 'value2',
           sameSite: 'lax',
         }), 'https://www.foobar.com/test-request', 'strict')
 
         // should not work as this wouldn't be set in the browser if the AUT url was top
-        expect(cookieJar.setCookie).not.to.have.been.calledWith(sinon.match({
+        expect(cookieJar.setCookie).not.toHaveBeenCalledWith(expect.objectContaining({
           key: 'cookie3',
           value: 'value3',
           sameSite: 'none',
         }), 'https://www.foobar.com/test-request', 'strict')
 
         // return these to the browser, even though they are likely to fail setting anyway
-        expect(appendStub).to.be.calledWith('Set-Cookie', 'cookie1=value1; SameSite=Strict')
-        expect(appendStub).to.be.calledWith('Set-Cookie', 'cookie2=value2; SameSite=Lax')
-        expect(appendStub).to.be.calledWith('Set-Cookie', 'cookie3=value3; SameSite=None; Secure')
+        expect(appendStub).toHaveBeenCalledWith('Set-Cookie', 'cookie1=value1; SameSite=Strict')
+        expect(appendStub).toHaveBeenCalledWith('Set-Cookie', 'cookie2=value2; SameSite=Lax')
+        expect(appendStub).toHaveBeenCalledWith('Set-Cookie', 'cookie3=value3; SameSite=None; Secure')
       })
     })
 
     describe('same-site', () => {
       it('sets first-party cookie context in the jar when simulating top if credentials included with fetch via include', async function () {
-        const appendStub = sinon.stub()
+        const appendStub = vi.fn()
         const cookieJar = getCookieJarStub()
         const ctx = prepareContext({
           cookieJar,
@@ -1335,33 +1572,33 @@ describe('http/response-middleware', function () {
         await testMiddleware([MaybeCopyCookiesFromIncomingRes], ctx)
 
         // should work as this would be set in the browser if the AUT url was top
-        expect(cookieJar.setCookie).to.have.been.calledWith(sinon.match({
+        expect(cookieJar.setCookie).toHaveBeenCalledWith(expect.objectContaining({
           key: 'cookie1',
           value: 'value1',
           sameSite: 'strict',
         }), 'https://app.foobar.com/test-request', 'strict')
 
         // should work as this would be set in the browser if the AUT url was top
-        expect(cookieJar.setCookie).to.have.been.calledWith(sinon.match({
+        expect(cookieJar.setCookie).toHaveBeenCalledWith(expect.objectContaining({
           key: 'cookie2',
           value: 'value2',
           sameSite: 'lax',
         }), 'https://app.foobar.com/test-request', 'strict')
 
         // should work as this would be set in the browser if the AUT url was top, just sets a third party cookie
-        expect(cookieJar.setCookie).to.have.been.calledWith(sinon.match({
+        expect(cookieJar.setCookie).toHaveBeenCalledWith(expect.objectContaining({
           key: 'cookie3',
           value: 'value3',
           sameSite: 'none',
         }), 'https://app.foobar.com/test-request', 'strict')
 
-        expect(appendStub).to.be.calledWith('Set-Cookie', 'cookie1=value1; SameSite=Strict')
-        expect(appendStub).to.be.calledWith('Set-Cookie', 'cookie2=value2; SameSite=Lax')
-        expect(appendStub).to.be.calledWith('Set-Cookie', 'cookie3=value3; SameSite=None; Secure')
+        expect(appendStub).toHaveBeenCalledWith('Set-Cookie', 'cookie1=value1; SameSite=Strict')
+        expect(appendStub).toHaveBeenCalledWith('Set-Cookie', 'cookie2=value2; SameSite=Lax')
+        expect(appendStub).toHaveBeenCalledWith('Set-Cookie', 'cookie3=value3; SameSite=None; Secure')
       })
 
       it('sets first-party cookie context in the jar when simulating top if credentials true with xhr', async function () {
-        const appendStub = sinon.stub()
+        const appendStub = vi.fn()
         const cookieJar = getCookieJarStub()
         const ctx = prepareContext({
           cookieJar,
@@ -1388,34 +1625,34 @@ describe('http/response-middleware', function () {
         await testMiddleware([MaybeCopyCookiesFromIncomingRes], ctx)
 
         // should work as this would be set in the browser if the AUT url was top
-        expect(cookieJar.setCookie).to.have.been.calledWith(sinon.match({
+        expect(cookieJar.setCookie).toHaveBeenCalledWith(expect.objectContaining({
           key: 'cookie1',
           value: 'value1',
           sameSite: 'strict',
         }), 'https://app.foobar.com/test-request', 'strict')
 
         // should work as this would be set in the browser if the AUT url was top
-        expect(cookieJar.setCookie).to.have.been.calledWith(sinon.match({
+        expect(cookieJar.setCookie).toHaveBeenCalledWith(expect.objectContaining({
           key: 'cookie2',
           value: 'value2',
           sameSite: 'lax',
         }), 'https://app.foobar.com/test-request', 'strict')
 
         // should work as this would be set in the browser if the AUT url was top, just sets a third party cookie
-        expect(cookieJar.setCookie).to.have.been.calledWith(sinon.match({
+        expect(cookieJar.setCookie).toHaveBeenCalledWith(expect.objectContaining({
           key: 'cookie3',
           value: 'value3',
           sameSite: 'none',
         }), 'https://app.foobar.com/test-request', 'strict')
 
-        expect(appendStub).to.be.calledWith('Set-Cookie', 'cookie1=value1; SameSite=Strict')
-        expect(appendStub).to.be.calledWith('Set-Cookie', 'cookie2=value2; SameSite=Lax')
-        expect(appendStub).to.be.calledWith('Set-Cookie', 'cookie3=value3; SameSite=None; Secure')
+        expect(appendStub).toHaveBeenCalledWith('Set-Cookie', 'cookie1=value1; SameSite=Strict')
+        expect(appendStub).toHaveBeenCalledWith('Set-Cookie', 'cookie2=value2; SameSite=Lax')
+        expect(appendStub).toHaveBeenCalledWith('Set-Cookie', 'cookie3=value3; SameSite=None; Secure')
       })
 
       ;['same-origin', 'omit'].forEach((credentialLevel) => {
         it(`sets no cookies if fetch level is ${credentialLevel}`, async function () {
-          const appendStub = sinon.stub()
+          const appendStub = vi.fn()
           const cookieJar = getCookieJarStub()
           const ctx = prepareContext({
             cookieJar,
@@ -1442,19 +1679,19 @@ describe('http/response-middleware', function () {
           await testMiddleware([MaybeCopyCookiesFromIncomingRes], ctx)
 
           // should not work as this wouldn't be set in the browser if the AUT url was top
-          expect(cookieJar.setCookie).not.to.have.been.called
+          expect(cookieJar.setCookie).not.toHaveBeenCalled()
 
           // return these to the browser, even though they are likely to fail setting anyway
-          expect(appendStub).to.be.calledWith('Set-Cookie', 'cookie1=value1; SameSite=Strict')
-          expect(appendStub).to.be.calledWith('Set-Cookie', 'cookie2=value2; SameSite=Lax')
-          expect(appendStub).to.be.calledWith('Set-Cookie', 'cookie3=value3; SameSite=None; Secure')
+          expect(appendStub).toHaveBeenCalledWith('Set-Cookie', 'cookie1=value1; SameSite=Strict')
+          expect(appendStub).toHaveBeenCalledWith('Set-Cookie', 'cookie2=value2; SameSite=Lax')
+          expect(appendStub).toHaveBeenCalledWith('Set-Cookie', 'cookie3=value3; SameSite=None; Secure')
         })
       })
     })
 
     describe('cross-site', () => {
       it('sets third-party cookie context in the jar when simulating top if credentials included with fetch', async function () {
-        const appendStub = sinon.stub()
+        const appendStub = vi.fn()
         const cookieJar = getCookieJarStub()
         const ctx = prepareContext({
           cookieJar,
@@ -1481,31 +1718,31 @@ describe('http/response-middleware', function () {
         await testMiddleware([MaybeCopyCookiesFromIncomingRes], ctx)
 
         // should not work as this wouldn't be set in the browser if the AUT url was top anyway
-        expect(cookieJar.setCookie).not.to.have.been.calledWith(sinon.match({
+        expect(cookieJar.setCookie).not.toHaveBeenCalledWith(expect.objectContaining({
           key: 'cookie1',
           value: 'value1',
           sameSite: 'strict',
         }), 'https://www.barbaz.com/test-request', 'none')
 
         // should not work as this wouldn't be set in the browser if the AUT url was top anyway
-        expect(cookieJar.setCookie).not.to.have.been.calledWith(sinon.match({
+        expect(cookieJar.setCookie).not.toHaveBeenCalledWith(expect.objectContaining({
           key: 'cookie2',
           value: 'value2',
           sameSite: 'lax',
         }), 'https://www.barbaz.com/test-request', 'none')
 
-        expect(cookieJar.setCookie).to.have.been.calledWith(sinon.match({
+        expect(cookieJar.setCookie).toHaveBeenCalledWith(expect.objectContaining({
           key: 'cookie3',
           value: 'value3',
           sameSite: 'none',
         }), 'https://www.barbaz.com/test-request', 'none')
 
-        expect(appendStub).to.be.calledWith('Set-Cookie', 'cookie3=value3; SameSite=None; Secure')
+        expect(appendStub).toHaveBeenCalledWith('Set-Cookie', 'cookie3=value3; SameSite=None; Secure')
       })
 
       ;['same-origin', 'omit'].forEach((credentialLevel) => {
         it(`does NOT set third-party cookie context in the jar when simulating top if credentials ${credentialLevel} with fetch`, async function () {
-          const appendStub = sinon.stub()
+          const appendStub = vi.fn()
           const cookieJar = getCookieJarStub()
           const ctx = prepareContext({
             cookieJar,
@@ -1531,15 +1768,15 @@ describe('http/response-middleware', function () {
 
           await testMiddleware([MaybeCopyCookiesFromIncomingRes], ctx)
 
-          expect(cookieJar.setCookie).not.to.have.been.called
+          expect(cookieJar.setCookie).not.toHaveBeenCalled()
 
           // send to browser anyway even though these will likely fail to be set
-          expect(appendStub).to.be.calledWith('Set-Cookie', 'cookie3=value3; SameSite=None; Secure')
+          expect(appendStub).toHaveBeenCalledWith('Set-Cookie', 'cookie3=value3; SameSite=None; Secure')
         })
       })
 
       it('sets third-party cookie context in the jar when simulating top if withCredentials true with xhr', async function () {
-        const appendStub = sinon.stub()
+        const appendStub = vi.fn()
         const cookieJar = getCookieJarStub()
         const ctx = prepareContext({
           cookieJar,
@@ -1566,30 +1803,30 @@ describe('http/response-middleware', function () {
         await testMiddleware([MaybeCopyCookiesFromIncomingRes], ctx)
 
         // should not work as this wouldn't be set in the browser if the AUT url was top anyway
-        expect(cookieJar.setCookie).not.to.have.been.calledWith(sinon.match({
+        expect(cookieJar.setCookie).not.toHaveBeenCalledWith(expect.objectContaining({
           key: 'cookie1',
           value: 'value1',
           sameSite: 'strict',
         }), 'https://www.barbaz.com/test-request', 'none')
 
         // should not work as this wouldn't be set in the browser if the AUT url was top anyway
-        expect(cookieJar.setCookie).not.to.have.been.calledWith(sinon.match({
+        expect(cookieJar.setCookie).not.toHaveBeenCalledWith(expect.objectContaining({
           key: 'cookie2',
           value: 'value2',
           sameSite: 'lax',
         }), 'https://www.barbaz.com/test-request', 'none')
 
-        expect(cookieJar.setCookie).to.have.been.calledWith(sinon.match({
+        expect(cookieJar.setCookie).toHaveBeenCalledWith(expect.objectContaining({
           key: 'cookie3',
           value: 'value3',
           sameSite: 'none',
         }), 'https://www.barbaz.com/test-request', 'none')
 
-        expect(appendStub).to.be.calledWith('Set-Cookie', 'cookie3=value3; SameSite=None; Secure')
+        expect(appendStub).toHaveBeenCalledWith('Set-Cookie', 'cookie3=value3; SameSite=None; Secure')
       })
 
       it('does not set third-party cookie context in the jar when simulating top if withCredentials false with xhr', async function () {
-        const appendStub = sinon.stub()
+        const appendStub = vi.fn()
         const cookieJar = getCookieJarStub()
         const ctx = prepareContext({
           cookieJar,
@@ -1615,15 +1852,15 @@ describe('http/response-middleware', function () {
 
         await testMiddleware([MaybeCopyCookiesFromIncomingRes], ctx)
 
-        expect(cookieJar.setCookie).not.to.have.been.called
+        expect(cookieJar.setCookie).not.toHaveBeenCalled()
 
         // send to the browser, even though the browser will NOT set this cookie
-        expect(appendStub).to.be.calledWith('Set-Cookie', 'cookie3=value3; SameSite=None; Secure')
+        expect(appendStub).toHaveBeenCalledWith('Set-Cookie', 'cookie3=value3; SameSite=None; Secure')
       })
     })
 
     it(`does NOT set third-party cookie context in the jar if secure cookie is not enabled`, async function () {
-      const appendStub = sinon.stub()
+      const appendStub = vi.fn()
       const cookieJar = getCookieJarStub()
       const ctx = prepareContext({
         cookieJar,
@@ -1649,14 +1886,14 @@ describe('http/response-middleware', function () {
 
       await testMiddleware([MaybeCopyCookiesFromIncomingRes], ctx)
 
-      expect(cookieJar.setCookie).not.to.have.been.called
+      expect(cookieJar.setCookie).not.toHaveBeenCalled()
 
       // send to browser anyway even though these will likely fail to be set
-      expect(appendStub).to.be.calledWith('Set-Cookie', 'cookie3=value3; SameSite=None')
+      expect(appendStub).toHaveBeenCalledWith('Set-Cookie', 'cookie3=value3; SameSite=None')
     })
 
     it(`allows setting cookies if request type cannot be determined, but comes from the AUT frame (likely in the case of documents or redirects)`, async function () {
-      const appendStub = sinon.stub()
+      const appendStub = vi.fn()
       const cookieJar = getCookieJarStub()
       const ctx = prepareContext({
         cookieJar,
@@ -1680,18 +1917,18 @@ describe('http/response-middleware', function () {
 
       await testMiddleware([MaybeCopyCookiesFromIncomingRes], ctx)
 
-      expect(cookieJar.setCookie).to.have.been.calledWith(sinon.match({
+      expect(cookieJar.setCookie).toHaveBeenCalledWith(expect.objectContaining({
         key: 'cookie',
         value: 'value',
         sameSite: 'lax',
       }), 'https://www.barbaz.com/index.html', 'lax')
 
       // send to browser anyway even though these will likely fail to be set
-      expect(appendStub).to.be.calledWith('Set-Cookie', 'cookie=value')
+      expect(appendStub).toHaveBeenCalledWith('Set-Cookie', 'cookie=value')
     })
 
     it(`otherwise, does not allow setting cookies if request type cannot be determined and is not from the AUT and is cross-origin`, async function () {
-      const appendStub = sinon.stub()
+      const appendStub = vi.fn()
       const cookieJar = getCookieJarStub()
       const ctx = prepareContext({
         cookieJar,
@@ -1714,10 +1951,10 @@ describe('http/response-middleware', function () {
 
       await testMiddleware([MaybeCopyCookiesFromIncomingRes], ctx)
 
-      expect(cookieJar.setCookie).not.to.have.been.called
+      expect(cookieJar.setCookie).not.toHaveBeenCalled()
 
       // send to browser anyway even though these will likely fail to be set
-      expect(appendStub).to.be.calledWith('Set-Cookie', 'cookie=value')
+      expect(appendStub).toHaveBeenCalledWith('Set-Cookie', 'cookie=value')
     })
 
     it('does not send cross:origin:cookies if request does not need top simulation', async () => {
@@ -1725,7 +1962,7 @@ describe('http/response-middleware', function () {
 
       await testMiddleware([MaybeCopyCookiesFromIncomingRes], ctx)
 
-      expect(ctx.serverBus.emit).not.to.be.called
+      expect(ctx.serverBus.emit).not.toHaveBeenCalled()
     })
 
     it('does not send cross:origin:cookies if there are no added cookies', async () => {
@@ -1741,14 +1978,14 @@ describe('http/response-middleware', function () {
 
       await testMiddleware([MaybeCopyCookiesFromIncomingRes], ctx)
 
-      expect(ctx.serverBus.emit).not.to.be.called
+      expect(ctx.serverBus.emit).not.toHaveBeenCalled()
     })
 
     it('sends cross:origin:cookies with origin and cookies if there are added cookies and resolves on cross:origin:cookies:received', async () => {
       const cookieJar = getCookieJarStub()
 
-      cookieJar.getAllCookies.onCall(0).returns([])
-      cookieJar.getAllCookies.onCall(1).returns([cookieStub({ key: 'cookie', value: 'value' })])
+      cookieJar.getAllCookies.mockReturnValueOnce([]).mockReturnValueOnce([cookieStub({ key: 'cookie', value: 'value' })])
+      cookieJar.getAllCookies.mockReturnValueOnce([cookieStub({ key: 'cookie', value: 'value' })])
 
       const ctx = prepareContext({
         cookieJar,
@@ -1762,23 +1999,25 @@ describe('http/response-middleware', function () {
         },
       })
 
+      const resultPromise = testMiddleware([MaybeCopyCookiesFromIncomingRes], ctx)
+
+      await flushPromises()
+
+      expect(ctx.serverBus.emit).toHaveBeenCalledWith('cross:origin:cookies', expect.any(Array))
+
       // test will hang if this.next() is not called, so this also tests
       // that we move on once receiving this event
-      ctx.serverBus.once.withArgs('cross:origin:cookies:received').yields()
+      ctx.serverBus.emit('cross:origin:cookies:received')
 
-      await testMiddleware([MaybeCopyCookiesFromIncomingRes], ctx)
+      await resultPromise
 
-      expect(ctx.serverBus.emit).to.be.calledWith('cross:origin:cookies')
+      const cookies = ctx.serverBus.emit.mock.calls[0][1]
 
-      const cookies = ctx.serverBus.emit.withArgs('cross:origin:cookies').args[0][1]
-
-      expect(cookies[0].name).to.equal('cookie')
-      expect(cookies[0].value).to.equal('value')
+      expect(cookies[0].name).toEqual('cookie')
+      expect(cookies[0].value).toEqual('value')
     })
 
     function prepareContext (props) {
-      const remoteStates = new RemoteStates(() => {})
-
       // set the primary remote state
       remoteStates.set('http://foobar.com')
 
@@ -1788,6 +2027,8 @@ describe('http/response-middleware', function () {
         getAllCookies: () => [],
         getCookies: () => [],
       }
+
+      const serverBusMock = new EventEmitter()
 
       return {
         incomingRes: {
@@ -1818,15 +2059,19 @@ describe('http/response-middleware', function () {
           throw error
         },
         serverBus: {
-          emit: sinon.stub(),
-          once: sinon.stub(),
+          emit: vi.fn<typeof serverBusMock.emit>().mockImplementation((event, ...args) => {
+            return serverBusMock.emit(event, ...args)
+          }),
+          once: vi.fn<typeof serverBusMock.once>().mockImplementation((event, listener) => {
+            return serverBusMock.once(event, listener)
+          }),
         },
         ..._.omit(props, 'incomingRes', 'res', 'req'),
       }
     }
 
-    function prepareSameOriginContext (props = {}) {
-      const appendStub = sinon.stub()
+    function prepareSameOriginContext (props: { req?: object, incomingRes?: object, res?: object } = {}) {
+      const appendStub = vi.fn()
 
       const ctx = prepareContext({
         req: {
@@ -1864,10 +2109,10 @@ describe('http/response-middleware', function () {
     let responseEndedWithEmptyBodyStub
 
     beforeEach(() => {
-      responseEndedWithEmptyBodyStub = sinon.stub()
+      responseEndedWithEmptyBodyStub = vi.fn()
     })
 
-    it('calls responseEndedWithEmptyBody on protocolManager if protocolManager present and request is correlated and response must have empty body and response is cached', function () {
+    it('calls responseEndedWithEmptyBody on protocolManager if protocolManager present and request is correlated and response must have empty body and response is cached', async function () {
       prepareContext({
         protocolManager: {
           responseEndedWithEmptyBody: responseEndedWithEmptyBodyStub,
@@ -1887,25 +2132,23 @@ describe('http/response-middleware', function () {
         },
       })
 
-      return testMiddleware([MaybeEndWithEmptyBody], ctx)
-      .then(() => {
-        expect(responseEndedWithEmptyBodyStub).to.be.calledWith(
-          sinon.match(function (actual) {
-            expect(actual.requestId).to.equal('123')
-            expect(actual.isCached).to.equal(true)
-            expect(actual.timings.cdpRequestWillBeSentTimestamp).to.equal(1)
-            expect(actual.timings.cdpRequestWillBeSentReceivedTimestamp).to.equal(2)
-            expect(actual.timings.proxyRequestReceivedTimestamp).to.equal(3)
-            expect(actual.timings.cdpLagDuration).to.equal(4)
-            expect(actual.timings.proxyRequestCorrelationDuration).to.equal(5)
-
-            return true
+      await testMiddleware([MaybeEndWithEmptyBody], ctx)
+      expect(responseEndedWithEmptyBodyStub).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestId: '123',
+          isCached: true,
+          timings: expect.objectContaining({
+            cdpRequestWillBeSentTimestamp: 1,
+            cdpRequestWillBeSentReceivedTimestamp: 2,
+            proxyRequestReceivedTimestamp: 3,
+            cdpLagDuration: 4,
+            proxyRequestCorrelationDuration: 5,
           }),
-        )
-      })
+        }),
+      )
     })
 
-    it('calls responseEndedWithEmptyBody on protocolManager if protocolManager present and retried request is correlated and response must have empty body and response is not cached', function () {
+    it('calls responseEndedWithEmptyBody on protocolManager if protocolManager present and retried request is correlated and response must have empty body and response is not cached', async function () {
       prepareContext({
         protocolManager: {
           responseEndedWithEmptyBody: responseEndedWithEmptyBodyStub,
@@ -1920,20 +2163,16 @@ describe('http/response-middleware', function () {
         },
       })
 
-      return testMiddleware([MaybeEndWithEmptyBody], ctx)
-      .then(() => {
-        expect(responseEndedWithEmptyBodyStub).to.be.calledWith(
-          sinon.match(function (actual) {
-            expect(actual.requestId).to.equal('123')
-            expect(actual.isCached).to.equal(false)
-
-            return true
-          }),
-        )
-      })
+      await testMiddleware([MaybeEndWithEmptyBody], ctx)
+      expect(responseEndedWithEmptyBodyStub).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestId: '123',
+          isCached: false,
+        }),
+      )
     })
 
-    it('does not call responseEndedWithEmptyBody on protocolManager if protocolManager present and request is correlated and response is not empty', function () {
+    it('does not call responseEndedWithEmptyBody on protocolManager if protocolManager present and request is correlated and response is not empty', async function () {
       prepareContext({
         protocolManager: {
           responseEndedWithEmptyBody: responseEndedWithEmptyBodyStub,
@@ -1948,13 +2187,11 @@ describe('http/response-middleware', function () {
         },
       })
 
-      return testMiddleware([MaybeEndWithEmptyBody], ctx)
-      .then(() => {
-        expect(responseEndedWithEmptyBodyStub).not.to.be.called
-      })
+      await testMiddleware([MaybeEndWithEmptyBody], ctx)
+      expect(responseEndedWithEmptyBodyStub).not.toHaveBeenCalled()
     })
 
-    it('does not call responseEndedWithEmptyBody on protocolManager if protocolManager present and request is not correlated', function () {
+    it('does not call responseEndedWithEmptyBody on protocolManager if protocolManager present and request is not correlated', async function () {
       prepareContext({
         protocolManager: {
           responseEndedWithEmptyBody: responseEndedWithEmptyBodyStub,
@@ -1966,13 +2203,11 @@ describe('http/response-middleware', function () {
         },
       })
 
-      return testMiddleware([MaybeEndWithEmptyBody], ctx)
-      .then(() => {
-        expect(responseEndedWithEmptyBodyStub).not.to.be.called
-      })
+      await testMiddleware([MaybeEndWithEmptyBody], ctx)
+      expect(responseEndedWithEmptyBodyStub).not.toHaveBeenCalled()
     })
 
-    it('does not call responseEndedWithEmptyBody on protocolManager if protocolManager is not present and request is correlated', function () {
+    it('does not call responseEndedWithEmptyBody on protocolManager if protocolManager is not present and request is correlated', async function () {
       prepareContext({
         req: {
           browserPreRequest: {
@@ -1984,10 +2219,184 @@ describe('http/response-middleware', function () {
         },
       })
 
-      return testMiddleware([MaybeEndWithEmptyBody], ctx)
-      .then(() => {
-        expect(responseEndedWithEmptyBodyStub).not.to.be.called
+      await testMiddleware([MaybeEndWithEmptyBody], ctx)
+      expect(responseEndedWithEmptyBodyStub).not.toHaveBeenCalled()
+    })
+
+    describe('when origin response had Content-Length: 0', function () {
+      // Regression coverage for cypress-io/cypress#16469: a DELETE 200 (or any
+      // 200 with Content-Length: 0) was being re-emitted with Transfer-Encoding:
+      // chunked, which broke clients that assumed there would be content.
+      it('sends Content-Length: 0 and ends without piping a body', async function () {
+        const setHeader = vi.fn()
+        const end = vi.fn()
+
+        prepareContext({
+          req: {},
+          incomingRes: {
+            statusCode: 200,
+          },
+          incomingResHadEmptyBody: true,
+          res: {
+            on: (event, listener) => {},
+            off: (event, listener) => {},
+            setHeader,
+            end,
+            wantsInjection: false,
+            wantsSecurityRemoved: false,
+          },
+        })
+
+        await testMiddleware([MaybeEndWithEmptyBody], ctx)
+        expect(setHeader).toHaveBeenCalledWith('Content-Length', '0')
+        expect(end).toHaveBeenCalledOnce()
       })
+
+      it('notifies protocolManager that the response ended with an empty body', async function () {
+        prepareContext({
+          protocolManager: {
+            responseEndedWithEmptyBody: responseEndedWithEmptyBodyStub,
+          },
+          req: {
+            browserPreRequest: {
+              requestId: '123',
+              cdpRequestWillBeSentTimestamp: 1,
+              cdpRequestWillBeSentReceivedTimestamp: 2,
+              proxyRequestReceivedTimestamp: 3,
+              cdpLagDuration: 4,
+              proxyRequestCorrelationDuration: 5,
+            },
+          },
+          incomingRes: {
+            statusCode: 200,
+          },
+          incomingResHadEmptyBody: true,
+          res: {
+            on: (event, listener) => {},
+            off: (event, listener) => {},
+            setHeader: vi.fn(),
+            end: vi.fn(),
+            wantsInjection: false,
+            wantsSecurityRemoved: false,
+          },
+        })
+
+        await testMiddleware([MaybeEndWithEmptyBody], ctx)
+        expect(responseEndedWithEmptyBodyStub).toHaveBeenCalledWith(
+          expect.objectContaining({
+            requestId: '123',
+            isCached: false,
+            timings: expect.objectContaining({
+              cdpRequestWillBeSentTimestamp: 1,
+              cdpRequestWillBeSentReceivedTimestamp: 2,
+              proxyRequestReceivedTimestamp: 3,
+              cdpLagDuration: 4,
+              proxyRequestCorrelationDuration: 5,
+            }),
+          }),
+        )
+      })
+
+      it('does not short-circuit when downstream wants to inject HTML', async function () {
+        const setHeader = vi.fn()
+        const end = vi.fn()
+
+        prepareContext({
+          req: {},
+          incomingRes: {
+            statusCode: 200,
+          },
+          incomingResHadEmptyBody: true,
+          res: {
+            on: (event, listener) => {},
+            off: (event, listener) => {},
+            setHeader,
+            end,
+            wantsInjection: 'full',
+            wantsSecurityRemoved: false,
+          },
+        })
+
+        await testMiddleware([MaybeEndWithEmptyBody], ctx)
+        expect(setHeader).not.toHaveBeenCalled()
+        expect(end).not.toHaveBeenCalled()
+      })
+
+      it('does not short-circuit when downstream wants security stripped', async function () {
+        const setHeader = vi.fn()
+        const end = vi.fn()
+
+        prepareContext({
+          req: {},
+          incomingRes: {
+            statusCode: 200,
+          },
+          incomingResHadEmptyBody: true,
+          res: {
+            on: (event, listener) => {},
+            off: (event, listener) => {},
+            setHeader,
+            end,
+            wantsInjection: false,
+            wantsSecurityRemoved: true,
+          },
+        })
+
+        await testMiddleware([MaybeEndWithEmptyBody], ctx)
+        expect(setHeader).not.toHaveBeenCalled()
+        expect(end).not.toHaveBeenCalled()
+      })
+
+      it('does not short-circuit when a cy.intercept route matched (interceptor may have replaced the body)', async function () {
+        const setHeader = vi.fn()
+        const end = vi.fn()
+
+        prepareContext({
+          req: { requestId: 'req-42' },
+          incomingRes: {
+            statusCode: 200,
+          },
+          incomingResHadEmptyBody: true,
+          netStubbingState: {
+            requests: { 'req-42': {} },
+          },
+          res: {
+            on: (event, listener) => {},
+            off: (event, listener) => {},
+            setHeader,
+            end,
+            wantsInjection: false,
+            wantsSecurityRemoved: false,
+          },
+        })
+
+        await testMiddleware([MaybeEndWithEmptyBody], ctx)
+        expect(setHeader).not.toHaveBeenCalled()
+        expect(end).not.toHaveBeenCalled()
+      })
+    })
+
+    it('does not short-circuit a 200 response when origin did not send Content-Length: 0', async function () {
+      const setHeader = vi.fn()
+      const end = vi.fn()
+
+      prepareContext({
+        req: {},
+        incomingRes: {
+          statusCode: 200,
+        },
+        incomingResHadEmptyBody: false,
+        res: {
+          on: (event, listener) => {},
+          off: (event, listener) => {},
+          setHeader,
+          end,
+        },
+      })
+
+      await testMiddleware([MaybeEndWithEmptyBody], ctx)
+      expect(setHeader).not.toHaveBeenCalled()
+      expect(end).not.toHaveBeenCalled()
     })
 
     function prepareContext (props) {
@@ -1995,7 +2404,9 @@ describe('http/response-middleware', function () {
         incomingRes: props.incomingRes,
         protocolManager: props.protocolManager,
         req: props.req,
-        res: {
+        incomingResHadEmptyBody: props.incomingResHadEmptyBody,
+        netStubbingState: props.netStubbingState,
+        res: props.res || {
           on: (event, listener) => {},
           off: (event, listener) => {},
           end: () => {},
@@ -2007,135 +2418,100 @@ describe('http/response-middleware', function () {
   describe('MaybeInjectHtml', function () {
     const { MaybeInjectHtml } = ResponseMiddleware
     let ctx
-    let htmlStub
+    let htmlStub: MockInstance
 
     beforeEach(() => {
-      htmlStub = sinon.spy(rewriter, 'html')
+      htmlStub = vi.spyOn(rewriter, 'html')
     })
 
     afterEach(() => {
-      htmlStub.restore()
+      htmlStub.mockRestore()
     })
 
-    it('modifyObstructiveThirdPartyCode is true for secondary requests', function () {
-      prepareContext({
-        req: {
-          proxiedUrl: 'http://www.foobar.com:3501/primary-origin.html',
-        },
-        simulatedCookies: [],
-      })
+    ;[true, false].forEach((injectDocumentDomain) => {
+      describe(`when injectDocumentDomain is ${injectDocumentDomain}`, () => {
+        const config = {
+          modifyObstructiveCode: true,
+          experimentalModifyObstructiveThirdPartyCode: true,
+          injectDocumentDomain,
+          testingType: 'e2e',
+        }
 
-      return testMiddleware([MaybeInjectHtml], ctx)
-      .then(() => {
-        expect(htmlStub).to.be.calledOnce
-        expect(htmlStub).to.be.calledWith('foo', {
-          'cspNonce': undefined,
-          'deferSourceMapRewrite': undefined,
-          'domainName': 'foobar.com',
-          'isNotJavascript': true,
-          'modifyObstructiveCode': true,
-          'modifyObstructiveThirdPartyCode': true,
-          'shouldInjectDocumentDomain': true,
-          'url': 'http://www.foobar.com:3501/primary-origin.html',
-          'useAstSourceRewriting': undefined,
-          'wantsInjection': 'full',
-          'wantsSecurityRemoved': true,
-          'simulatedCookies': [],
+        it('modifyObstructiveThirdPartyCode is true for secondary requests', async function () {
+          prepareContext({
+            req: {
+              proxiedUrl: 'http://www.foobar.com:3501/primary-origin.html',
+            },
+            config,
+            simulatedCookies: [],
+          })
+
+          await testMiddleware([MaybeInjectHtml], ctx)
+          expect(htmlStub).toHaveBeenCalledOnce()
+          expect(htmlStub).toHaveBeenCalledWith('foo', expect.objectContaining({
+            'cspNonce': undefined,
+            'domainName': 'foobar.com',
+            'modifyObstructiveCode': true,
+            'modifyObstructiveThirdPartyCode': true,
+            'shouldInjectDocumentDomain': injectDocumentDomain,
+            'url': 'http://www.foobar.com:3501/primary-origin.html',
+            'wantsInjection': 'full',
+            'wantsSecurityRemoved': true,
+            'simulatedCookies': [],
+          }))
         })
-      })
-    })
 
-    it('modifyObstructiveThirdPartyCode is false for primary requests', function () {
-      prepareContext({
-        simulatedCookies: [],
-      })
+        it('modifyObstructiveThirdPartyCode is false for primary requests', async function () {
+          prepareContext({
+            simulatedCookies: [],
+            config,
+          })
 
-      return testMiddleware([MaybeInjectHtml], ctx)
-      .then(() => {
-        expect(htmlStub).to.be.calledOnce
-        expect(htmlStub).to.be.calledWith('foo', {
-          'cspNonce': undefined,
-          'deferSourceMapRewrite': undefined,
-          'domainName': '127.0.0.1',
-          'isNotJavascript': true,
-          'modifyObstructiveCode': true,
-          'modifyObstructiveThirdPartyCode': false,
-          'shouldInjectDocumentDomain': true,
-          'url': 'http://127.0.0.1:3501/primary-origin.html',
-          'useAstSourceRewriting': undefined,
-          'wantsInjection': 'full',
-          'wantsSecurityRemoved': true,
-          'simulatedCookies': [],
+          await testMiddleware([MaybeInjectHtml], ctx)
+          expect(htmlStub).toHaveBeenCalledOnce()
+          expect(htmlStub).toHaveBeenCalledWith('foo', expect.objectContaining({
+            'cspNonce': undefined,
+            'domainName': '127.0.0.1',
+            'modifyObstructiveCode': true,
+            'modifyObstructiveThirdPartyCode': false,
+            'shouldInjectDocumentDomain': injectDocumentDomain,
+            'url': 'http://127.0.0.1:3501/primary-origin.html',
+            'wantsInjection': 'full',
+            'wantsSecurityRemoved': true,
+            'simulatedCookies': [],
+          }))
         })
-      })
-    })
 
-    it('modifyObstructiveThirdPartyCode is false when experimental flag is false', function () {
-      prepareContext({
-        req: {
-          proxiedUrl: 'http://www.foobar.com:3501/primary-origin.html',
-        },
-        config: {
-          modifyObstructiveCode: false,
-          experimentalModifyObstructiveThirdPartyCode: false,
-          experimentalSkipDomainInjection: null,
-        },
-        simulatedCookies: [],
-      })
+        it('cspNonce is set to the value stored in res.injectionNonce', async function () {
+          prepareContext({
+            req: {
+              proxiedUrl: 'http://www.foobar.com:3501/primary-origin.html',
+            },
+            config,
+            res: {
+              injectionNonce: 'fake-nonce',
+            },
+            simulatedCookies: [],
+          })
 
-      return testMiddleware([MaybeInjectHtml], ctx)
-      .then(() => {
-        expect(htmlStub).to.be.calledOnce
-        expect(htmlStub).to.be.calledWith('foo', {
-          'cspNonce': undefined,
-          'deferSourceMapRewrite': undefined,
-          'domainName': 'foobar.com',
-          'isNotJavascript': true,
-          'modifyObstructiveCode': false,
-          'modifyObstructiveThirdPartyCode': false,
-          'shouldInjectDocumentDomain': true,
-          'url': 'http://www.foobar.com:3501/primary-origin.html',
-          'useAstSourceRewriting': undefined,
-          'wantsInjection': 'full',
-          'wantsSecurityRemoved': true,
-          'simulatedCookies': [],
-        })
-      })
-    })
-
-    it('cspNonce is set to the value stored in res.injectionNonce', function () {
-      prepareContext({
-        req: {
-          proxiedUrl: 'http://www.foobar.com:3501/primary-origin.html',
-        },
-        res: {
-          injectionNonce: 'fake-nonce',
-        },
-        simulatedCookies: [],
-      })
-
-      return testMiddleware([MaybeInjectHtml], ctx)
-      .then(() => {
-        expect(htmlStub).to.be.calledOnce
-        expect(htmlStub).to.be.calledWith('foo', {
-          'cspNonce': 'fake-nonce',
-          'deferSourceMapRewrite': undefined,
-          'domainName': 'foobar.com',
-          'isNotJavascript': true,
-          'modifyObstructiveCode': true,
-          'modifyObstructiveThirdPartyCode': true,
-          'shouldInjectDocumentDomain': true,
-          'url': 'http://www.foobar.com:3501/primary-origin.html',
-          'useAstSourceRewriting': undefined,
-          'wantsInjection': 'full',
-          'wantsSecurityRemoved': true,
-          'simulatedCookies': [],
+          await testMiddleware([MaybeInjectHtml], ctx)
+          expect(htmlStub).toHaveBeenCalledOnce()
+          expect(htmlStub).toHaveBeenCalledWith('foo', expect.objectContaining({
+            'cspNonce': 'fake-nonce',
+            'domainName': 'foobar.com',
+            'modifyObstructiveCode': true,
+            'modifyObstructiveThirdPartyCode': true,
+            'shouldInjectDocumentDomain': injectDocumentDomain,
+            'url': 'http://www.foobar.com:3501/primary-origin.html',
+            'wantsInjection': 'full',
+            'wantsSecurityRemoved': true,
+            'simulatedCookies': [],
+          }))
         })
       })
     })
 
     function prepareContext (props) {
-      const remoteStates = new RemoteStates(() => {})
       const stream = Readable.from(['foo'])
 
       // set the primary remote state
@@ -2162,7 +2538,7 @@ describe('http/response-middleware', function () {
         config: {
           modifyObstructiveCode: true,
           experimentalModifyObstructiveThirdPartyCode: true,
-          experimentalSkipDomainInjection: null,
+          injectDocumentDomain: false,
         },
         remoteStates,
         debug: (formatter, ...args) => {
@@ -2179,55 +2555,45 @@ describe('http/response-middleware', function () {
   describe('MaybeRemoveSecurity', function () {
     const { MaybeRemoveSecurity } = ResponseMiddleware
     let ctx
-    let securityStub
+    let securityStub: MockInstance
 
     beforeEach(() => {
-      securityStub = sinon.spy(rewriter, 'security')
+      securityStub = vi.spyOn(rewriter, 'security')
     })
 
     afterEach(() => {
-      securityStub.restore()
+      securityStub.mockRestore()
     })
 
-    it('modifyObstructiveThirdPartyCode is true for secondary requests', function () {
+    it('modifyObstructiveThirdPartyCode is true for secondary requests', async function () {
       prepareContext({
         req: {
           proxiedUrl: 'http://www.foobar.com:3501/primary-origin.html',
         },
       })
 
-      return testMiddleware([MaybeRemoveSecurity], ctx)
-      .then(() => {
-        expect(securityStub).to.be.calledOnce
-        expect(securityStub).to.be.calledWith({
-          'deferSourceMapRewrite': undefined,
-          'isNotJavascript': true,
-          'modifyObstructiveCode': true,
-          'modifyObstructiveThirdPartyCode': true,
-          'url': 'http://www.foobar.com:3501/primary-origin.html',
-          'useAstSourceRewriting': undefined,
-        })
-      })
+      await testMiddleware([MaybeRemoveSecurity], ctx)
+      expect(securityStub).toHaveBeenCalledOnce()
+      expect(securityStub).toHaveBeenCalledWith(expect.objectContaining({
+        'modifyObstructiveCode': true,
+        'modifyObstructiveThirdPartyCode': true,
+        'url': 'http://www.foobar.com:3501/primary-origin.html',
+      }))
     })
 
-    it('modifyObstructiveThirdPartyCode is false for primary requests', function () {
+    it('modifyObstructiveThirdPartyCode is false for primary requests', async function () {
       prepareContext({})
 
-      return testMiddleware([MaybeRemoveSecurity], ctx)
-      .then(() => {
-        expect(securityStub).to.be.calledOnce
-        expect(securityStub).to.be.calledWith({
-          'deferSourceMapRewrite': undefined,
-          'isNotJavascript': true,
-          'modifyObstructiveCode': true,
-          'modifyObstructiveThirdPartyCode': false,
-          'url': 'http://127.0.0.1:3501/primary-origin.html',
-          'useAstSourceRewriting': undefined,
-        })
-      })
+      await testMiddleware([MaybeRemoveSecurity], ctx)
+      expect(securityStub).toHaveBeenCalledOnce()
+      expect(securityStub).toHaveBeenCalledWith(expect.objectContaining({
+        'modifyObstructiveCode': true,
+        'modifyObstructiveThirdPartyCode': false,
+        'url': 'http://127.0.0.1:3501/primary-origin.html',
+      }))
     })
 
-    it('modifyObstructiveThirdPartyCode is false when experimental flag is false', function () {
+    it('modifyObstructiveThirdPartyCode is false when experimental flag is false', async function () {
       prepareContext({
         req: {
           proxiedUrl: 'http://www.foobar.com:3501/primary-origin.html',
@@ -2238,22 +2604,16 @@ describe('http/response-middleware', function () {
         },
       })
 
-      return testMiddleware([MaybeRemoveSecurity], ctx)
-      .then(() => {
-        expect(securityStub).to.be.calledOnce
-        expect(securityStub).to.be.calledWith({
-          'deferSourceMapRewrite': undefined,
-          'isNotJavascript': true,
-          'modifyObstructiveCode': false,
-          'modifyObstructiveThirdPartyCode': false,
-          'url': 'http://www.foobar.com:3501/primary-origin.html',
-          'useAstSourceRewriting': undefined,
-        })
-      })
+      await testMiddleware([MaybeRemoveSecurity], ctx)
+      expect(securityStub).toHaveBeenCalledOnce()
+      expect(securityStub).toHaveBeenCalledWith(expect.objectContaining({
+        'modifyObstructiveCode': false,
+        'modifyObstructiveThirdPartyCode': false,
+        'url': 'http://www.foobar.com:3501/primary-origin.html',
+      }))
     })
 
     function prepareContext (props) {
-      const remoteStates = new RemoteStates(() => {})
       const stream = Readable.from(['foo'])
 
       // set the primary remote state
@@ -2293,16 +2653,190 @@ describe('http/response-middleware', function () {
     }
   })
 
-  describe('GzipBody', function () {
-    const { GzipBody } = ResponseMiddleware
+  describe('MaybeInjectServiceWorker', function () {
+    const { MaybeInjectServiceWorker } = ResponseMiddleware
     let ctx
-    let responseStreamReceivedStub
+    let injectIntoServiceWorkerStub: MockInstance
 
     beforeEach(() => {
-      responseStreamReceivedStub = sinon.stub()
+      injectIntoServiceWorkerStub = vi.spyOn(serviceWorkerInjector, 'injectIntoServiceWorker')
     })
 
-    it('calls responseStreamReceived on protocolManager if protocolManager present and request is correlated', function () {
+    afterEach(() => {
+      injectIntoServiceWorkerStub.mockRestore()
+    })
+
+    it('does not rewrite the service worker if the request does not have the service worker header', async function () {
+      prepareContext({
+        req: {
+          proxiedUrl: 'http://www.foobar.com:3501/not-service-worker.js',
+        },
+      })
+
+      await testMiddleware([MaybeInjectServiceWorker], ctx)
+      expect(injectIntoServiceWorkerStub).not.toHaveBeenCalled()
+    })
+
+    it('does not rewrite the service worker if the browser is non-chromium', async function () {
+      prepareContext({
+        req: {
+          proxiedUrl: 'http://www.foobar.com:3501/service-worker.js',
+          headers: {
+            'service-worker': 'script',
+          },
+        },
+        getCurrentBrowser: () => {
+          return {
+            family: 'firefox',
+          }
+        },
+      })
+
+      await testMiddleware([MaybeInjectServiceWorker], ctx)
+      expect(injectIntoServiceWorkerStub).not.toHaveBeenCalled()
+    })
+
+    it('rewrites the service worker in chromium based browsers', async function () {
+      prepareContext({
+        req: {
+          proxiedUrl: 'http://www.foobar.com:3501/service-worker.js',
+          headers: {
+            'service-worker': 'script',
+          },
+        },
+      })
+
+      await testMiddleware([MaybeInjectServiceWorker], ctx)
+      expect(injectIntoServiceWorkerStub).toHaveBeenCalledOnce()
+
+      // toHaveBeenCalledWith/toEqual treat an `undefined`-valued property as
+      // equivalent to an absent key, so asserting the option key by name that
+      // way would pass even against a differently-named key. toStrictEqual
+      // does not make that elision, so it actually pins the key name.
+      expect(injectIntoServiceWorkerStub.mock.calls[0]).toStrictEqual(['foo', { disableServiceWorkerNavigationPreload: undefined, reservedPathPrefixes: undefined }])
+    })
+
+    it('passes the reserved path prefixes when useBrowserNetworkInterception is set on ctx', async function () {
+      prepareContext({
+        req: {
+          proxiedUrl: 'http://www.foobar.com:3501/service-worker.js',
+          headers: {
+            'service-worker': 'script',
+          },
+        },
+        reservedPathPrefixes: ['/__/', '/__cypress/'],
+        useBrowserNetworkInterception: true,
+      })
+
+      await testMiddleware([MaybeInjectServiceWorker], ctx)
+
+      expect(injectIntoServiceWorkerStub.mock.calls[0]).toStrictEqual(['foo', {
+        disableServiceWorkerNavigationPreload: true,
+        reservedPathPrefixes: ['/__/', '/__cypress/'],
+      }])
+    })
+
+    it('does not pass the reserved path prefixes when useBrowserNetworkInterception is unset on ctx', async function () {
+      prepareContext({
+        req: {
+          proxiedUrl: 'http://www.foobar.com:3501/service-worker.js',
+          headers: {
+            'service-worker': 'script',
+          },
+        },
+        reservedPathPrefixes: ['/__/', '/__cypress/'],
+      })
+
+      await testMiddleware([MaybeInjectServiceWorker], ctx)
+
+      expect(injectIntoServiceWorkerStub.mock.calls[0][1]).toStrictEqual({ disableServiceWorkerNavigationPreload: undefined, reservedPathPrefixes: undefined })
+    })
+
+    it('prepends the navigation preload expression when useBrowserNetworkInterception is set on ctx', async function () {
+      prepareContext({
+        req: {
+          proxiedUrl: 'http://www.foobar.com:3501/service-worker.js',
+          headers: {
+            'service-worker': 'script',
+          },
+        },
+        useBrowserNetworkInterception: true,
+      })
+
+      await testMiddleware([MaybeInjectServiceWorker], ctx)
+      expect(injectIntoServiceWorkerStub).toHaveBeenCalledWith('foo', expect.objectContaining({ disableServiceWorkerNavigationPreload: true }))
+
+      const rewritten = await streamToString(ctx.incomingResStream)
+
+      expect(rewritten).toContain(DISABLE_NAVIGATION_PRELOAD_EXPRESSION)
+    })
+
+    it('does not prepend the navigation preload expression when useBrowserNetworkInterception is unset on ctx', async function () {
+      prepareContext({
+        req: {
+          proxiedUrl: 'http://www.foobar.com:3501/service-worker.js',
+          headers: {
+            'service-worker': 'script',
+          },
+        },
+      })
+
+      await testMiddleware([MaybeInjectServiceWorker], ctx)
+
+      const rewritten = await streamToString(ctx.incomingResStream)
+
+      expect(rewritten).not.toContain(DISABLE_NAVIGATION_PRELOAD_EXPRESSION)
+    })
+
+    function prepareContext (props) {
+      const stream = Readable.from(['foo'])
+
+      // set the primary remote state
+      remoteStates.set('http://127.0.0.1:3501')
+
+      ctx = {
+        incomingRes: {
+          headers: {},
+          ...props.incomingRes,
+        },
+        res: {
+          on: (event, listener) => {},
+          off: (event, listener) => {},
+          ...props.res,
+        },
+        req: {
+          ...props.req,
+        },
+        makeResStreamPlainText () {},
+        incomingResStream: stream,
+        config: {},
+        remoteStates,
+        debug: (formatter, ...args) => {
+          debugVerbose(`%s %s %s ${formatter}`, ctx.req.method, ctx.req.proxiedUrl, ctx.stage, ...args)
+        },
+        onError (error) {
+          throw error
+        },
+        getCurrentBrowser: () => {
+          return {
+            family: 'chromium',
+          }
+        },
+        ..._.omit(props, 'incomingRes', 'res', 'req'),
+      }
+    }
+  })
+
+  describe('NotifyResponseStreamReceived and CompressBody', function () {
+    const { CompressBody, NotifyResponseStreamReceived } = ResponseMiddleware
+    let ctx
+    let responseStreamReceivedStub: Mock
+
+    beforeEach(() => {
+      responseStreamReceivedStub = vi.fn()
+    })
+
+    it('calls responseStreamReceived on protocolManager if protocolManager present and request is correlated', async function () {
       const stream = Readable.from(['foo'])
       const headers = { 'content-encoding': 'gzip' }
       const res = {
@@ -2332,28 +2866,26 @@ describe('http/response-middleware', function () {
         incomingResStream: stream,
       })
 
-      return testMiddleware([GzipBody], ctx)
-      .then(() => {
-        expect(responseStreamReceivedStub).to.be.calledWith(
-          sinon.match(function (actual) {
-            expect(actual.requestId).to.equal('123')
-            expect(actual.responseHeaders).to.equal(headers)
-            expect(actual.isAlreadyGunzipped).to.equal(true)
-            expect(actual.responseStream).to.equal(stream)
-            expect(actual.res).to.equal(res)
-            expect(actual.timings.cdpRequestWillBeSentTimestamp).to.equal(1)
-            expect(actual.timings.cdpRequestWillBeSentReceivedTimestamp).to.equal(2)
-            expect(actual.timings.proxyRequestReceivedTimestamp).to.equal(3)
-            expect(actual.timings.cdpLagDuration).to.equal(4)
-            expect(actual.timings.proxyRequestCorrelationDuration).to.equal(5)
-
-            return true
-          }),
-        )
-      })
+      await testMiddleware([NotifyResponseStreamReceived], ctx)
+      expect(responseStreamReceivedStub).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestId: '123',
+          responseHeaders: headers,
+          isAlreadyGunzipped: true,
+          responseStream: stream,
+          res,
+          timings: {
+            cdpRequestWillBeSentTimestamp: 1,
+            cdpRequestWillBeSentReceivedTimestamp: 2,
+            proxyRequestReceivedTimestamp: 3,
+            cdpLagDuration: 4,
+            proxyRequestCorrelationDuration: 5,
+          },
+        }),
+      )
     })
 
-    it('calls responseStreamReceived on protocolManager if protocolManager present and retried request is correlated', function () {
+    it('calls responseStreamReceived on protocolManager if protocolManager present and retried request is correlated', async function () {
       const stream = Readable.from(['foo'])
       const headers = { 'content-encoding': 'gzip' }
       const res = {
@@ -2378,23 +2910,19 @@ describe('http/response-middleware', function () {
         incomingResStream: stream,
       })
 
-      return testMiddleware([GzipBody], ctx)
-      .then(() => {
-        expect(responseStreamReceivedStub).to.be.calledWith(
-          sinon.match(function (actual) {
-            expect(actual.requestId).to.equal('123')
-            expect(actual.responseHeaders).to.equal(headers)
-            expect(actual.isAlreadyGunzipped).to.equal(true)
-            expect(actual.responseStream).to.equal(stream)
-            expect(actual.res).to.equal(res)
-
-            return true
-          }),
-        )
-      })
+      await testMiddleware([NotifyResponseStreamReceived], ctx)
+      expect(responseStreamReceivedStub).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestId: '123',
+          responseHeaders: headers,
+          isAlreadyGunzipped: true,
+          responseStream: stream,
+          res,
+        }),
+      )
     })
 
-    it('does not call responseStreamReceived on protocolManager if protocolManager present and request is not correlated', function () {
+    it('does not call responseStreamReceived on protocolManager if protocolManager present and request is not correlated', async function () {
       const stream = Readable.from(['foo'])
       const headers = { 'content-encoding': 'gzip' }
 
@@ -2415,13 +2943,11 @@ describe('http/response-middleware', function () {
         incomingResStream: stream,
       })
 
-      return testMiddleware([GzipBody], ctx)
-      .then(() => {
-        expect(responseStreamReceivedStub).not.to.be.called
-      })
+      await testMiddleware([NotifyResponseStreamReceived], ctx)
+      expect(responseStreamReceivedStub).not.toHaveBeenCalled()
     })
 
-    it('does not call responseStreamReceived on protocolManager if protocolManager is not present and request is correlated', function () {
+    it('does not call responseStreamReceived on protocolManager if protocolManager is not present and request is correlated', async function () {
       const stream = Readable.from(['foo'])
       const headers = { 'content-encoding': 'gzip' }
 
@@ -2442,22 +2968,236 @@ describe('http/response-middleware', function () {
         incomingResStream: stream,
       })
 
-      return testMiddleware([GzipBody], ctx)
-      .then(() => {
-        expect(responseStreamReceivedStub).not.to.be.called
+      await testMiddleware([NotifyResponseStreamReceived], ctx)
+      expect(responseStreamReceivedStub).not.toHaveBeenCalled()
+    })
+
+    it('calls responseStreamReceived with isAlreadyBrotliDecompressed when isBrotliDecompressed is true', async function () {
+      const stream = Readable.from(['foo'])
+      const headers = { 'content-encoding': 'br' }
+      const res = {
+        on: (event, listener) => {},
+        off: (event, listener) => {},
+      }
+
+      prepareContext({
+        protocolManager: {
+          responseStreamReceived: responseStreamReceivedStub,
+        },
+        req: {
+          browserPreRequest: {
+            requestId: '123',
+            cdpRequestWillBeSentTimestamp: 1,
+            cdpRequestWillBeSentReceivedTimestamp: 2,
+            proxyRequestReceivedTimestamp: 3,
+            cdpLagDuration: 4,
+            proxyRequestCorrelationDuration: 5,
+          },
+        },
+        res,
+        incomingRes: {
+          headers,
+        },
+        isGunzipped: false,
+        isBrotliDecompressed: true,
+        incomingResStream: stream,
       })
+
+      await testMiddleware([NotifyResponseStreamReceived], ctx)
+      expect(responseStreamReceivedStub).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestId: '123',
+          responseHeaders: headers,
+          isAlreadyGunzipped: false,
+          isAlreadyBrotliDecompressed: true,
+          responseStream: stream,
+          res,
+        }),
+      )
+    })
+
+    it('does not re-compress gzip when contentEncodingOrder includes gzip but isGunzipped is false', async function () {
+      const plaintext = 'foo'
+      const stream = Readable.from([plaintext])
+      const res = {
+        on: (_e: string, _l: () => void) => {},
+        off: (_e: string, _l: () => void) => {},
+      }
+
+      prepareContext({
+        req: {},
+        res,
+        incomingRes: { headers: { 'content-encoding': 'gzip' } },
+        isGunzipped: false,
+        isBrotliDecompressed: false,
+        contentEncodingOrder: ['gzip'],
+        incomingResStream: stream,
+      })
+
+      await testMiddleware([CompressBody], ctx)
+
+      const chunks: Buffer[] = []
+
+      for await (const chunk of ctx.incomingResStream) {
+        chunks.push(Buffer.from(chunk))
+      }
+
+      const output = Buffer.concat(chunks).toString()
+
+      expect(output).toBe(plaintext)
+      expect(zlib.gzipSync(Buffer.from(plaintext)).toString()).not.toBe(plaintext)
+    })
+
+    it('does not re-compress br when contentEncodingOrder includes br but isBrotliDecompressed is false', async function () {
+      const plaintext = 'bar'
+      const stream = Readable.from([plaintext])
+      const res = {
+        on: (_e: string, _l: () => void) => {},
+        off: (_e: string, _l: () => void) => {},
+      }
+
+      prepareContext({
+        req: {},
+        res,
+        incomingRes: { headers: { 'content-encoding': 'br' } },
+        isGunzipped: false,
+        isBrotliDecompressed: false,
+        contentEncodingOrder: ['br'],
+        incomingResStream: stream,
+      })
+
+      await testMiddleware([CompressBody], ctx)
+
+      const chunks: Buffer[] = []
+
+      for await (const chunk of ctx.incomingResStream) {
+        chunks.push(Buffer.from(chunk))
+      }
+
+      const output = Buffer.concat(chunks).toString()
+
+      expect(output).toBe(plaintext)
     })
 
     function prepareContext (props) {
+      const order =
+        props.contentEncodingOrder !== undefined
+          ? [...props.contentEncodingOrder]
+          : []
+
+      if (props.contentEncodingOrder === undefined) {
+        if (props.isGunzipped) order.push('gzip')
+
+        if (props.isBrotliDecompressed) order.push('br')
+      }
+
       ctx = {
         incomingRes: props.incomingRes,
         protocolManager: props.protocolManager,
         req: props.req,
         res: props.res,
         isGunzipped: props.isGunzipped,
+        isBrotliDecompressed: props.isBrotliDecompressed,
+        contentEncodingOrder: order,
         incomingResStream: props.incomingResStream,
         makeResStreamPlainText: props.makeResStreamPlainText,
       }
     }
+  })
+
+  describe('AttachPlainTextStreamFn', function () {
+    const { AttachPlainTextStreamFn } = ResponseMiddleware
+
+    // https://github.com/cypress-io/cypress/issues/34387
+    it.each(['x-gzip', ' X-GZIP '])('decompresses the gzip alias in %s', async function (encoding) {
+      const ctx = {
+        debug: () => {},
+        res: { on: () => {}, off: () => {} },
+        incomingRes: { headers: { 'content-encoding': encoding } },
+        incomingResStream: Readable.from([zlib.gzipSync(Buffer.from('aliased'))]),
+        isGunzipped: false,
+        isBrotliDecompressed: false,
+        contentEncodingOrder: [],
+        makeResStreamPlainText: () => {},
+        onError: (err) => {
+          throw err
+        },
+      }
+
+      await testMiddleware([AttachPlainTextStreamFn], ctx)
+      ctx.makeResStreamPlainText()
+      expect(ctx.contentEncodingOrder).toEqual(['gzip'])
+      expect(ctx.isGunzipped).toBe(true)
+      const chunks: Buffer[] = []
+
+      for await (const chunk of ctx.incomingResStream) {
+        chunks.push(Buffer.from(chunk))
+      }
+      expect(Buffer.concat(chunks).toString()).toBe('aliased')
+    })
+
+    it('decompresses Brotli and sets isBrotliDecompressed when content-encoding is br', async function () {
+      const compressed = zlib.brotliCompressSync(Buffer.from('hello'))
+      const stream = Readable.from([compressed])
+      const ctx = {
+        debug: () => {},
+        res: {
+          on: (_event, _listener) => {},
+          off: (_event, _listener) => {},
+        },
+        incomingRes: { headers: { 'content-encoding': 'br' } },
+        incomingResStream: stream,
+        isGunzipped: false,
+        isBrotliDecompressed: false,
+        contentEncodingOrder: [],
+        makeResStreamPlainText: () => {},
+        onError: (err) => {
+          throw err
+        },
+      }
+
+      await testMiddleware([AttachPlainTextStreamFn], ctx)
+      ctx.makeResStreamPlainText()
+      expect(ctx.isBrotliDecompressed).toBe(true)
+      expect(ctx.contentEncodingOrder).toEqual(['br'])
+      const chunks: Buffer[] = []
+
+      for await (const chunk of ctx.incomingResStream) {
+        chunks.push(Buffer.from(chunk))
+      }
+      expect(Buffer.concat(chunks).toString()).toBe('hello')
+    })
+
+    it.each(['gzip, br', 'x-gzip, br'])('decompresses layered content-encoding in reverse order for %s', async function (encoding) {
+      // content-encoding: gzip, br means gzip applied first, then br. Wire format: br(gzip(data)).
+      const inner = zlib.gzipSync(Buffer.from('layered'))
+      const outer = zlib.brotliCompressSync(inner)
+      const stream = Readable.from([outer])
+      const ctx = {
+        debug: () => {},
+        res: { on: () => {}, off: () => {} },
+        incomingRes: { headers: { 'content-encoding': encoding } },
+        incomingResStream: stream,
+        isGunzipped: false,
+        isBrotliDecompressed: false,
+        contentEncodingOrder: [],
+        makeResStreamPlainText: () => {},
+        onError: (err) => {
+          throw err
+        },
+      }
+
+      await testMiddleware([AttachPlainTextStreamFn], ctx)
+      ctx.makeResStreamPlainText()
+      expect(ctx.contentEncodingOrder).toEqual(['gzip', 'br'])
+      expect(ctx.isGunzipped).toBe(true)
+      expect(ctx.isBrotliDecompressed).toBe(true)
+      const chunks: Buffer[] = []
+
+      for await (const chunk of ctx.incomingResStream) {
+        chunks.push(Buffer.from(chunk))
+      }
+      expect(Buffer.concat(chunks).toString()).toBe('layered')
+    })
   })
 })

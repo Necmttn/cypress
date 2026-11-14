@@ -3,17 +3,19 @@ import React from 'react'
 import { observer } from 'mobx-react'
 import GlobeIcon from '@packages/frontend-shared/src/assets/icons/globe_x12.svg'
 
-import SessionsModel from './sessions-model'
+import type SessionsModel from './sessions-model'
 import events from '../lib/events'
 import Collapsible from '../collapsible/collapsible'
 import Tag from '../lib/tag'
 import FlashOnClick from '../lib/flash-on-click'
 
-export interface SessionPanelProps {
+interface SessionPanelProps {
   model: Record<string, SessionsModel>
 }
 
-const SessionRow = (model: SessionsModel) => {
+type SessionRowProps = Pick<SessionsModel, 'name' | 'isGlobalSession' | 'id' | 'status' | 'testId' | 'tagType'>
+
+const SessionRow: React.FC<SessionRowProps> = (model) => {
   const { name, isGlobalSession, id, status, testId } = model
 
   const printToConsole = (id) => {
@@ -43,7 +45,7 @@ const SessionRow = (model: SessionsModel) => {
   )
 }
 
-const Sessions = ({ model }: SessionPanelProps) => {
+const Sessions: React.FC<SessionPanelProps> = ({ model }) => {
   const sessions = Object.values(model)
 
   if (sessions.length === 0) {

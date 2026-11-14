@@ -2,52 +2,34 @@ import type { Compiler, Compilation } from 'webpack'
 import type webpack from 'webpack'
 import type { EventEmitter } from 'events'
 import _ from 'lodash'
-import fs, { PathLike } from 'fs-extra'
+import fs from 'fs-extra'
 import path from 'path'
 
-type UtimesSync = (path: PathLike, atime: string | number | Date, mtime: string | number | Date) => void
-
-export interface CypressCTWebpackPluginOptions {
+interface CypressCTWebpackPluginOptions {
   files: Cypress.Cypress['spec'][]
   projectRoot: string
   supportFile: string | false
   devServerEvents: EventEmitter
-  webpack: Function
+  webpack: typeof webpack
   indexHtmlFile: string
 }
 
-export type CypressCTContextOptions = Omit<CypressCTWebpackPluginOptions, 'devServerEvents' | 'webpack'>
+type CypressCTContextOptions = Omit<CypressCTWebpackPluginOptions, 'devServerEvents' | 'webpack'>
 
 export interface CypressCTWebpackContext {
   _cypress: CypressCTContextOptions
 }
 
 /**
- * @internal
- */
-export type Webpack45Compilation = Compilation & {
-  // TODO: Drop these additional Webpack 4 types
-  inputFileSystem: {
-    fileSystem: {
-      utimesSync: UtimesSync
-    }
-  }
-}
-
-export const normalizeError = (error: Error | string) => {
-  return typeof error === 'string' ? error : error.message
-}
-
-/**
- * A webpack 4/5 compatible Cypress Component Testing Plugin
+ * A webpack 5 compatible Cypress Component Testing Plugin
  *
  * @internal
  */
 export class CypressCTWebpackPlugin {
   private files: Cypress.Cypress['spec'][] = []
   private supportFile: string | false
-  private compilation: Webpack45Compilation | null = null
-  private webpack: Function
+  private compilation: Compilation | null = null
+  private webpack: typeof webpack
   private indexHtmlFile: string
 
   private readonly projectRoot: string
@@ -69,27 +51,35 @@ export class CypressCTWebpackPlugin {
       supportFile: this.supportFile,
       indexHtmlFile: this.indexHtmlFile,
     }
-  };
+  }
 
-  private beforeCompile = async (compilationParams: object, callback: Function) => {
+  private beforeCompile = async (compilationParams: object, callback: () => void) => {
     if (!this.compilation) {
       callback()
 
       return
     }
 
-    // Ensure we don't try to load files that have been removed from the file system
-    // but have not yet been detected by the onSpecsChange handler
+    let files: Cypress.Spec[]
+    let foundFiles: (Cypress.Spec | null)[]
 
-    const foundFiles = (await Promise.all(this.files.map(async (file) => {
-      try {
-        const exists = await fs.pathExists(file.absolute)
+    // onSpecsChange can replace the list while the checks are pending. Checking again until
+    // the list holds still means this compile builds the newest list, filtered.
+    do {
+      files = this.files
 
-        return exists ? file : null
-      } catch (e) {
-        return null
-      }
-    })))
+      // Ensure we don't try to load files that have been removed from the file system
+      // but have not yet been detected by the onSpecsChange handler
+      foundFiles = await Promise.all(files.map(async (file) => {
+        try {
+          const exists = await fs.pathExists(file.absolute)
+
+          return exists ? file : null
+        } catch (e) {
+          return null
+        }
+      }))
+    } while (this.files !== files)
 
     this.files = foundFiles.filter((file) => file !== null) as Cypress.Spec[]
 
@@ -108,7 +98,7 @@ export class CypressCTWebpackPlugin {
    *
    * See https://github.com/cypress-io/cypress/issues/24398
    */
-  private onSpecsChange = async (specs: Cypress.Cypress['spec'][]) => {
+  private onSpecsChange = async ({ specs, options }: { specs: Cypress.Cypress['spec'][], options?: { neededForJustInTimeCompile: boolean } }) => {
     if (!this.compilation || _.isEqual(specs, this.files)) {
       return
     }
@@ -117,32 +107,25 @@ export class CypressCTWebpackPlugin {
     const inputFileSystem = this.compilation.inputFileSystem
     // TODO: don't use a sync fs method here
     // eslint-disable-next-line no-restricted-syntax
-    const utimesSync: UtimesSync = inputFileSystem.fileSystem.utimesSync ?? fs.utimesSync
+    const utimesSync = (inputFileSystem as any).utimesSync ?? fs.utimesSync
+    const indexHtmlFilePath = path.isAbsolute(this.indexHtmlFile) ? this.indexHtmlFile : path.join(this.projectRoot, this.indexHtmlFile)
 
-    utimesSync(path.join(this.projectRoot, this.indexHtmlFile), new Date(), new Date())
+    utimesSync(indexHtmlFilePath, new Date(), new Date())
   }
 
   /**
    * The webpack compiler generates a new `compilation` each time it compiles, so
    * we have to apply hooks to it fresh each time
    *
-   * @param compilation webpack 4 `compilation.Compilation`, webpack 5
-   *   `Compilation`
+   * @param compilation webpack 5 `Compilation`
    */
-  private addCompilationHooks = (compilation: Webpack45Compilation) => {
+  private addCompilationHooks = (compilation: Compilation) => {
     this.compilation = compilation
 
-    /* istanbul ignore next */
-    if ('NormalModule' in this.webpack) {
-      // Webpack 5
-      const loader = (this.webpack as typeof webpack).NormalModule.getCompilationHooks(compilation).loader
+    const loader = this.webpack.NormalModule.getCompilationHooks(compilation).loader
 
-      loader.tap('CypressCTPlugin', this.addLoaderContext)
-    } else {
-      // Webpack 4
-      compilation.hooks.normalModuleLoader.tap('CypressCTPlugin', this.addLoaderContext)
-    }
-  };
+    loader.tap('CypressCTPlugin', this.addLoaderContext)
+  }
 
   /**
    * The plugin's entrypoint, called once by webpack when the compiler is initialized.
@@ -152,7 +135,7 @@ export class CypressCTWebpackPlugin {
 
     this.devServerEvents.on('dev-server:specs:changed', this.onSpecsChange)
     _compiler.hooks.beforeCompile.tapAsync('CypressCTPlugin', this.beforeCompile)
-    _compiler.hooks.compilation.tap('CypressCTPlugin', (compilation) => this.addCompilationHooks(compilation as Webpack45Compilation))
+    _compiler.hooks.compilation.tap('CypressCTPlugin', (compilation) => this.addCompilationHooks(compilation))
     _compiler.hooks.done.tap('CypressCTPlugin', () => {
       this.devServerEvents.emit('dev-server:compile:success')
     })

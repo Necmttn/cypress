@@ -3,45 +3,55 @@ import Debug from 'debug'
 import EventEmitter from 'events'
 import _ from 'lodash'
 import { getCtx } from '@packages/data-context'
-import { handleGraphQLSocketRequest } from '@packages/graphql/src/makeGraphQLServer'
-import { onNetStubbingEvent } from '@packages/net-stubbing'
+import { handleRunnerGraphQLSocketRequest } from '@packages/data-context/graphql/makeGraphQLServer'
+import type { ForInterceptRegistration } from '@packages/network-interception'
 import * as socketIo from '@packages/socket'
-import { CDPSocketServer } from '@packages/socket/lib/cdp-socket'
-
-import firefoxUtil from './browsers/firefox-util'
+import { CDPSocketServer } from '@packages/socket'
+import type { SocketBroadcaster, Socket } from '@packages/socket'
 import * as errors from './errors'
-import fixture from './fixture'
+import { get as fixtureGet } from './fixture'
 import { ensureProp } from './util/class-helpers'
-import { getUserEditor, setUserEditor } from './util/editors'
-import { openFile, OpenFileDetails } from './util/file-opener'
-import open from './util/open'
 import type { DestroyableHttpServer } from './util/server_destroy'
 import * as session from './session'
-import { cookieJar, SameSiteContext, automationCookieToToughCookie, SerializableAutomationCookie } from './util/cookies'
+import type { SameSiteContext, SerializableAutomationCookie } from './automation/cookie/jar'
+import { cookieJar, automationCookieToToughCookie } from './automation/cookie/jar'
 import runEvents from './plugins/run_events'
 import type { OTLPTraceExporterCloud } from '@packages/telemetry'
-import { telemetry } from '@packages/telemetry'
+import { getSpanNames, telemetry } from '@packages/telemetry'
+import type { Automation } from './automation'
+import { openExternal } from './gui/links'
 
-// eslint-disable-next-line no-duplicate-imports
-import type { Socket } from '@packages/socket'
-
-import type { RunState, CachedTestState, ProtocolManagerShape } from '@packages/types'
-import { cors } from '@packages/network'
+import type { RunState, CachedTestState, ProtocolManagerShape, AutomationCommands, SpecWithRelativeRoot } from '@packages/types'
+import { RUN_ALL_SPECS_KEY } from '@packages/types'
 import memory from './browsers/memory'
 import { privilegedCommandsManager } from './privileged-commands/privileged-commands-manager'
+import type { StudioInitOptions } from './types/studio'
 
 type StartListeningCallbacks = {
   onSocketConnection: (socket: any) => void
 }
 
 const debug = Debug('cypress:server:socket-base')
+const debugTelemetry = Debug('cypress:server:telemetry')
+
+function getInterceptRegistration (options: StartListeningOptions): ForInterceptRegistration {
+  return options.interceptRegistration
+}
 
 const retry = (fn: (res: any) => void) => {
   return Bluebird.delay(25).then(fn)
 }
 
-export class SocketBase {
-  private _sendResetBrowserTabsForNextTestMessage
+type GenericHandler = { on: (event: string, listener: (...args: any[]) => void) => void }
+type ExtendedSocketIoServer = socketIo.SocketIOServer & GenericHandler
+type ExtendedSocketIoNamespace = socketIo.SocketIONamespace & GenericHandler
+
+type ExtendedCDPSocketServer = CDPSocketServer & GenericHandler
+
+export type StartListeningOptions = Record<string, any> & { isTrustedOrigin: (origin: string) => boolean }
+
+export class SocketBase implements SocketBroadcaster {
+  private _sendResetBrowserTabsForNextSpecMessage
   private _sendResetBrowserStateMessage
   private _isRunnerSocketConnected
   private _sendFocusBrowserMessage
@@ -50,8 +60,8 @@ export class SocketBase {
   protected inRunMode: boolean
   protected supportsRunEvents: boolean
   protected ended: boolean
-  protected _socketIo?: socketIo.SocketIOServer
-  protected _cdpIo?: CDPSocketServer
+  protected _socketIo?: ExtendedSocketIoServer
+  protected _cdpIo?: ExtendedCDPSocketServer
   localBus: EventEmitter
 
   constructor (config: Record<string, any>) {
@@ -69,6 +79,14 @@ export class SocketBase {
 
   get cdpIo () {
     return this._cdpIo
+  }
+
+  onBeforeSave (config) {
+
+  }
+
+  onAfterSave (config, error) {
+
   }
 
   getIos () {
@@ -107,28 +125,29 @@ export class SocketBase {
     throw new Error(`Could not process '${message}'. No automation clients connected.`)
   }
 
-  createCDPIo (socketIoRoute: string) {
-    return new CDPSocketServer({ path: socketIoRoute })
+  createCDPIo (socketIoRoute: string, isTrustedOrigin: (origin: string) => boolean) {
+    return new CDPSocketServer({
+      path: socketIoRoute,
+      isTrustedOrigin,
+      allowMainFrameChildren: !!process.env.CYPRESS_INTERNAL_E2E_TESTING_SELF,
+    })
   }
 
   createSocketIo (server: DestroyableHttpServer, path: string, cookie: string | boolean) {
     return new socketIo.SocketIOServer(server, {
       path,
-      cookie: {
-        name: cookie,
-      },
+      cookie: typeof cookie === 'string' ? { name: cookie } : cookie,
       destroyUpgrade: false,
       serveClient: false,
-      // TODO(webkit): the websocket socket.io transport is busted in WebKit, need polling
-      transports: ['websocket', 'polling'],
+      transports: ['websocket'],
     })
   }
 
   startListening (
     server: DestroyableHttpServer,
-    automation,
+    automation: Automation,
     config,
-    options,
+    options: StartListeningOptions,
     callbacks: StartListeningCallbacks,
   ) {
     let runState: RunState | undefined = undefined
@@ -146,9 +165,13 @@ export class SocketBase {
       onChromiumRun () {},
       onReloadBrowser () {},
       closeExtraTargets () {},
+      getSavedState () {},
       onSavedStateChanged () {},
       onTestFileChange () {},
       onCaptureVideoFrames () {},
+      onStudioInit () {},
+      onStudioDestroy () {},
+      onCyPromptReady () {},
     })
 
     let automationClient
@@ -156,11 +179,11 @@ export class SocketBase {
 
     const { socketIoRoute, socketIoCookie } = config
 
-    const socketIo = this._socketIo = this.createSocketIo(server, socketIoRoute, socketIoCookie)
-    const cdpIo = this._cdpIo = this.createCDPIo(socketIoRoute)
+    const socketIo = this._socketIo = this.createSocketIo(server, socketIoRoute, socketIoCookie) as ExtendedSocketIoServer
+    const cdpIo = this._cdpIo = this.createCDPIo(socketIoRoute, options.isTrustedOrigin)
 
     automation.use({
-      onPush: (message, data) => {
+      onPush: async (message, data) => {
         socketIo.emit('automation:push:message', message, data)
         cdpIo.emit('automation:push:message', message, data)
       },
@@ -176,22 +199,19 @@ export class SocketBase {
       return this.onAutomation(automationClient, message, data, id)
     }
 
-    const automationRequest = (message: string, data: Record<string, unknown>) => {
+    const automationRequest = <T extends keyof AutomationCommands>(
+      message: T,
+      data: AutomationCommands[T]['dataType'],
+    ) => {
+      debug('request: %s', message)
+
       return automation.request(message, data, onAutomationClientRequestCallback)
     }
 
-    const getFixture = (path, opts) => fixture.get(config.fixturesFolder, path, opts)
+    const getFixture = (path, opts) => fixtureGet(config.fixturesFolder, path, opts)
 
     this.getIos().forEach((io) => {
       io?.on('connection', (socket: Socket & { inReporterRoom?: boolean, inRunnerRoom?: boolean }) => {
-        if (socket.conn && socket.conn.transport.name === 'polling' && options.getCurrentBrowser()?.family !== 'webkit') {
-          debug('polling WebSocket request received with non-WebKit browser, disconnecting')
-
-          // TODO(webkit): polling transport is only used for experimental WebKit, and it bypasses SocketAllowed,
-          // we d/c polling clients if we're not in WK. remove once WK ws proxying is fixed
-          return socket.disconnect(true)
-        }
-
         debug('socket connected')
 
         socket.on('disconnecting', (reason) => {
@@ -225,22 +245,30 @@ export class SocketBase {
           automationClient.on('disconnect', () => {
             const { activeBrowser } = getCtx().coreData
 
+            debug('automation client disconnected %o', { ended: this.ended, connectedBrowser: connectedBrowser?.path, activeBrowser: activeBrowser?.path })
+
             // if we've stopped or if we've switched to another browser then don't do anything
             if (this.ended || (connectedBrowser?.path !== activeBrowser?.path)) {
               return
             }
+
+            const disconnectedAt = Date.now()
 
             // if we are in headless mode then log out an error and maybe exit with process.exit(1)?
             return Bluebird.delay(2000)
             .then(() => {
               // bail if we've swapped to a new automationClient
               if (automationClient !== socket) {
+                debug('a different automation client connected %dms after the disconnect', Date.now() - disconnectedAt)
+
                 return
               }
 
               // give ourselves about 2000ms to reconnect
               // and if we're connected its all good
               if (automationClient.connected) {
+                debug('automation client socket is connected %dms after the disconnect', Date.now() - disconnectedAt)
+
                 return
               }
 
@@ -253,12 +281,12 @@ export class SocketBase {
             })
           })
 
-          socket.on('automation:push:request', (
-            message: string,
+          socket.on('automation:push:request', async (
+            message: keyof AutomationCommands,
             data: Record<string, unknown>,
             cb: (...args: unknown[]) => any,
           ) => {
-            automation.push(message, data)
+            await automation.push(message, data)
 
             // just immediately callback because there
             // is not really an 'ack' here
@@ -270,7 +298,7 @@ export class SocketBase {
           socket.on('automation:response', automation.response)
         })
 
-        socket.on('automation:request', (message, data, cb) => {
+        socket.on('automation:request', (message: keyof AutomationCommands, data, cb) => {
           debug('automation:request %s %o', message, data)
 
           return automationRequest(message, data)
@@ -281,8 +309,8 @@ export class SocketBase {
           })
         })
 
-        this._sendResetBrowserTabsForNextTestMessage = async (shouldKeepTabOpen: boolean) => {
-          await automationRequest('reset:browser:tabs:for:next:test', { shouldKeepTabOpen })
+        this._sendResetBrowserTabsForNextSpecMessage = async (shouldKeepTabOpen: boolean) => {
+          await automationRequest('reset:browser:tabs:for:next:spec', { shouldKeepTabOpen })
         }
 
         this._sendResetBrowserStateMessage = async () => {
@@ -335,14 +363,7 @@ export class SocketBase {
         })
 
         socket.on('mocha', (...args: unknown[]) => {
-          return options.onMocha.apply(options, args)
-        })
-
-        socket.on('open:finder', (p, cb = function () {}) => {
-          return open.opn(p)
-          .then(() => {
-            return cb()
-          })
+          return options.onMocha(...args)
         })
 
         socket.on('recorder:frame', (data) => {
@@ -385,10 +406,105 @@ export class SocketBase {
         })
 
         const setCrossOriginCookie = ({ cookie, url, sameSiteContext }: { cookie: SerializableAutomationCookie, url: string, sameSiteContext: SameSiteContext }) => {
-          const domain = cors.getOrigin(url)
+          const { hostname } = new URL(url)
 
-          cookieJar.setCookie(automationCookieToToughCookie(cookie, domain), url, sameSiteContext)
+          cookieJar.setCookie(automationCookieToToughCookie(cookie, hostname), url, sameSiteContext)
         }
+
+        socket.on('dev-server:on-spec-update', async (spec: Cypress.Spec) => {
+          const ctx = await getCtx()
+          const devServer = await ctx._apis.projectApi.getDevServer()
+
+          if (spec.relative === RUN_ALL_SPECS_KEY) {
+            const specsToCompile = ctx.project.runAllSpecs.map((relPath) => {
+              return ctx.project.specs.find((s) => s.relative === relPath)
+            }).filter((s): s is SpecWithRelativeRoot => Boolean(s))
+
+            debug(`updating CT dev-server with ${specsToCompile.length} specs`)
+            await devServer.updateSpecs(specsToCompile, { neededForJustInTimeCompile: true })
+          } else {
+            // update the dev server with the spec running
+            debug(`updating CT dev-server with spec: ${spec.relative}`)
+            // @ts-expect-error - the socket payload is typed as Cypress.Spec, which lacks SpecWithRelativeRoot's fields
+            await devServer.updateSpecs([spec], { neededForJustInTimeCompile: true })
+          }
+
+          return socket.emit('dev-server:on-spec-updated')
+        })
+
+        getCtx().coreData.studioLifecycleManager?.registerStudioReadyListener((studio) => {
+          studio.addSocketListeners({
+            socket,
+            onBeforeSave: () => {
+              this.onBeforeSave(config)
+            },
+            onAfterSave: ({ error }) => {
+              this.onAfterSave(config, error)
+            },
+          })
+        })
+
+        getCtx().coreData.cyPromptLifecycleManager?.registerCyPromptReadyListener((cyPrompt) => {
+          cyPrompt.addSocketListeners({
+            socket,
+            onBeforeSave: () => {
+              this.onBeforeSave(config)
+            },
+            onAfterSave: ({ error }) => {
+              this.onAfterSave(config, error)
+            },
+          })
+        })
+
+        socket.on('studio:init', async (initOptions: StudioInitOptions, cb) => {
+          try {
+            const { canAccessStudioAI, cloudStudioSessionId } = await options.onStudioInit(initOptions)
+
+            cb({ canAccessStudioAI, cloudStudioSessionId })
+          } catch (error) {
+            cb({ error: errors.cloneErr(error) })
+          }
+        })
+
+        socket.on('studio:protocol:enabled', async (cb) => {
+          try {
+            const ctx = await getCtx()
+            const isStudioReady = ctx.coreData.studioLifecycleManager?.isStudioReady()
+
+            if (!isStudioReady) {
+              return cb({ studioProtocolEnabled: false })
+            }
+
+            const studio = await ctx.coreData.studioLifecycleManager?.getStudio()
+
+            cb({ studioProtocolEnabled: studio?.isProtocolEnabled })
+          } catch (error) {
+            cb({ error: errors.cloneErr(error) })
+          }
+        })
+
+        socket.on('studio:destroy', async (cb) => {
+          try {
+            await options.onStudioDestroy()
+
+            cb({})
+          } catch (error) {
+            cb({ error: errors.cloneErr(error) })
+          }
+        })
+
+        socket.on('prompt:reset', (cb) => {
+          try {
+            // If we have runState, then we shouldn't reset the full prompt manager because
+            // we are just changing top. We will clear the prompt manager for a specific test
+            // later.
+            if (!runState) {
+              getCtx().coreData.cyPromptLifecycleManager?.resetCyPrompt()
+            }
+          } finally {
+            cb()
+          }
+        })
 
         socket.on('backend:request', (eventName: string, ...args) => {
           const userAgent = socket.request?.headers['user-agent'] || getCtx().coreData.app.browserUserAgent
@@ -412,21 +528,13 @@ export class SocketBase {
               case 'http:request':
                 return options.onRequest(userAgent, automationRequest, args[0])
               case 'reset:server:state':
-                return options.onResetServerState()
-              case 'log:memory:pressure':
-                return firefoxUtil.log()
-              case 'firefox:force:gc':
-                return firefoxUtil.collectGarbage()
+                return options.onResetServerState(args[0])
               case 'get:fixture':
                 return getFixture(args[0], args[1])
               case 'net':
-                return onNetStubbingEvent({
+                return getInterceptRegistration(options).handleEvent({
                   eventName: args[0],
                   frame: args[1],
-                  state: options.netStubbingState,
-                  socket: this,
-                  getFixture,
-                  args,
                 })
               case 'save:session':
                 return session.saveSession(args[0])
@@ -475,11 +583,35 @@ export class SocketBase {
               case 'run:privileged':
                 return privilegedCommandsManager.runPrivilegedCommand(config, args[0])
               case 'telemetry':
+                if (debugTelemetry.enabled) {
+                  debugTelemetry('exporting spans from the browser: %s', getSpanNames(args[0]).join(', '))
+                }
+
                 return (telemetry.exporter() as OTLPTraceExporterCloud)?.send(args[0], () => {}, (err) => {
-                  debug('error exporting telemetry data from browser %s', err)
+                  debugTelemetry('error exporting telemetry data from browser %s', err)
                 })
               case 'close:extra:targets':
                 return options.closeExtraTargets()
+              case 'wait:for:prompt:ready': {
+                const cyPromptLifecycleManager = getCtx().coreData.cyPromptLifecycleManager
+
+                // The manager is not initialized when cy.prompt cannot possibly
+                // run, so report it as unavailable rather than returning nothing.
+                if (!cyPromptLifecycleManager) {
+                  return { success: false }
+                }
+
+                return cyPromptLifecycleManager.getCyPrompt().then(async (cyPrompt) => {
+                  if (cyPrompt.cyPromptManager) {
+                    await options.onCyPromptReady(cyPrompt.cyPromptManager)
+                  }
+
+                  return {
+                    success: cyPrompt.cyPromptManager && cyPrompt.cyPromptManager.status === 'INITIALIZED',
+                    error: cyPrompt.error ? errors.cloneErr(cyPrompt.error) : undefined,
+                  }
+                })
+              }
               default:
                 throw new Error(`You requested a backend event we cannot handle: ${eventName}`)
             }
@@ -493,7 +625,7 @@ export class SocketBase {
           })
         })
 
-        socket.on('get:cached:test:state', (cb: (runState: RunState | null, testState: CachedTestState) => void) => {
+        socket.on('get:cached:test:state', async (cb: (runState: RunState | null, testState: CachedTestState) => void) => {
           const s = runState
 
           const cachedTestState: CachedTestState = {
@@ -504,17 +636,43 @@ export class SocketBase {
             runState = undefined
 
             // if we have cached test state, then we need to reset
-            // the test state on the protocol manager
+            // the test state on the protocol manager and prompt manager
             if (s.currentId) {
-              this._protocolManager?.resetTest(s.currentId)
+              const testId = s.currentId
+              const currentRetry = s.currentRetry ?? undefined
+
+              this._protocolManager?.resetTest(testId, currentRetry)
+
+              try {
+                const cyPrompt = await getCtx().coreData.cyPromptLifecycleManager?.getCyPrompt()
+
+                // reset the prompt manager for the current test to clear any
+                // cached state when top changes for the current test
+                cyPrompt?.cyPromptManager?.reset(testId)
+              } catch (error) {
+                debug('error resetting prompt manager', error)
+              }
             }
           }
 
           return cb(s || {}, cachedTestState)
         })
 
+        socket.on('get:app:state', async (opts, cb) => {
+          try {
+            const state = await options.getSavedState(opts)
+
+            cb({ data: state })
+          } catch (error) {
+            cb({ error: errors.cloneErr(error) })
+          }
+        })
+
         socket.on('save:app:state', (state, cb) => {
-          options.onSavedStateChanged(state)
+          const opts = state.__options
+          const stateWithoutOptions = _.omit(state, '__options')
+
+          options.onSavedStateChanged(stateWithoutOptions, opts)
 
           // we only use the 'ack' here in tests
           if (cb) {
@@ -524,49 +682,37 @@ export class SocketBase {
 
         socket.on('external:open', (url: string) => {
           debug('received external:open %o', { url })
-          // using this instead of require('electron').shell.openExternal
-          // because CT runner does not spawn an electron shell
-          // if we eventually decide to exclusively launch CT from
-          // the desktop-gui electron shell, we should update this to use
-          // electron.shell.openExternal.
 
-          // cross platform way to open a new tab in default browser, or a new browser window
-          // if one does not already exist for the user's default browser.
-          const start = (process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open')
-
-          return require('child_process').exec(`${start} ${url}`)
+          openExternal(url).catch((err) => {
+            debug('failed to open %s: %o', url, err)
+          })
         })
 
-        socket.on('get:user:editor', (cb) => {
-          getUserEditor(false)
-          .then(cb)
-          .catch(() => {})
-        })
-
-        socket.on('set:user:editor', (editor) => {
-          setUserEditor(editor).catch(() => {})
-        })
-
-        socket.on('open:file', async (fileDetails: OpenFileDetails) => {
-          // todo(lachlan): post 10.0 we should not pass the
-          // editor (in the `fileDetails.where` key) from the
-          // front-end, but rather rely on the server context
-          // to grab the preferred editor, like I'm doing here,
-          // so we do not need to
-          // maintain two sources of truth for the preferred editor
-          // adding this conditional to maintain backwards compat with
-          // existing runner and reporter API.
-          fileDetails.where = {
-            binary: getCtx().coreData.localSettings.preferences.preferredEditorBinary || 'computer',
-          }
-
+        socket.on('open:file', async (fileDetails: { file: string, line: number, column: number }) => {
           debug('opening file %o', fileDetails)
 
-          openFile(fileDetails)
+          try {
+            const ctx = getCtx()
+
+            if (await ctx.actions.localSettings.getLaunchableEditor()) {
+              await ctx.actions.file.openFile(fileDetails.file, fileDetails.line, fileDetails.column)
+            } else {
+              ctx.actions.electron.showItemInFolder(fileDetails.file)
+            }
+          } catch (err) {
+            debug('failed to open file %o', err)
+          }
         })
 
         if (this.supportsRunEvents) {
           socket.on('plugins:before:spec', (spec, cb) => {
+            // When `runState` is set, the runner is reloading `top` because cy.visit()
+            // navigated to a different origin. before:spec has already fired for this spec
+            // run and must not fire again.
+            if (runState) {
+              return cb()
+            }
+
             const beforeSpecSpan = telemetry.startSpan({ name: 'lifecycle:before:spec' })
 
             beforeSpecSpan?.setAttributes({ spec })
@@ -595,8 +741,8 @@ export class SocketBase {
     })
 
     this.getIos().forEach((io) => {
-      io?.of('/data-context').on('connection', (socket: Socket) => {
-        socket.on('graphql:request', handleGraphQLSocketRequest)
+      (io?.of('/data-context') as ExtendedSocketIoNamespace).on('connection', (socket: Socket) => {
+        socket.on('graphql:request', handleRunnerGraphQLSocketRequest)
       })
     })
 
@@ -616,9 +762,9 @@ export class SocketBase {
     })
   }
 
-  async resetBrowserTabsForNextTest (shouldKeepTabOpen: boolean) {
-    if (this._sendResetBrowserTabsForNextTestMessage) {
-      await this._sendResetBrowserTabsForNextTestMessage(shouldKeepTabOpen)
+  async resetBrowserTabsForNextSpec (shouldKeepTabOpen: boolean) {
+    if (this._sendResetBrowserTabsForNextSpecMessage) {
+      await this._sendResetBrowserTabsForNextSpecMessage(shouldKeepTabOpen)
     }
   }
 

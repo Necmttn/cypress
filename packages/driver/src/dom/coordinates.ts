@@ -3,7 +3,7 @@ import $window from './window'
 import $elements from './elements'
 import $jquery from './jquery'
 
-const getElementAtPointFromViewport = (doc, x, y) => {
+const getElementAtPointFromViewport = (doc: Document, x: number, y: number) => {
   return $elements.elementFromPoint(doc, x, y)
 }
 
@@ -41,7 +41,7 @@ const getFirstValidSizedRect = (el) => {
   }) || el.getBoundingClientRect() // otherwise fall back to the parent client rect
 }
 
-export type ElViewportPostion = {
+export type ElViewportPosition = {
   doc: Document
   x?: number
   y?: number
@@ -53,7 +53,7 @@ export type ElViewportPostion = {
   leftCenter: number
 }
 
-export type ElWindowPostion = {
+export type ElWindowPosition = {
   x?: number
   y?: number
   top: number
@@ -67,8 +67,8 @@ export type ElementPositioning = {
   scrollLeft: number
   width: number
   height: number
-  fromElViewport: ElViewportPostion
-  fromElWindow: ElWindowPostion
+  fromElViewport: ElViewportPosition
+  fromElWindow: ElWindowPosition
   fromAutWindow: {
     x?: number
     y?: number
@@ -189,7 +189,6 @@ const getCoordsByPosition = (
   yPosition: 'top' | 'center' | 'bottom' = 'center',
 ) => {
   const getLeft = () => {
-    /* eslint-disable default-case */
     switch (xPosition) {
       case 'left': return Math.ceil(left)
       case 'center': return Math.floor(left)
@@ -204,8 +203,6 @@ const getCoordsByPosition = (
       case 'bottom': return Math.floor(top) - 1
     }
   }
-
-  /* eslint-disable default-case */
 
   // returning x/y here because this is
   // about the target position we want
@@ -310,7 +307,7 @@ const getElementCoordinatesByPositionRelativeToXY = ($el, x, y) => {
   return positionProps
 }
 
-const getElementCoordinatesByPosition = ($el, position) => {
+const getElementCoordinatesByPosition = ($el, position?) => {
   position = position || 'center'
 
   const positionProps = getElementPositioning($el)

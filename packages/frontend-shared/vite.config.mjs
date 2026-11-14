@@ -13,7 +13,7 @@ import { FileSystemIconLoader } from 'unplugin-icons/loaders'
 
 import PkgConfig from 'vite-plugin-package-config'
 
-// @ts-expect-error
+// @ts-expect-error - import.meta is only valid in an ES module, and this file is checked as a script
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
@@ -22,9 +22,6 @@ const base = './'
 const alias = {
   '@cy/components': path.resolve(__dirname, './src/components'),
   '@cy/gql-components': path.resolve(__dirname, './src/gql-components'),
-
-  // import { defaultMessages, useI18n } from '@cy/i18n'
-  '@cy/i18n': path.resolve(__dirname, './src/locales/i18n'),
 }
 
 const makePlugins = (plugins) => {
@@ -43,6 +40,8 @@ const makePlugins = (plugins) => {
       customCollections: {
         // ~icons/cy/book_x16
         cy: FileSystemIconLoader(path.resolve(__dirname, './src/assets/icons')),
+        // ~icons/logos/cursor
+        logos: FileSystemIconLoader(path.resolve(__dirname, './src/assets/logos')),
         ...plugins.iconsOptions?.customCollections,
       },
       iconCustomizer (collection, icon, props) {
@@ -80,7 +79,7 @@ const makePlugins = (plugins) => {
 
     // package.json is modified and auto-updated when new cjs dependencies
     // are added
-    // @ts-expect-error
+    // @ts-expect-error - the CJS module puts its plugin on .default under Node ESM interop
     PkgConfig.default(),
     // OptimizationPersist(),
     // For new plugins only! Merge options for shared plugins via PluginOptions.
@@ -116,7 +115,6 @@ export const makeConfig = (config = {}, plugins = {}) => {
     css: {
       preprocessorOptions: {
         scss: {
-          // @ts-expect-error
           additionalData: `@use "file:///${path.resolve(__dirname, '../reporter/src/lib/variables.scss').replaceAll('\\', '/')}" as *;\n`,
         },
       },

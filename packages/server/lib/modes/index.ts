@@ -2,7 +2,7 @@ import { setCtx } from '@packages/data-context'
 import _ from 'lodash'
 
 import { makeDataContext } from '../makeDataContext'
-import random from '../util/random'
+import { id as randomId } from '../util/random'
 import { telemetry } from '@packages/telemetry'
 
 export = (mode, options) => {
@@ -10,9 +10,11 @@ export = (mode, options) => {
     return require('./smoke_test').run(options)
   }
 
+  options.isBrowserGivenByCli = options.browser !== undefined
+
   if (mode === 'run') {
     _.defaults(options, {
-      socketId: random.id(10),
+      socketId: randomId(10),
       isTextTerminal: true,
       browser: 'electron',
       quiet: false,

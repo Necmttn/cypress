@@ -13,13 +13,14 @@
       <div
         v-else
         class="flex font-medium text-gray-700 items-center children:leading-[24px]"
+        role="banner"
       >
         <img
           class="h-[32px] mr-[18px] w-[32px]"
           src="../assets/logos/cypress-dark.png"
           alt="cypress"
         >
-        <nav>
+        <div>
           <ol>
             <li
               v-if="props.gql.isGlobalMode"
@@ -38,7 +39,7 @@
                 :ariaDisabled="!currentProject"
                 @click.prevent="clearCurrentProject"
               >
-                {{ t('topNav.global.projects') }}
+                Projects
               </a>
             </li>
             <template v-if="currentProject?.title">
@@ -79,14 +80,17 @@
                   <i-cy-chevron-right_x16 class="icon-dark-gray-200" />
                 </li>
                 <li class="inline-block">
-                  {{ t(`testingType.${currentProject.currentTestingType}.name`) }}
+                  {{ testingTypeNames[currentProject.currentTestingType] }}
                 </li>
               </template>
             </template>
           </ol>
-        </nav>
+        </div>
       </div>
-      <div class="flex gap-6">
+      <nav
+        class="flex gap-6"
+        role="navigation"
+      >
         <TopNav
           :gql="props.gql"
           :show-browsers="props.showBrowsers"
@@ -102,7 +106,7 @@
               class="h-[24px] w-[24px]"
               data-cy="user-avatar-title"
             />
-            <span class="sr-only">{{ t('topNav.login.profileMenuLabel') }}</span>
+            <span class="sr-only">Profile and logout</span>
           </template>
           <template
             v-if="userProjectStatusStore.userData"
@@ -149,10 +153,10 @@
             <i-cy-profile_x16
               class="h-[16px] mr-[8px] w-[16px] block icon-dark-gray-500 icon-light-gray-100 group-hocus:icon-dark-indigo-500 group-hocus:icon-light-indigo-50"
             />
-            <span class="font-medium whitespace-nowrap group-hocus:text-indigo-500">{{ t('topNav.login.actionLogin') }}</span>
+            <span class="font-medium whitespace-nowrap group-hocus:text-indigo-500">Log in</span>
           </button>
         </div>
-      </div>
+      </nav>
     </div>
   </div>
 </template>
@@ -160,7 +164,7 @@
 <script setup lang="ts">
 import { gql, useMutation, useSubscription } from '@urql/vue'
 import { ref, computed, onMounted } from 'vue'
-import type { HeaderBar_HeaderBarContentFragment } from '../generated/graphql'
+import type { HeaderBar_HeaderBarContentFragment, TestingTypeEnum } from '../generated/graphql'
 import {
   GlobalPageHeader_ClearCurrentProjectDocument,
   HeaderBarContent_AuthChangeDocument,
@@ -168,7 +172,6 @@ import {
 import TopNav from './topnav/TopNav.vue'
 import UserAvatar from './topnav/UserAvatar.vue'
 import Auth from './Auth.vue'
-import { useI18n } from '@cy/i18n'
 import ExternalLink from './ExternalLink.vue'
 import interval from 'human-interval'
 import { sortBy } from 'lodash'
@@ -217,10 +220,6 @@ mutation GlobalPageHeader_clearCurrentProject {
     currentProject {
       id
     }
-    # This ensures the cache is updated with null after clearing project
-    migration {
-      configFileNameBefore
-    }
   }
 }
 `
@@ -267,7 +266,11 @@ const props = defineProps<{
   allowAutomaticPromptOpen?: boolean
 }>()
 
-const { t } = useI18n()
+const testingTypeNames: Record<TestingTypeEnum, string> = {
+  e2e: 'E2E Testing',
+  component: 'Component Testing',
+}
+
 const prompts = sortBy([
   {
     slug: 'ci1',

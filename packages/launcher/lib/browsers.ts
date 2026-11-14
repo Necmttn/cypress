@@ -2,13 +2,10 @@ import Debug from 'debug'
 import type * as cp from 'child_process'
 import { utils } from './utils'
 import type { FoundBrowser } from '@packages/types'
-import type { Readable } from 'stream'
 
 export const debug = Debug('cypress:launcher:browsers')
 
-/** starts a found browser and opens URL if given one */
-export type LaunchedBrowser = cp.ChildProcessByStdio<null, Readable, Readable>
-
+// NOTE: For Firefox, geckodriver is used to launch the browser
 export function launch (
   browser: FoundBrowser,
   url: string,
@@ -28,7 +25,7 @@ export function launch (
 
   const spawnOpts: cp.SpawnOptionsWithStdioTuple<cp.StdioNull, cp.StdioPipe, cp.StdioPipe> = {
     stdio: ['ignore', 'pipe', 'pipe'],
-    // allow setting default env vars such as MOZ_HEADLESS_WIDTH
+    // allow setting default env vars
     // but only if it's not already set by the environment
     env: { ...browserEnv, ...process.env },
   }

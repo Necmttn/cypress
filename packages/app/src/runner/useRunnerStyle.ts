@@ -6,7 +6,7 @@ import { useAutStore, useRunnerUiStore } from '../store'
 import { useScreenshotStore } from '../store/screenshot-store'
 import { runnerConstants } from './runner-constants'
 
-export type ResizablePanelName = 'panel1' | 'panel2' | 'panel3'
+export type ResizablePanelName = 'panel1' | 'panel2' | 'panel3' | 'panel4'
 
 export type DraggablePanel = Exclude<ResizablePanelName, 'panel3'>
 
@@ -17,6 +17,7 @@ const autMargin = 16
 // so that we only save to GQL when the resizing has ended
 const reporterWidth = ref<number>(0)
 const specListWidth = ref<number>(0)
+const studioWidth = ref<number>(0)
 
 export const useRunnerStyle = () => {
   const { width: windowWidth, height: windowHeight } = useWindowSize()
@@ -26,10 +27,11 @@ export const useRunnerStyle = () => {
   const screenshotStore = useScreenshotStore()
   const autStore = useAutStore()
 
-  const { reporterWidth: initialReporterWidth, specListWidth: initialSpecsListWidth } = runnerUIStore
+  const { reporterWidth: initialReporterWidth, specListWidth: initialSpecsListWidth, studioWidth: initialStudioWidth } = runnerUIStore
 
   reporterWidth.value = initialReporterWidth
   specListWidth.value = initialSpecsListWidth
+  studioWidth.value = initialStudioWidth
 
   const containerWidth = computed(() => {
     const miscBorders = 4
@@ -47,7 +49,7 @@ export const useRunnerStyle = () => {
         nonAutWidth += (autMargin * 2)
       }
 
-      nonAutWidth += reporterWidth.value + specListWidth.value + miscBorders
+      nonAutWidth += reporterWidth.value + specListWidth.value + studioWidth.value + miscBorders
     }
 
     const containerWidth = windowWidth.value - nonAutWidth
@@ -70,7 +72,8 @@ export const useRunnerStyle = () => {
       scale = Math.min(containerWidth.value / autStore.viewportDimensions.width, containerHeight.value / autStore.viewportDimensions.height, 1)
     }
 
-    return scale
+    // Round scale to prevent fractional dimensions
+    return Math.round(scale * 100) / 100 // Round to 2 decimal places for clean fractions
   })
 
   const viewportStyle = computed(() => {
@@ -79,8 +82,8 @@ export const useRunnerStyle = () => {
     // see this issue for details: https://github.com/cypress-io/cypress/issues/21881
 
     let style = `
-    width: ${autStore.viewportDimensions.width}px;
-    height: ${autStore.viewportDimensions.height}px;
+    width: ${Math.round(autStore.viewportDimensions.width)}px;
+    height: ${Math.round(autStore.viewportDimensions.height)}px;
     transform: scale(${scale.value});
     position: absolute;
     `
@@ -89,7 +92,7 @@ export const useRunnerStyle = () => {
     // viewport with midpoint and the the container width midpoint and apply a negative margin
     if (!screenshotStore.isScreenshotting) {
       style += `
-      margin-left: ${(containerWidth.value / 2) - (autStore.viewportDimensions.width / 2) }px`
+      margin-left: ${Math.round((containerWidth.value / 2) - (Math.round(autStore.viewportDimensions.width) / 2)) }px`
     }
 
     return style
@@ -114,17 +117,21 @@ export const useRunnerStyle = () => {
 export function useResizablePanels () {
   const preferences = usePreferences()
 
-  const handleResizeEnd = (panel: DraggablePanel) => {
+  const handleResizeEnd = async (panel: DraggablePanel) => {
     if (panel === 'panel1') {
-      preferences.update('specListWidth', specListWidth.value)
+      await preferences.update('specListWidth', specListWidth.value)
+    } else if (panel === 'panel4') {
+      await preferences.update('studioWidth', studioWidth.value)
     } else {
-      preferences.update('reporterWidth', reporterWidth.value)
+      await preferences.update('reporterWidth', reporterWidth.value)
     }
   }
 
   const handlePanelWidthUpdated = ({ panel, width }: { panel: DraggablePanel, width: number }) => {
     if (panel === 'panel1') {
       specListWidth.value = width
+    } else if (panel === 'panel4') {
+      studioWidth.value = width
     } else {
       reporterWidth.value = width
     }

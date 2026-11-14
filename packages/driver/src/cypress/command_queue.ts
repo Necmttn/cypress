@@ -13,6 +13,7 @@ import type { $Cy } from './cy'
 import type { IStability } from '../cy/stability'
 
 const debugErrors = Debug('cypress:driver:errors')
+const debug = Debug('cypress:driver:command_queue')
 
 const __stackReplacementMarker = (fn, args) => {
   return fn(...args)
@@ -100,7 +101,7 @@ function retryQuery (command: $Command, ret: any, cy: $Cy) {
       subjectFn: () => {
         const subject = cy.subject(command.get('chainerId'))
 
-        // @ts-ignore
+        // @ts-expect-error - ensure.isType expects a Chainable, not the $Cy instance
         Cypress.ensure.isType(subject, command.get('prevSubject'), command.get('name'), cy)
 
         return ret(subject)
@@ -204,10 +205,10 @@ export class CommandQueue extends Queue<$Command> {
     })
   }
 
-  cleanup () {
+  cleanup ({ resetTimeout = true } = {}) {
     const runnable = this.state('runnable')
 
-    if (runnable && !runnable.isPending()) {
+    if (resetTimeout && runnable && !runnable.isPending()) {
       // make sure we reset the runnable's timeout now
       runnable.resetTimeout()
     }
@@ -222,7 +223,40 @@ export class CommandQueue extends Queue<$Command> {
     // and forcibly move the index needle to the
     // end in case we have after / afterEach hooks
     // which need to run
+    if (this.index < this.length) {
+      debug('cleanup called with %d of %d command(s) not yet run: %o', this.length - this.index, this.length, this.names().slice(this.index))
+    }
+
     this.index = this.length
+
+    // Mark the state as stable, so that any cypress commands can be re-queued during the after / afterEach hooks
+    this.state('isStable', true)
+  }
+
+  // Ends the command chain before it settles. A stop or an early done() cancels the run. A
+  // failed runnable only has its pending chain ended, so a late reply can't resume it under a
+  // later runnable: state('canceled') would make retrying commands in the remaining hooks give
+  // up after a single attempt, and mocha has already cleared the runnable's timer.
+  endEarly ({ canceled }: { canceled: boolean }) {
+    const isPending = !!this.state('promise')?.isPending()
+
+    if (!canceled && !isPending) {
+      return
+    }
+
+    this.cleanup({ resetTimeout: canceled })
+
+    if (!isPending) {
+      return
+    }
+
+    if (canceled) {
+      this.state('canceled', true)
+      this.state('cancel')()
+      Cypress.action('cy:canceled')
+    } else {
+      this.state('cancel')()
+    }
   }
 
   private runCommand (command: $Command) {
@@ -292,8 +326,6 @@ export class CommandQueue extends Queue<$Command> {
           command.set('queryFn', ret)
           ret = retryQuery(command, ret, this.cy)
         }
-      } catch (err) {
-        throw err
       } finally {
         // always remove this listener
         Cypress.removeListener('command:enqueued', commandEnqueued)
@@ -399,7 +431,7 @@ export class CommandQueue extends Queue<$Command> {
   }
 
   // TypeScript doesn't allow overriding functions with different type signatures
-  // @ts-ignore
+  // @ts-expect-error - run() has a different signature than Queue.run()
   run () {
     if (this.stopped) {
       this.cleanup()
@@ -468,7 +500,7 @@ export class CommandQueue extends Queue<$Command> {
 
       Cypress.action('cy:command:start', command)
 
-      return Cypress.action<Promise<void>>('cy:command:start:async', command)
+      return Cypress.action('cy:command:start:async', command)
       .then(() => this.runCommand(command)!)
       .then(() => {
         // each successful command invocation should
@@ -520,9 +552,9 @@ export class CommandQueue extends Queue<$Command> {
 
       // since this failed this means that a specific command failed
       // and we should highlight it in red or insert a new command
-      // @ts-ignore
+      // @ts-expect-error - _.isObject() narrows err to object, which has no name property
       if (_.isObject(err) && !err.name) {
-        // @ts-ignore
+        // @ts-expect-error - _.isObject() narrows err to object, which has no name property
         err.name = 'CypressError'
       }
 
@@ -556,11 +588,7 @@ export class CommandQueue extends Queue<$Command> {
 
     this.state('promise', promise)
     this.state('reject', reject)
-    this.state('cancel', () => {
-      cancel()
-
-      Cypress.action('cy:canceled')
-    })
+    this.state('cancel', cancel)
 
     return promise
   }

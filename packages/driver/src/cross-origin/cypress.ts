@@ -14,7 +14,7 @@ import { bindToListeners } from '../cy/listeners'
 import { handleOriginFn } from './origin_fn'
 import { FINAL_SNAPSHOT_NAME } from '../cy/snapshots'
 import { handleLogs } from './events/logs'
-import { handleSocketEvents } from './events/socket'
+import { handleCrossOriginSocketEvent, handleDefaultCrossOriginSocketEvents } from './events/socket'
 import { handleSpecWindowEvents } from './events/spec_window'
 import { handleErrorEvent } from './events/errors'
 import { handleScreenshots } from './events/screenshots'
@@ -22,18 +22,18 @@ import { handleTestEvents } from './events/test'
 import { handleMiscEvents } from './events/misc'
 import { handleUnsupportedAPIs } from './unsupported_apis'
 import { patchFormElementSubmit } from './patches/submit'
-import { patchFetch } from '@packages/runner/injection/patches/fetch'
-import { patchXmlHttpRequest } from '@packages/runner/injection/patches/xmlHttpRequest'
+import { patchFetch } from '@packages/runner/injection/patches/cross-origin/fetch'
+import { patchXmlHttpRequest } from '@packages/runner/injection/patches/cross-origin/xmlHttpRequest'
 
 import $Mocha from '../cypress/mocha'
 
 const createCypress = () => {
-  // @ts-ignore
+  // @ts-expect-error - $Cypress is not assignable to the public Cypress type
   const Cypress = window.Cypress = new $Cypress() as Cypress.Cypress
 
-  Cypress.specBridgeCommunicator.once('initialize:cypress', ({ config, env }) => {
+  Cypress.specBridgeCommunicator.once('initialize:cypress', ({ config, expose, isProtocolEnabled }) => {
     // eventually, setup will get called again on rerun and cy will get re-created
-    setup(config, env)
+    setup({ cypressConfig: config, expose, isProtocolEnabled })
   })
 
   Cypress.specBridgeCommunicator.on('attach:to:window', () => {
@@ -85,12 +85,12 @@ const createCypress = () => {
   Cypress.specBridgeCommunicator.toPrimary('bridge:ready')
 }
 
-const setup = (cypressConfig: Cypress.Config, env: Cypress.ObjectLike) => {
+const setup = ({ cypressConfig, expose, isProtocolEnabled }: { cypressConfig: Cypress.Config, expose: Cypress.ObjectLike, isProtocolEnabled: boolean }) => {
   const Cypress = window.Cypress
 
   Cypress.configure({
     ...cypressConfig,
-    env,
+    expose,
     // never turn on video for a spec bridge when syncing the config. This is handled in the primary.
     video: false,
     isCrossOriginSpecBridge: true,
@@ -99,37 +99,43 @@ const setup = (cypressConfig: Cypress.Config, env: Cypress.ObjectLike) => {
     testingType: 'e2e',
   })
 
-  // @ts-ignore
-  const cy = window.cy = new $Cy(window, Cypress, Cypress.Cookies, Cypress.state, Cypress.config, false)
+  Cypress.state('isProtocolEnabled', isProtocolEnabled)
 
-  // @ts-ignore
+  // @ts-expect-error - $Cy is not assignable to the public cy type, and the public Cypress type is not assignable to $Cypress
+  const cy = window.cy = new $Cy(window, Cypress, Cypress.Cookies, Cypress.state, Cypress.config)
+
+  // @ts-expect-error - createLog does not match the overloaded Cypress.log type
   Cypress.log = createLog(Cypress, cy, Cypress.state, Cypress.config)
 
   Cypress.mocha = $Mocha.create(window, Cypress, Cypress.config)
 
-  // @ts-ignore
   Cypress.runner = {
     addLog () {},
   }
 
   Cypress.cy = cy
-  // @ts-ignore
   Cypress.events.proxyTo(Cypress.cy)
 
   const { state, config } = Cypress
 
-  // @ts-ignore
+  // These need to happen before the commands are created so that commands can
+  // use things like Cypress.backend during their creation.
+  handleDefaultCrossOriginSocketEvents(Cypress)
+
+  Cypress.handleCrossOriginSocketEvent = handleCrossOriginSocketEvent
+
+  // @ts-expect-error - $Commands.create does not return the public Commands type
   Cypress.Commands = $Commands.create(Cypress, cy, state, config)
-  // @ts-ignore
+  // @ts-expect-error - cy.isCy is not a type guard like Cypress.isCy
   Cypress.isCy = cy.isCy
 
   // this is "valid" inside the cy.origin() callback (as long as the experimental
   // flag is enabled), but it should be replaced by the preprocessor at runtime
   // with an actual require() before it's run in the browser. if it's not,
   // something unexpected has gone wrong
-  // @ts-expect-error
+  // @ts-expect-error - this stub does not match the generic Cypress.require signature
   Cypress.require = () => {
-    // @ts-ignore
+    // @ts-expect-error - experimentalOriginDependencies is e2e-only, so it is not a key of Cypress.Config
     if (!Cypress.config('experimentalOriginDependencies')) {
       $errUtils.throwErrByPath('require.invalid_without_flag')
     }
@@ -139,7 +145,6 @@ const setup = (cypressConfig: Cypress.Config, env: Cypress.ObjectLike) => {
 
   handleOriginFn(Cypress, cy)
   handleLogs(Cypress)
-  handleSocketEvents(Cypress)
   handleSpecWindowEvents(cy)
   handleMiscEvents(Cypress, cy)
   handleScreenshots(Cypress)
@@ -163,8 +168,7 @@ const attachToWindow = (autWindow: Window) => {
 
   // this communicates to the injection code that Cypress is now available so
   // it can safely subscribe to Cypress events, etc
-  // @ts-ignore
-  autWindow.__attachToCypress ? autWindow.__attachToCypress(Cypress) : undefined
+  autWindow.__attachToCypress?.(Cypress)
 
   Cypress.state('window', autWindow)
   Cypress.state('document', autWindow.document)
@@ -231,7 +235,7 @@ const attachToWindow = (autWindow: Window) => {
       return Cypress.action('app:window:alert', str)
     },
     onConfirm (str) {
-      const results = Cypress.action('app:window:confirm', str) as any[]
+      const results = Cypress.action('app:window:confirm', str)
 
       // return false if ANY results are false
       const ret = !results.some((result) => result === false)

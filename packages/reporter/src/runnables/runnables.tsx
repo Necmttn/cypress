@@ -1,21 +1,24 @@
 import _ from 'lodash'
 import { action } from 'mobx'
 import { observer } from 'mobx-react'
-import React, { Component, MouseEvent } from 'react'
+import type { MouseEvent } from 'react'
+import React, { useCallback, useEffect, useRef } from 'react'
 
-import events, { Events } from '../lib/events'
-import { RunnablesError, RunnablesErrorModel } from './runnable-error'
-import Runnable from './runnable-and-suite'
-import RunnableHeader from './runnable-header'
-import { RunnablesStore, RunnableArray } from './runnables-store'
-import statsStore, { StatsStore } from '../header/stats-store'
-import { Scroller, UserScrollCallback } from '../lib/scroller'
+import type { Events } from '../lib/events'
+import events from '../lib/events'
+import type { RunnablesErrorModel } from './runnable-error'
+import { RunnablesError } from './runnable-error'
+import Runnable, { shouldShowConnectionDots } from './runnable-and-suite'
+import type { RunnablesStore, RunnableArray } from './runnables-store'
+import type { StatsStore } from '../header/stats-store'
+import type { Scroller, UserScrollCallback } from '../lib/scroller'
 import type { AppState } from '../lib/app-state'
 import OpenFileInIDE from '../lib/open-file-in-ide'
 
 import OpenIcon from '@packages/frontend-shared/src/assets/icons/technology-code-editor_x16.svg'
 import StudioIcon from '@packages/frontend-shared/src/assets/icons/object-magic-wand-dark-mode_x16.svg'
 import WarningIcon from '@packages/frontend-shared/src/assets/icons/warning_x16.svg'
+import { StudioTest } from '../studio/StudioTest'
 
 const Loading = () => (
   <div className='runnable-loading'>
@@ -33,12 +36,12 @@ interface RunnablesEmptyStateProps {
 }
 
 const RunnablesEmptyState = ({ spec, studioEnabled, eventManager = events }: RunnablesEmptyStateProps) => {
-  const _launchStudio = (e: MouseEvent) => {
+  const _launchStudio = useCallback((e: MouseEvent) => {
     e.preventDefault()
 
     // root runnable always has r1 as id
-    eventManager.emit('studio:init:suite', 'r1')
-  }
+    eventManager.emit('studio:init:suite', { suiteId: 'r1', entrySource: 'new-test-root' })
+  }, [eventManager])
 
   const isAllSpecs = spec.absolute === '__all' || spec.relative === '__all'
 
@@ -48,7 +51,7 @@ const RunnablesEmptyState = ({ spec, studioEnabled, eventManager = events }: Run
         <WarningIcon className="warning-icon" />No tests found.
       </h2>
       <p>Cypress could not detect tests in this file.</p>
-      { !isAllSpecs && (
+      {!isAllSpecs && (
         <>
           <OpenFileInIDE fileDetails={{
             column: 0,
@@ -80,7 +83,7 @@ const RunnablesEmptyState = ({ spec, studioEnabled, eventManager = events }: Run
         </>
       )}
       <hr />
-      <p>Need help? Learn how to <a className='help-link' href='https://on.cypress.io/intro' target='_blank'>test your application</a> with Cypress</p>
+      <p>Need help? Learn how to <a className='help-link' href='https://on.cypress.io/intro' target='_blank' rel='noreferrer'>test your application</a> with Cypress</p>
     </div>
   )
 }
@@ -88,32 +91,38 @@ const RunnablesEmptyState = ({ spec, studioEnabled, eventManager = events }: Run
 interface RunnablesListProps {
   runnables: RunnableArray
   studioEnabled: boolean
-  canSaveStudioLogs: boolean
+  spec: Cypress.Cypress['spec']
 }
 
-const RunnablesList = observer(({ runnables, studioEnabled, canSaveStudioLogs }: RunnablesListProps) => (
-  <div className='wrap'>
-    <ul className='runnables'>
-      {_.map(runnables, (runnable) =>
-        (<Runnable
-          key={runnable.id}
-          model={runnable}
-          canSaveStudioLogs={canSaveStudioLogs}
-          studioEnabled={studioEnabled}
-        />))}
-    </ul>
-  </div>
-))
+const RunnablesList: React.FC<RunnablesListProps> = observer(({ runnables, studioEnabled, spec }: RunnablesListProps) => {
+  return (
+    <div className='wrap'>
+      <ul className='runnables'>
+        {_.map(runnables, (runnable, index) =>
+          (<Runnable
+            key={runnable.id}
+            model={runnable}
+            studioEnabled={studioEnabled}
+            shouldShowConnectingDots={shouldShowConnectionDots(runnables, runnable, index)}
+            spec={spec}
+          />))}
+      </ul>
+    </div>
+  )
+})
 
-export interface RunnablesContentProps {
+RunnablesList.displayName = 'RunnablesList'
+
+interface RunnablesContentProps {
   runnablesStore: RunnablesStore
   spec: Cypress.Cypress['spec']
   error?: RunnablesErrorModel
   studioEnabled: boolean
-  canSaveStudioLogs: boolean
+  appState?: AppState
+  statsStore: StatsStore
 }
 
-const RunnablesContent = observer(({ runnablesStore, spec, error, studioEnabled, canSaveStudioLogs }: RunnablesContentProps) => {
+const RunnablesContent: React.FC<RunnablesContentProps> = observer(({ runnablesStore, spec, error, studioEnabled, appState, statsStore }: RunnablesContentProps) => {
   const { isReady, runnables, runnablesHistory } = runnablesStore
 
   if (!isReady) {
@@ -134,16 +143,22 @@ const RunnablesContent = observer(({ runnablesStore, spec, error, studioEnabled,
 
   const isRunning = specPath === runnablesStore.runningSpec
 
+  if (appState?.studioActive && appState?.studioSingleTestActive) {
+    return <StudioTest appState={appState} runnablesStore={runnablesStore} statsStore={statsStore} />
+  }
+
   return (
     <RunnablesList
       runnables={isRunning ? runnables : runnablesHistory[specPath]}
       studioEnabled={studioEnabled}
-      canSaveStudioLogs={canSaveStudioLogs}
+      spec={spec}
     />
   )
 })
 
-export interface RunnablesProps {
+RunnablesContent.displayName = 'RunnablesContent'
+
+interface RunnablesProps {
   error?: RunnablesErrorModel
   runnablesStore: RunnablesStore
   statsStore: StatsStore
@@ -151,31 +166,12 @@ export interface RunnablesProps {
   scroller: Scroller
   appState?: AppState
   studioEnabled: boolean
-  canSaveStudioLogs: boolean
 }
 
-@observer
-class Runnables extends Component<RunnablesProps> {
-  render () {
-    const { error, runnablesStore, spec, studioEnabled, canSaveStudioLogs } = this.props
+const Runnables: React.FC<RunnablesProps> = observer(({ appState, scroller, error, runnablesStore, spec, studioEnabled, statsStore }) => {
+  const containerRef = useRef<HTMLDivElement>(null)
 
-    return (
-      <div ref='container' className='container'>
-        <RunnableHeader spec={spec} statsStore={statsStore} />
-        <RunnablesContent
-          runnablesStore={runnablesStore}
-          studioEnabled={studioEnabled}
-          canSaveStudioLogs={canSaveStudioLogs}
-          spec={spec}
-          error={error}
-        />
-      </div>
-    )
-  }
-
-  componentDidMount () {
-    const { scroller, appState } = this.props
-
+  useEffect(() => {
     let maybeHandleScroll: UserScrollCallback | undefined = undefined
 
     if (window.__CYPRESS_MODE__ === 'open') {
@@ -191,10 +187,22 @@ class Runnables extends Component<RunnablesProps> {
     // we need to always call scroller.setContainer, but the callback can be undefined
     // so we pass maybeHandleScroll. If we don't, Cypress blows up with an error like
     // `A container must be set on the scroller with scroller.setContainer(container)`
-    scroller.setContainer(this.refs.container as Element, maybeHandleScroll)
-  }
-}
+    scroller.setContainer(containerRef.current as Element, maybeHandleScroll)
+  }, [])
 
-export { RunnablesList }
+  return (
+    <div ref={containerRef} className='container'>
+      <RunnablesContent
+        appState={appState}
+        runnablesStore={runnablesStore}
+        studioEnabled={studioEnabled}
+        spec={spec}
+        error={error}
+        statsStore={statsStore}
+      />
+    </div>
+  )
+})
 
+Runnables.displayName = 'Runnables'
 export default Runnables

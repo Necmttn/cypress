@@ -1,6 +1,5 @@
 import GlobalProjectCard from './GlobalProjectCard.vue'
 import { GlobalProjectCardFragmentDoc } from '../generated/graphql-test'
-import { defaultMessages } from '@cy/i18n'
 
 const defaultPath = '/usr/local/dev/projects/some-test-title'
 const menuSelector = '[data-cy=project-card-menu-items]'
@@ -25,7 +24,7 @@ describe('<GlobalProjectCard />', () => {
       ),
     })
 
-    cy.findByLabelText(defaultMessages.globalPage.projectActions, { selector: 'button' })
+    cy.findByLabelText('Project actions', { selector: 'button' })
     .as('openMenuButton')
   })
 
@@ -41,7 +40,7 @@ describe('<GlobalProjectCard />', () => {
     })
 
     it('emits openInIDE with path value on click', () => {
-      cy.contains(defaultMessages.globalPage.openInIDE)
+      cy.contains('Open in IDE')
       .click()
       .get('@openInIDESpy')
       .should('have.been.calledOnceWith', defaultPath)
@@ -50,7 +49,7 @@ describe('<GlobalProjectCard />', () => {
     })
 
     it('emits openInFinder with path value on click', () => {
-      cy.contains(defaultMessages.globalPage.openInFinder)
+      cy.contains('Open in Finder')
       .click()
       .get('@openInFinderSpy')
       .should('have.been.calledOnceWith', defaultPath)
@@ -59,7 +58,7 @@ describe('<GlobalProjectCard />', () => {
     })
 
     it('emits removeProject with path value on click', () => {
-      cy.contains(defaultMessages.globalPage.removeProject)
+      cy.contains('Remove project')
       .click()
       .get('@removeProjectSpy')
       .should('have.been.calledOnceWith', defaultPath)

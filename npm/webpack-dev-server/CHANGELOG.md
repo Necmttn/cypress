@@ -1,3 +1,293 @@
+# [@[secure]/webpack-dev-server-v6.2.0](https://github.com/[secure]-io/[secure]/compare/@[secure]/webpack-dev-server-v6.1.2...@[secure]/webpack-dev-server-v6.2.0) (2026-11-14)
+
+
+### chore
+
+* upgrade to ESLint 10 ([#35373](https://github.com/[secure]-io/[secure]/issues/35373)) ([9b05013](https://github.com/[secure]-io/[secure]/commit/9b05013f2831ec70563b8864710640622a741992))
+
+
+### Features
+
+* support webpack-dev-server v6 in @[secure]/webpack-dev-server ([#35040](https://github.com/[secure]-io/[secure]/issues/35040)) ([d1521e5](https://github.com/[secure]-io/[secure]/commit/d1521e5f7a5fe4294f96d2f785fc6f57bc93514c))
+
+
+### BREAKING CHANGES
+
+* is the ESLint 10 minimum; its `recommended` config is
+unchanged.
+
+ESLint 10 no longer depends on `@eslint/js`, so the exact pin that kept
+the two in lockstep is replaced by a range on the same major.
+
+`eslint-plugin-react` stays at 7.37.5. It declares no ESLint 10 support,
+but its recommended rules run on it as long as `settings.react.version`
+stays explicit: `'detect'` calls `context.getFilename()`, which ESLint 10
+removed. `baseConfig.ts` says so next to the setting, and AGENTS.md
+records the expected peer warning and the rules that must stay off.
+
+`yarn lint` reports no new errors: U2 and U3 already cleared the
+`eslint-env` comments and the new recommended rules.
+
+AGENTS.md: update the peer version, the `eslint` range in "Adding a
+workspace", and the `@eslint/js` and `no-restricted-imports` pin notes.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01WUv8r3qigEUVN4dpuXzbys
+
+* chore: drop rules ESLint 10's recommended now enables and refresh ESLint 9 docs
+
+`@eslint/js` 10 turns on `no-useless-assignment` and `no-unassigned-vars`
+in `recommended`, so `baseConfig` no longer sets them itself. Both still
+resolve to `error`.
+
+Update the docs that still described ESLint 9: the `.vscode` comment on
+`eslint.workingDirectories` (ESLint 10 finds config per file; the setting
+still matters because the extension loads ESLint from the working
+directory), the example package guide, the eslint-config README, and the
+jsonc pin note, whose ESLint 9.38 requirement is now met.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01WUv8r3qigEUVN4dpuXzbys
+
+# [@[secure]/webpack-dev-server-v6.1.2](https://github.com/[secure]-io/[secure]/compare/@[secure]/webpack-dev-server-v6.1.1...@[secure]/webpack-dev-server-v6.1.2) (2026-10-21)
+
+
+### Bug Fixes
+
+* **webpack-dev-server:** keep a newer spec list when specs change during beforeCompile ([#34931](https://github.com/[secure]-io/[secure]/issues/34931)) ([4c64499](https://github.com/[secure]-io/[secure]/commit/4c64499fd0c3689872cc3442879f06b9f78e4070))
+
+# [@[secure]/webpack-dev-server-v6.1.1](https://github.com/[secure]-io/[secure]/compare/@[secure]/webpack-dev-server-v6.1.0...@[secure]/webpack-dev-server-v6.1.1) (2026-10-21)
+
+
+### Bug Fixes
+
+* show a clear error when the [secure] [secure] dev server fails to start ([#35081](https://github.com/[secure]-io/[secure]/issues/35081)) ([b7fd293](https://github.com/[secure]-io/[secure]/commit/b7fd293f3c71cb5080466a98860f73eee796f724))
+
+# [@[secure]/webpack-dev-server-v6.1.0](https://github.com/[secure]-io/[secure]/compare/@[secure]/webpack-dev-server-v6.0.0...@[secure]/webpack-dev-server-v6.1.0) (2026-10-06)
+
+
+### Features
+
+* add cy.getByRole() query ([#34937](https://github.com/[secure]-io/[secure]/issues/34937)) ([9f0e4a9](https://github.com/[secure]-io/[secure]/commit/9f0e4a962eccde5c34faa09bf04576c769788303))
+
+# [@[secure]/webpack-dev-server-v6.0.0](https://github.com/[secure]-io/[secure]/compare/@[secure]/webpack-dev-server-v5.6.3...@[secure]/webpack-dev-server-v6.0.0) (2026-08-26)
+
+
+### breaking
+
+* release version 6.0.0 of @[secure]/webpack-dev-server ([cef29eb](https://github.com/[secure]-io/[secure]/commit/cef29eb9c1801e08b558d8da87121f867259b382))
+
+
+### Features
+
+* add Angular 22 [secure] [secure] support for Cypress 16 ([#34046](https://github.com/[secure]-io/[secure]/issues/34046)) ([df8980e](https://github.com/[secure]-io/[secure]/commit/df8980e474c4d7376a8ee30cd45e630945a176e5))
+
+
+### BREAKING CHANGES
+
+* update build target of @[secure]/webpack-dev-server from es2017 to es2022
+
+# [@cypress/webpack-dev-server-v5.6.3](https://github.com/cypress-io/cypress/compare/@cypress/webpack-dev-server-v5.6.2...@cypress/webpack-dev-server-v5.6.3) (2026-08-10)
+
+# [@cypress/webpack-dev-server-v5.6.2](https://github.com/cypress-io/cypress/compare/@cypress/webpack-dev-server-v5.6.1...@cypress/webpack-dev-server-v5.6.2) (2026-05-31)
+
+# [@cypress/webpack-dev-server-v5.6.1](https://github.com/cypress-io/cypress/compare/@cypress/webpack-dev-server-v5.6.0...@cypress/webpack-dev-server-v5.6.1) (2026-05-09)
+
+
+### Bug Fixes
+
+* namespace Angular CT temp tsconfig by projectRoot hash ([#33635](https://github.com/cypress-io/cypress/issues/33635)) ([99bec89](https://github.com/cypress-io/cypress/commit/99bec89905816bc6c9b67461a2cd39063a137e2e)), closes [#33634](https://github.com/cypress-io/cypress/issues/33634)
+
+# [@cypress/webpack-dev-server-v5.6.0](https://github.com/cypress-io/cypress/compare/@cypress/webpack-dev-server-v5.5.0...@cypress/webpack-dev-server-v5.6.0) (2026-01-22)
+
+
+### Features
+
+* add `cy.env()`,` allowCypressEnv`, and deprecate `Cypress.env()` ([#33181](https://github.com/cypress-io/cypress/issues/33181)) ([ebe4a2c](https://github.com/cypress-io/cypress/commit/ebe4a2cab7312df76b28f59c3b0a91fc4a5e2444))
+
+# [@cypress/webpack-dev-server-v5.5.0](https://github.com/cypress-io/cypress/compare/@cypress/webpack-dev-server-v5.4.1...@cypress/webpack-dev-server-v5.5.0) (2026-01-13)
+
+
+### Features
+
+* experimentalRunAllSpecs for component testing ([#32926](https://github.com/cypress-io/cypress/issues/32926)) ([f25153a](https://github.com/cypress-io/cypress/commit/f25153a58347d4ffffa354270d7e5277c7cdab1d))
+
+# [@cypress/webpack-dev-server-v5.4.1](https://github.com/cypress-io/cypress/compare/@cypress/webpack-dev-server-v5.4.0...@cypress/webpack-dev-server-v5.4.1) (2025-12-08)
+
+
+### Bug Fixes
+
+* call installBindings for Next.js 16.0.3+ compatibility ([#33072](https://github.com/cypress-io/cypress/issues/33072)) ([2d58d9f](https://github.com/cypress-io/cypress/commit/2d58d9f024547b2e9593f01aa08e2063efef6f5e)), closes [#32968](https://github.com/cypress-io/cypress/issues/32968)
+
+# [@cypress/webpack-dev-server-v5.4.0](https://github.com/cypress-io/cypress/compare/@cypress/webpack-dev-server-v5.3.0...@cypress/webpack-dev-server-v5.4.0) (2025-12-05)
+
+
+### Features
+
+* add `cypress/angular-zoneless` testing harness for Angular 21 (also supports Angular 20) ([#33025](https://github.com/cypress-io/cypress/issues/33025)) ([0f215f3](https://github.com/cypress-io/cypress/commit/0f215f3f554e3f99624b25e19c03ecfd771aba52))
+
+# [@cypress/webpack-dev-server-v5.3.0](https://github.com/cypress-io/cypress/compare/@cypress/webpack-dev-server-v5.2.1...@cypress/webpack-dev-server-v5.3.0) (2025-12-03)
+
+
+### Features
+
+* add support for Angular 21 ([#33004](https://github.com/cypress-io/cypress/issues/33004)) ([b1d85c9](https://github.com/cypress-io/cypress/commit/b1d85c9af17acde6305ec6dfa3800cc523f6abba))
+
+# [@cypress/webpack-dev-server-v5.2.1](https://github.com/cypress-io/cypress/compare/@cypress/webpack-dev-server-v5.2.0...@cypress/webpack-dev-server-v5.2.1) (2025-11-19)
+
+
+### Bug Fixes
+
+* make sure angular project configs can resolve correctly on windows ([#32971](https://github.com/cypress-io/cypress/issues/32971)) ([71a393e](https://github.com/cypress-io/cypress/commit/71a393ee566dd5eff4e0579fdc6a23bf73cffa51))
+
+# [@cypress/webpack-dev-server-v5.2.0](https://github.com/cypress-io/cypress/compare/@cypress/webpack-dev-server-v5.1.5...@cypress/webpack-dev-server-v5.2.0) (2025-11-19)
+
+
+### Features
+
+* support Next.js 16 inside component testing ([#32955](https://github.com/cypress-io/cypress/issues/32955)) ([12f72f2](https://github.com/cypress-io/cypress/commit/12f72f23784f32faead8437579e29cb592fb62d1))
+
+# [@cypress/webpack-dev-server-v5.1.5](https://github.com/cypress-io/cypress/compare/@cypress/webpack-dev-server-v5.1.4...@cypress/webpack-dev-server-v5.1.5) (2025-11-07)
+
+# [@cypress/webpack-dev-server-v5.1.4](https://github.com/cypress-io/cypress/compare/@cypress/webpack-dev-server-v5.1.3...@cypress/webpack-dev-server-v5.1.4) (2025-11-04)
+
+
+### Bug Fixes
+
+* ensure that absolute paths can be found via source maps ([#32820](https://github.com/cypress-io/cypress/issues/32820)) ([e6e91a0](https://github.com/cypress-io/cypress/commit/e6e91a0c976eee43ad23b4dc654e83fe29016856))
+
+# [@cypress/webpack-dev-server-v5.1.3](https://github.com/cypress-io/cypress/compare/@cypress/webpack-dev-server-v5.1.2...@cypress/webpack-dev-server-v5.1.3) (2025-10-03)
+
+# [@cypress/webpack-dev-server-v5.1.2](https://github.com/cypress-io/cypress/compare/@cypress/webpack-dev-server-v5.1.1...@cypress/webpack-dev-server-v5.1.2) (2025-09-18)
+
+# [@cypress/webpack-dev-server-v5.1.1](https://github.com/cypress-io/cypress/compare/@cypress/webpack-dev-server-v5.1.0...@cypress/webpack-dev-server-v5.1.1) (2025-08-18)
+
+
+### Bug Fixes
+
+* extranous angular warnings ([#32251](https://github.com/cypress-io/cypress/issues/32251)) ([c8606c2](https://github.com/cypress-io/cypress/commit/c8606c21ae148459fe54d74e040fd2ec5bdc3d08))
+
+# [@cypress/webpack-dev-server-v5.1.0](https://github.com/cypress-io/cypress/compare/@cypress/webpack-dev-server-v5.0.0...@cypress/webpack-dev-server-v5.1.0) (2025-08-14)
+
+
+### Features
+
+* support Angular 20 ([#32198](https://github.com/cypress-io/cypress/issues/32198)) ([c96115d](https://github.com/cypress-io/cypress/commit/c96115df0fc29df23850c7b13dbb2c6cf257c552))
+
+# [@cypress/webpack-dev-server-v5.0.0](https://github.com/cypress-io/cypress/compare/@cypress/webpack-dev-server-v4.1.1...@cypress/webpack-dev-server-v5.0.0) (2025-08-08)
+
+
+### breaking
+
+* remove Angular 17 support ([#31446](https://github.com/cypress-io/cypress/issues/31446)) ([971b7ae](https://github.com/cypress-io/cypress/commit/971b7ae3d7d3aa0fd608550e9d896b3d2b8c8634))
+
+
+### Features
+
+* allow for @cypress/webpack-batteries-included-preprocessor to fully resolve the user tsconfig compiler options ([#31590](https://github.com/cypress-io/cypress/issues/31590)) ([f369f50](https://github.com/cypress-io/cypress/commit/f369f50045685648b94d05ab6426099ee80d1245))
+
+
+### BREAKING CHANGES
+
+* Removed support for Angular 17. Only Angular 18 and 19 are now supported. This change affects the @cypress/angular package. Addresses #31303.
+
+* empty commit to kick CI
+
+* update changelog references to make it clearer on where angular 17 packages live historically
+
+* fix cy framework errors app test to use angualr 18 and 19
+
+* fix issue where di was not discoverable in resolved system tests config
+
+* fix scaffold dependencies to use angular 18 and 19 and not 17 and 18
+
+* fix zonr.js system test dependency resolution
+
+* bump cache
+
+* fix failing handler test
+
+# [@cypress/webpack-dev-server-v4.1.1](https://github.com/cypress-io/cypress/compare/@cypress/webpack-dev-server-v4.1.0...@cypress/webpack-dev-server-v4.1.1) (2025-07-24)
+
+
+### Bug Fixes
+
+* check path for indexHtmlFile in onSpecsChange ([#31819](https://github.com/cypress-io/cypress/issues/31819)) ([#31821](https://github.com/cypress-io/cypress/issues/31821)) ([8ff4c7d](https://github.com/cypress-io/cypress/commit/8ff4c7d364571c25b116b6ca8016569bc24e228a))
+
+# [@cypress/webpack-dev-server-v4.1.0](https://github.com/cypress-io/cypress/compare/@cypress/webpack-dev-server-v4.0.2...@cypress/webpack-dev-server-v4.1.0) (2025-05-13)
+
+
+### Features
+
+* ship webpack-bundle-analyzer with`@cypress/webpack-dev-server` and `@cypress/webpack-batteries-included-preprocessor` ([#31588](https://github.com/cypress-io/cypress/issues/31588)) ([46f2867](https://github.com/cypress-io/cypress/commit/46f2867b9dafbf991bf7154cb181eb07d9c6ad20))
+
+# [@cypress/webpack-dev-server-v4.0.2](https://github.com/cypress-io/cypress/compare/@cypress/webpack-dev-server-v4.0.1...@cypress/webpack-dev-server-v4.0.2) (2025-03-25)
+
+# [@cypress/webpack-dev-server-v4.0.1](https://github.com/cypress-io/cypress/compare/@cypress/webpack-dev-server-v4.0.0...@cypress/webpack-dev-server-v4.0.1) (2025-01-15)
+
+
+### Bug Fixes
+
+* add cypress 14 as a peer dependency for webpack-dev-server ([#30862](https://github.com/cypress-io/cypress/issues/30862)) ([a46c2dd](https://github.com/cypress-io/cypress/commit/a46c2dde8dc9778f2048fb5f67a74de2a9377b4b))
+
+# [@cypress/webpack-dev-server-v4.0.0](https://github.com/cypress-io/cypress/compare/@cypress/webpack-dev-server-v3.11.0...@cypress/webpack-dev-server-v4.0.0) (2025-01-08)
+
+
+### breaking
+
+* release version 4.0.0 of @cypress/webpack-dev-server. ([85da287](https://github.com/cypress-io/cypress/commit/85da2870fd722ea7f08c7cfc5708780415bddf2e))
+
+### BREAKING CHANGES
+
+* Cypress 14 drops support for webpack-dev-server 3. webpack/webpack-dev-server 4 and 5 are supported. @cypress/webpack-dev-server now ships with webpack-dev-server v5 by default.
+
+# [@cypress/webpack-dev-server-v3.11.0](https://github.com/cypress-io/cypress/compare/@cypress/webpack-dev-server-v3.10.1...@cypress/webpack-dev-server-v3.11.0) (2024-08-27)
+
+
+### Features
+
+* implement JIT component experiment ([#30049](https://github.com/cypress-io/cypress/issues/30049)) ([57f6110](https://github.com/cypress-io/cypress/commit/57f6110d29f0b234c969abc747f0fae29c0f4ead))
+
+# [@cypress/webpack-dev-server-v3.10.1](https://github.com/cypress-io/cypress/compare/@cypress/webpack-dev-server-v3.10.0...@cypress/webpack-dev-server-v3.10.1) (2024-08-01)
+
+
+### Bug Fixes
+
+* **deps:** update dependency webpack-dev-server to ^4.15.2 ([#29936](https://github.com/cypress-io/cypress/issues/29936)) ([f2b41b0](https://github.com/cypress-io/cypress/commit/f2b41b0103f0f9f9d50ea1d07d45ee8f8a677f48))
+
+# [@cypress/webpack-dev-server-v3.10.0](https://github.com/cypress-io/cypress/compare/@cypress/webpack-dev-server-v3.9.0...@cypress/webpack-dev-server-v3.10.0) (2024-06-07)
+
+
+### Bug Fixes
+
+* update cypress to Typescript 5 ([#29568](https://github.com/cypress-io/cypress/issues/29568)) ([f3b6766](https://github.com/cypress-io/cypress/commit/f3b67666a5db0438594339c379cf27e1fd1e4abc))
+
+
+### Features
+
+* add CT support for angular 18 ([#29584](https://github.com/cypress-io/cypress/issues/29584)) ([cceea03](https://github.com/cypress-io/cypress/commit/cceea0386447bbf8ada7dab22e7159a78060bcca))
+
+# [@cypress/webpack-dev-server-v3.9.0](https://github.com/cypress-io/cypress/compare/@cypress/webpack-dev-server-v3.8.0...@cypress/webpack-dev-server-v3.9.0) (2024-05-30)
+
+
+### Features
+
+* support Next.JS version 14 ([#29558](https://github.com/cypress-io/cypress/issues/29558)) ([cf6b29d](https://github.com/cypress-io/cypress/commit/cf6b29db229cc825f27fd78e7baeafaa16576f9a))
+
+# [@cypress/webpack-dev-server-v3.8.0](https://github.com/cypress-io/cypress/compare/@cypress/webpack-dev-server-v3.7.4...@cypress/webpack-dev-server-v3.8.0) (2024-04-18)
+
+
+### Features
+
+* support webpack-dev-server v5 in @cypress/webpack-dev-server ([#29306](https://github.com/cypress-io/cypress/issues/29306)) ([d7e9d60](https://github.com/cypress-io/cypress/commit/d7e9d6068c6ab01ab58f9959ea7ad6a361087764))
+
+# [@cypress/webpack-dev-server-v3.7.4](https://github.com/cypress-io/cypress/compare/@cypress/webpack-dev-server-v3.7.3...@cypress/webpack-dev-server-v3.7.4) (2024-01-30)
+
+
+### Bug Fixes
+
+* optimize reduce addCypressToWebpackEslintRulesInPlace ([#27819](https://github.com/cypress-io/cypress/issues/27819)) ([43792e7](https://github.com/cypress-io/cypress/commit/43792e7583651318ea4653fce914a16b9fd5ae48))
+
 # [@cypress/webpack-dev-server-v3.7.3](https://github.com/cypress-io/cypress/compare/@cypress/webpack-dev-server-v3.7.2...@cypress/webpack-dev-server-v3.7.3) (2024-01-12)
 
 # [@cypress/webpack-dev-server-v3.7.2](https://github.com/cypress-io/cypress/compare/@cypress/webpack-dev-server-v3.7.1...@cypress/webpack-dev-server-v3.7.2) (2023-12-26)

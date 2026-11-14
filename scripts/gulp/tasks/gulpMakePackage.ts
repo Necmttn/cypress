@@ -16,7 +16,7 @@ export async function makePackage () {
       name: 'packageName',
       type: 'input',
       message: 'What is the package name?',
-      validate: (val) => /[A-z\-]+/.test(val),
+      validate: (val) => /[A-z-]+/.test(val),
     },
     {
       name: 'target',
@@ -71,12 +71,12 @@ export async function makePackage () {
           files: ['src'],
           dependencies: {},
           devDependencies: results.scaffoldTests ? {
-            'rimraf': '3.0.2',
+            'rimraf': '5.0.10',
             'mocha': '7.0.1',
             'chai': '4.2.0',
             '@packages/ts': '0.0.0-development',
           } : {
-            'rimraf': '3.0.2',
+            'rimraf': '5.0.10',
             '@packages/ts': '0.0.0-development',
           },
         },
@@ -101,9 +101,7 @@ export async function makePackage () {
             'outDir': 'dist',
             'noImplicitAny': true,
             'resolveJsonModule': true,
-            'experimentalDecorators': true,
             'noUncheckedIndexedAccess': true,
-            'importsNotUsedAsValues': 'error',
             'types': [],
           },
         },

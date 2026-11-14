@@ -1,7 +1,8 @@
-import { graphqlSchema } from '@packages/graphql'
-import { expect } from 'chai'
+import { describe, expect, it } from '@jest/globals'
+import { graphqlSchema } from '../../../graphql/schema'
 import dedent from 'dedent'
-import { FieldNode, GraphQLObjectType, OperationDefinitionNode, parse, print } from 'graphql'
+import type { FieldNode, GraphQLObjectType, OperationDefinitionNode } from 'graphql'
+import { parse, print } from 'graphql'
 import { DocumentNodeBuilder } from '../../../src'
 
 const CLOUD_VIEWER_QUERY = parse(`
@@ -41,7 +42,7 @@ describe('DocumentNodeBuilder', () => {
       operationName: 'CLOUD_VIEWER_QUERY',
     })
 
-    expect(print(docNodeBuilder.frag)).to.eql(dedent`
+    expect(print(docNodeBuilder.frag)).toEqual(dedent`
       fragment GeneratedFragment on Query {
         cloudViewer {
           id
@@ -60,7 +61,7 @@ describe('DocumentNodeBuilder', () => {
       operationName: 'CLOUD_VIEWER_QUERY',
     })
 
-    expect(print(docNodeBuilder.query).trimEnd()).to.eql(dedent`
+    expect(print(docNodeBuilder.query).trimEnd()).toEqual(dedent`
       fragment GeneratedFragment on Query {
         cloudViewer {
           id
@@ -86,7 +87,7 @@ describe('DocumentNodeBuilder', () => {
       operationName: 'CLOUD_PROJECT_QUERY',
     })
 
-    expect(print(docNodeBuilder.queryNode).trimRight()).to.eql(dedent`
+    expect(print(docNodeBuilder.queryNode).trimRight()).toEqual(dedent`
       fragment GeneratedFragment on CloudProject {
         id
         cloudProject {

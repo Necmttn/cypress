@@ -2,7 +2,7 @@
 import { colors } from '@cypress-design/css'
 import * as fs from 'fs'
 
-const filePath = './src/public/shiki/themes/cypress.theme'
+const filePath = './src/shiki/themes/cypress.theme'
 
 fs.readFile(`${filePath}.template.json`,
   { encoding: 'utf8' },
@@ -11,10 +11,10 @@ fs.readFile(`${filePath}.template.json`,
       throw err
     }
 
-    for (let colorName in colors) {
+    for (const colorName in colors) {
       const colorScale = colors[colorName]
 
-      for (let colorGrade in colorScale) {
+      for (const colorGrade in colorScale) {
         const variableNameRegExp = new RegExp(`-${colorName}-${colorGrade}"`, 'g')
 
         contents = contents.replace(variableNameRegExp, `${colorScale[colorGrade]}"`)

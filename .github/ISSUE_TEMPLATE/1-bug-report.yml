@@ -5,14 +5,16 @@ body:
     attributes:
       value: |
         ## If you are a customer of Cypress Cloud please utilize our [Support Portal](https://www.cypress.io/support/) for our fastest support!
-        
-        ### Have a question? 👉 [Ask in chat](https://on.cypress.io/discord) or [start a new discussion](https://github.com/cypress-io/cypress/discussions).  
-        Issues in the Cypress repo are reserved for bugs and feature requests only.  Questions on how to use Cypress will be closed.
+
+        ### Have a question? 👉 [Ask in chat](https://on.cypress.io/chat) or [start a new discussion](https://github.com/cypress-io/cypress/discussions).
+        Issues in the Cypress repo are reserved for bugs and feature requests only. Questions on how to use Cypress will be closed.
+
+        > **Reproduction required.** Issues without a working reproduction are difficult to investigate and may be closed. Please provide a fork of [cypress-test-tiny](https://github.com/cypress-io/cypress-test-tiny) with a failing test, or clear steps to reproduce.
   - type: textarea
     id: current-behavior
     attributes:
       label: Current behavior
-      description: Please provide a description including screenshots, stack traces, etc. [Troubleshooting tips](https://on.cypress.io/troubleshooting).
+      description: Please provide a description including screenshots, stack traces, etc. [Troubleshooting tips](https://docs.cypress.io/app/references/troubleshooting).
       placeholder: Currently...
     validations:
       required: true
@@ -26,8 +28,9 @@ body:
     id: reproduction
     attributes:
       label: Test code to reproduce
-      description: Please provide a failing test or repo we can run. You can fork [this repo](https://github.com/cypress-io/cypress-test-tiny), set up a failing test, then link to your fork. If you have never done this before, watch [this video](https://youtu.be/NnriKHmj5T8) for example.
-      placeholder: Here is my failing test code and the app code to run the tests on...
+      description: >
+        Provide a way to reproduce the bug. This can be a link to a fork of [cypress-test-tiny](https://github.com/cypress-io/cypress-test-tiny) with a failing test added, or clear steps to reproduce (e.g. shell commands or a minimal project setup). Keep it as small as possible — remove anything not needed to trigger the issue.
+      placeholder: Link to your fork of cypress-test-tiny, or steps to reproduce...
     validations:
       required: true
   - type: input
@@ -36,22 +39,6 @@ body:
       label: Cypress Version
       description: What version of Cypress are you running? Run `cypress version` to see your current version. If possible, please update Cypress to the latest version first.
       placeholder: ex. 10.3.1
-    validations:
-      required: true
-  - type: input
-    id: node-version
-    attributes:
-      label: Node version
-      description: What version of node.js are you using to run Cypress?
-      placeholder: ex. v18.15.0
-    validations:
-      required: true
-  - type: input
-    id: os
-    attributes:
-      label: Operating System
-      description: What operating system is Cypress running on when you are encountering your problem?  The more specific the better.  ie macOS 12.4 or Windows 10.0.19044.1889
-      placeholder: ex. macOS 12.4
     validations:
       required: true
   - type: textarea

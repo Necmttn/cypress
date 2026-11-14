@@ -4,8 +4,9 @@ require('../spec_helper')
 const ws = require('ws')
 const httpsProxyAgent = require('https-proxy-agent')
 const evilDns = require('evil-dns')
-const Promise = require('bluebird')
-const socketIo = require(`@packages/socket/lib/browser`)
+// NOTE: we need to import the client from the lib directory because the browser/client directory is compiled to ESM.
+// we are unable to import ESM into a CommonJS test context, even if we await import() the module.
+const socketIo = require('@packages/socket/lib/client')
 const httpsServer = require(`@packages/https-proxy/test/helpers/https_server`)
 const config = require(`../../lib/config`)
 const { ServerBase } = require(`../../lib/server-base`)
@@ -38,7 +39,7 @@ describe('Web Sockets', () => {
       this.cfg = cfg
       this.ws = new ws.Server({ port: wsPort })
 
-      this.server = new ServerBase()
+      this.server = new ServerBase(cfg)
 
       return this.server.open(this.cfg, {
         SocketCtor: SocketE2E,
@@ -50,6 +51,11 @@ describe('Web Sockets', () => {
         const automationStub = {
           use: () => { },
         }
+
+        // these upgrades reach this server acting as a proxy, like a proxied
+        // browser — which only happens on the MITM path, and the server refuses
+        // CONNECT until a launch resolves it
+        await this.server.setNetworkMode(false)
 
         await this.server.startWebsockets(automationStub, config, {})
 
@@ -68,10 +74,10 @@ describe('Web Sockets', () => {
     this.ws.close()
     this.wss.close()
 
-    return Promise.join(
+    return Promise.all([
       this.server.close(),
       httpsServer.stop(),
-    )
+    ])
   })
 
   context('proxying external websocket requests', () => {
@@ -84,7 +90,7 @@ describe('Web Sockets', () => {
         agent,
       })
 
-      return client.on('error', (err) => {
+      client.on('error', (err) => {
         expect(err.code).to.eq('ECONNRESET')
         expect(err.message).to.eq('socket hang up')
 
@@ -113,7 +119,7 @@ describe('Web Sockets', () => {
         return done()
       })
 
-      return client.on('open', () => {
+      client.on('open', () => {
         return client.send('foo')
       })
     })
@@ -140,7 +146,7 @@ describe('Web Sockets', () => {
         return done()
       })
 
-      return client.on('open', () => {
+      client.on('open', () => {
         return client.send('foo')
       })
     })
@@ -171,7 +177,7 @@ describe('Web Sockets', () => {
         return done()
       })
 
-      return client.on('open', () => {
+      client.on('open', () => {
         return client.send('foo')
       })
     })
@@ -211,7 +217,7 @@ describe('Web Sockets', () => {
         return done()
       })
 
-      return client.on('open', () => {
+      client.on('open', () => {
         return client.send('foo')
       })
     })
@@ -243,9 +249,10 @@ describe('Web Sockets', () => {
             path: this.cfg.socketIoRoute,
             transports: ['websocket'],
             rejectUnauthorized: false,
+            extraHeaders: { origin: new URL(wsUrl || this.cfg.proxyUrl).origin },
           })
 
-          return this.wsClient.on('connect', () => {
+          this.wsClient.on('connect', () => {
             return done()
           })
         })
@@ -255,7 +262,7 @@ describe('Web Sockets', () => {
         })
 
         it('continues to handle socket.io requests just fine', function (done) {
-          return this.wsClient.emit('backend:request', 'get:fixture', 'example.json', {}, (data) => {
+          this.wsClient.emit('backend:request', 'get:fixture', 'example.json', {}, (data) => {
             expect(data.response).to.deep.eq({ foo: 'bar' })
 
             return done()
@@ -284,29 +291,27 @@ describe('Web Sockets', () => {
             return done(new Error('should not have been able to connect'))
           })
 
-          return this.wsClient.io.on('error', () => {
+          this.wsClient.io.on('error', () => {
             return done()
           })
         })
 
-        // TODO: this test will currently fail because we allow polling in development mode
-        // for webkit support. Restore this test before WebKit is available in production.
-        // it('fails to connect via polling', function (done) {
-        //   this.wsClient = socketIo.client(wsUrl || this.cfg.proxyUrl, {
-        //     path: this.cfg.socketIoRoute,
-        //     transports: ['polling'],
-        //     rejectUnauthorized: false,
-        //     reconnection: false,
-        //   })
+        it('fails to connect via polling', function (done) {
+          this.wsClient = socketIo.client(wsUrl || this.cfg.proxyUrl, {
+            path: this.cfg.socketIoRoute,
+            transports: ['polling'],
+            rejectUnauthorized: false,
+            reconnection: false,
+          })
 
-        //   this.wsClient.on('connect', () => {
-        //     return done(new Error('should not have been able to connect'))
-        //   })
+          this.wsClient.on('connect', () => {
+            return done(new Error('should not have been able to connect'))
+          })
 
-        //   return this.wsClient.io.on('error', () => {
-        //     return done()
-        //   })
-        // })
+          this.wsClient.io.on('error', () => {
+            return done()
+          })
+        })
       })
     }
 
@@ -324,6 +329,82 @@ describe('Web Sockets', () => {
       return testSocketIo(`http://localhost:${wssPort}`, function () {
         return this.server.remoteStates.set(`http://localhost:${wssPort}`)
       })
+    })
+  })
+
+  describe('graphql-ws handling on __socket-graphql', () => {
+    beforeEach(function () {
+      const automation = new Automation({
+        cyNamespace: this.cfg.namespace,
+        cookieNamespace: this.cfg.socketIoCookie,
+        screenshotsFolder: this.cfg.screenshotsFolder,
+      })
+
+      return this.server.startWebsockets(automation, this.cfg, {})
+    })
+
+    const openGraphqlWs = (origin) => {
+      const agent = new httpsProxyAgent(`http://localhost:${cyPort}`)
+      const headers = {}
+
+      if (origin !== undefined) {
+        headers.Origin = origin
+      }
+
+      return new Promise((resolve) => {
+        const client = new ws(`ws://localhost:${cyPort}/__socket-graphql`, 'graphql-transport-ws', {
+          agent,
+          headers,
+        })
+        let opened = false
+        let statusCode
+        let done = false
+
+        const finish = () => {
+          if (done) return
+
+          done = true
+          resolve({ opened, statusCode })
+        }
+
+        client.once('open', () => {
+          opened = true
+          client.close()
+        })
+
+        client.once('unexpected-response', (_req, res) => {
+          statusCode = res.statusCode
+          client.terminate()
+          finish()
+        })
+
+        client.once('close', () => finish())
+        client.once('error', () => {})
+      })
+    }
+
+    it('accepts upgrade when Origin is the primary origin on a port other than the cypress server port', async function () {
+      this.server.remoteStates.set(`http://localhost:${otherPort}`)
+
+      const result = await openGraphqlWs(`http://localhost:${otherPort}`)
+
+      expect(result.opened, `expected upgrade to succeed; got statusCode=${result.statusCode}`).to.be.true
+    })
+
+    it('refuses upgrade when Origin is not the primary origin', async function () {
+      this.server.remoteStates.set(`http://localhost:${otherPort}`)
+
+      const result = await openGraphqlWs('http://foobar.com:4455')
+
+      expect(result.opened).to.be.false
+      expect(result.statusCode).to.eq(400)
+    })
+
+    it('refuses upgrade with no Origin header', async () => {
+      const result = await openGraphqlWs(undefined)
+
+      expect(result.opened).to.be.false
+      expect(result.statusCode).to.eq(400)
     })
   })
 })

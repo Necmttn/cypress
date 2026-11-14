@@ -1,28 +1,29 @@
-// @ts-ignore
 import pkg from '@packages/root'
 import debugLib from 'debug'
 import DataLoader from 'dataloader'
 import { createBatchingExecutor } from '@graphql-tools/batch-execute'
-import { cacheExchange, Cache } from '@urql/exchange-graphcache'
-import fetch, { Response } from 'cross-fetch'
+import { cacheExchange } from '@urql/exchange-graphcache'
+import type { Cache } from '@urql/exchange-graphcache'
+import type fetch from 'cross-fetch'
+import { Response } from 'cross-fetch'
 import crypto from 'crypto'
 
 import type { DataContext } from '..'
-import getenv from 'getenv'
-import { print, DocumentNode, ExecutionResult, GraphQLResolveInfo, OperationTypeNode, visit, OperationDefinitionNode } from 'graphql'
+import { print, visit } from 'graphql'
+import type { DocumentNode, ExecutionResult, GraphQLResolveInfo, OperationTypeNode, OperationDefinitionNode } from 'graphql'
 import {
   createClient,
   dedupExchange,
   fetchExchange,
-  Client,
-  OperationResult,
   stringifyVariables,
-  RequestPolicy,
 } from '@urql/core'
+import type { OperationResult, RequestPolicy, Client } from '@urql/core'
 import _ from 'lodash'
 import type { core } from 'nexus'
 import { delegateToSchema } from '@graphql-tools/delegate'
 import { urqlCacheKeys } from '../util/urqlCacheKeys'
+import { CLOUD_URLS, resolveCloudEnv } from '../util/cloudUrls'
+import type { CloudEnv } from '../util/cloudUrls'
 import { urqlSchema } from '../gen/urql-introspection.gen'
 import type { AuthenticatedUserShape } from '../data'
 import { pathToArray } from 'graphql/jsutils/Path'
@@ -30,15 +31,7 @@ import { pathToArray } from 'graphql/jsutils/Path'
 export type CloudDataResponse<T = any> = ExecutionResult<T> & Partial<OperationResult<T | null>> & { executing?: Promise<ExecutionResult<T> & Partial<OperationResult<T | null>>> }
 
 const debug = debugLib('cypress:data-context:sources:CloudDataSource')
-const cloudEnv = getenv('CYPRESS_INTERNAL_CLOUD_ENV', process.env.CYPRESS_INTERNAL_ENV || 'development') as keyof typeof REMOTE_SCHEMA_URLS
 
-const REMOTE_SCHEMA_URLS = {
-  staging: 'https://cloud-staging.cypress.io',
-  development: 'http://localhost:3000',
-  production: 'https://cloud.cypress.io',
-}
-
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 type StartsWith<T, Prefix extends string> = T extends `${Prefix}${infer _U}` ? T : never
 type CloudQueryField = StartsWith<keyof NexusGen['fieldTypes']['Query'], 'cloud'>
 
@@ -48,22 +41,32 @@ export interface CloudExecuteQuery {
   operationVariables: any
 }
 
-export interface CloudExecuteRemote extends CloudExecuteQuery {
+interface CloudExecuteRemote extends CloudExecuteQuery {
   fieldName: string
   shouldBatch?: boolean
   operationType?: OperationTypeNode
   requestPolicy?: RequestPolicy
   onUpdatedResult?: (data: any) => any
+  /**
+   * Opt-in: when set, the query is allowed to hit the remote schema even when
+   * there's no authenticated user. Default behavior short-circuits to
+   * `{ data: null }` for logged-out users (correct for queries that depend on
+   * a user, like `cloudViewer` / project lists). Set this for genuinely public
+   * fields — e.g. `cloudAppMessages`, where logged-out users still need to
+   * receive content. Use sparingly; greppable so it's easy to audit which
+   * queries opt in.
+   */
+  allowUnauthenticated?: boolean
 }
 
-export interface CloudExecuteDelegateFieldParams<F extends CloudQueryField> {
+interface CloudExecuteDelegateFieldParams<F extends CloudQueryField> {
   field: F
   args: core.ArgsValue<'Query', F>
   ctx: DataContext
   info: GraphQLResolveInfo
 }
 
-export interface CloudDataSourceParams {
+interface CloudDataSourceParams {
   fetch: typeof fetch
   getUser(): AuthenticatedUserShape | null
   logout(): void
@@ -85,7 +88,6 @@ export interface CloudDataSourceParams {
  */
 export class CloudDataSource {
   #cloudUrqlClient: Client
-  #lastCache?: string
   #batchExecutor: ReturnType<typeof createBatchingExecutor>
   #batchExecutorBatcher: DataLoader<CloudExecuteRemote, OperationResult>
 
@@ -102,7 +104,7 @@ export class CloudDataSource {
     return this.params.getUser()
   }
 
-  async #additionalHeaders () {
+  async additionalHeaders () {
     return {
       'Authorization': this.#user ? `bearer ${this.#user.authToken}` : '',
       'x-cypress-version': pkg.version,
@@ -112,36 +114,17 @@ export class CloudDataSource {
 
   reset () {
     return this.#cloudUrqlClient = createClient({
-      url: `${this.getCloudUrl(cloudEnv)}/test-runner-graphql`,
+      url: `${this.getCloudUrl(resolveCloudEnv())}/test-runner-graphql`,
       exchanges: [
         dedupExchange,
         cacheExchange({
-          // @ts-ignore
+          // @ts-expect-error - the introspected schema's literal types don't match graphcache's `IntrospectionData`
           schema: urqlSchema,
           ...urqlCacheKeys,
           updates: {
             Mutation: {
-              _cloudCacheInvalidate: (parent, { args }: {args: Parameters<Cache['invalidate']>}, cache, info) => {
+              _cloudCacheInvalidate: (parent, { args }: { args: Parameters<Cache['invalidate']> }, cache, info) => {
                 cache.invalidate(...args)
-              },
-              _showUrqlCache: (parent, { args }: {args: Parameters<Cache['invalidate']>}, cache, info) => {
-                this.#lastCache = JSON.stringify(cache, function replacer (key, value) {
-                  if (value instanceof Map) {
-                    const reducer = (obj: any, mapKey: any) => {
-                      obj[mapKey] = value.get(mapKey)
-
-                      return obj
-                    }
-
-                    return [...value.keys()].sort().reduce(reducer, {})
-                  }
-
-                  if (value instanceof Set) {
-                    return [...value].sort()
-                  }
-
-                  return value
-                })
               },
             },
           },
@@ -160,7 +143,7 @@ export class CloudDataSource {
           ...init,
           headers: {
             ...init?.headers,
-            ...await this.#additionalHeaders(),
+            ...await this.additionalHeaders(),
           },
         })
       },
@@ -291,8 +274,11 @@ export class CloudDataSource {
    * as a remote request mechanism for a stitched schema, we reject the promise if we see any errors.
    */
   executeRemoteGraphQL <T = any> (config: CloudExecuteRemote): Promise<CloudDataResponse<T>> | CloudDataResponse<T> {
-    // We do not want unauthenticated requests to hit the remote schema
-    if (!this.#user) {
+    // By default we don't want unauthenticated requests to hit the remote
+    // schema — most cloud queries are user-scoped and have nothing to return
+    // for a logged-out user. Callers can opt in via `allowUnauthenticated: true`
+    // for genuinely public fields (see field comment on `CloudExecuteRemote`).
+    if (!this.#user && !config.allowUnauthenticated) {
       return { data: null }
     }
 
@@ -342,25 +328,8 @@ export class CloudDataSource {
     }).toPromise()
   }
 
-  async getCache () {
-    await this.#cloudUrqlClient.mutation(`
-      mutation Internal_showUrqlCache { 
-        _showUrqlCache
-      }
-    `, { }, {
-      fetchOptions: {
-        headers: {
-          // Same note as above on the "invalidate", we could make this a bit clearer
-          INTERNAL_REQUEST: JSON.stringify({ data: { _cloudCacheInvalidate: true } }),
-        },
-      },
-    }).toPromise()
-
-    return JSON.parse(this.#lastCache ?? '')
-  }
-
-  getCloudUrl (env: keyof typeof REMOTE_SCHEMA_URLS) {
-    return REMOTE_SCHEMA_URLS[env]
+  getCloudUrl (env: CloudEnv) {
+    return CLOUD_URLS[env]
   }
 
   /**

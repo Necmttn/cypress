@@ -1,7 +1,6 @@
-import { defaultMessages } from '@cy/i18n'
 import { CloudUserStubs,
   CloudOrganizationConnectionStubs,
-} from '@packages/graphql/test/stubCloudTypes'
+} from '@packages/data-context/test/graphql/stubCloudTypes'
 import { CloudConnectModalsFragmentDoc } from '../../generated/graphql-test'
 import CloudConnectModals from './CloudConnectModals.vue'
 import cloneDeep from 'lodash/cloneDeep'
@@ -54,7 +53,7 @@ describe('<CloudConnectModals />', () => {
     })
 
     it('shows the create/select org modal when orgs are added', () => {
-      cy.contains(defaultMessages.runs.connect.modal.createOrg.button).should('be.visible')
+      cy.contains('Create organization').should('be.visible')
 
       cy.percySnapshot()
     })
@@ -67,9 +66,9 @@ describe('<CloudConnectModals />', () => {
       })
 
       it('shows the select project modal with create new project action', () => {
-        cy.contains(defaultMessages.runs.connect.modal.selectProject.createProject).should('be.visible')
+        cy.contains('Create project').should('be.visible')
 
-        cy.contains('a', defaultMessages.links.needHelp).should('have.attr', 'href', 'https://on.cypress.io/adding-new-project')
+        cy.contains('a', 'Need help').should('have.attr', 'href', 'https://on.cypress.io/adding-new-project')
 
         cy.percySnapshot()
       })
@@ -81,7 +80,7 @@ describe('<CloudConnectModals />', () => {
       })
 
       it('shows the select project modal with list of projects', () => {
-        cy.contains(defaultMessages.runs.connect.modal.selectProject.connectProject).should('be.visible')
+        cy.contains('Connect project').should('be.visible')
 
         cy.percySnapshot()
       })

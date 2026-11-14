@@ -1,6 +1,15 @@
-import { TestFilter } from '@packages/types'
+import { MobxRunnerStore } from '@packages/app/src/store/mobx-runner-store'
+import type { TestFilter } from '@packages/types'
 import { EventEmitter } from 'events'
-import { RootRunnable } from '../../src/runnables/runnables-store'
+import type { RootRunnable } from '../../src/runnables/runnables-store'
+
+const runnerStore = new MobxRunnerStore()
+
+runnerStore.setSpec({
+  name: 'foo',
+  absolute: '/foo/bar',
+  relative: 'foo/bar',
+})
 
 const { _ } = Cypress
 
@@ -8,7 +17,7 @@ describe('header', () => {
   let runner: EventEmitter
   let runnables: RootRunnable
 
-  function setupReporter (opts?: { testFilter: TestFilter, totalUnfilteredTests: number, skipRunnableCreation?: boolean}) {
+  function setupReporter (opts?: { testFilter: TestFilter, totalUnfilteredTests: number, skipRunnableCreation?: boolean }) {
     if (opts?.skipRunnableCreation) {
       runnables = {}
     } else {
@@ -22,17 +31,11 @@ describe('header', () => {
     cy.visit('/').then((win) => {
       win.render({
         runner,
-        runnerStore: {
-          spec: {
-            name: 'foo',
-            absolute: '/foo/bar',
-            relative: 'foo/bar',
-          },
-        },
+        runnerStore,
       })
     })
 
-    cy.get('.reporter').then(() => {
+    cy.get('.reporter.mounted').then(() => {
       runner.emit('runnables:ready', { ...runnables, testFilter: opts?.testFilter, totalUnfilteredTests: opts?.totalUnfilteredTests })
       runner.emit('reporter:start', {})
     })
@@ -57,7 +60,7 @@ describe('header', () => {
     })
 
     it('shows \'Tests\' when >= 398px wide', () => {
-      cy.get('.toggle-specs-wrapper span').should('be.visible')
+      cy.get('[data-cy=toggle-specs-button]').should('be.visible')
     })
   })
 
@@ -103,27 +106,28 @@ describe('header', () => {
         runner.emit('run:start')
       })
 
-      describe('preferences menu', () => {
-        it('can be toggled', () => {
-          cy.get('.testing-preferences').should('not.exist')
-          cy.get('.testing-preferences-toggle').should('not.have.class', 'open')
-          cy.get('.testing-preferences-toggle').click()
-          cy.get('.testing-preferences-toggle').should('have.class', 'open')
-          cy.get('.testing-preferences').should('be.visible')
-          cy.get('.testing-preferences-toggle').click()
-          cy.get('.testing-preferences-toggle').should('not.have.class', 'open')
-          cy.get('.testing-preferences').should('not.exist')
+      describe('more options menu', () => {
+        it('can be opened', () => {
+          cy.get('[data-cy="runnable-options-button"]').click()
+          cy.get('[data-cy="more-options-runnable-popover"]').should('be.visible')
+
+          cy.get('[data-cy="runnable-options-button"]').click()
+          cy.get('[data-cy="more-options-runnable-popover"]').should('not.exist')
+          cy.get('[data-cy="runnable-options-button"]').click()
+          cy.get('[data-cy="more-options-runnable-popover"]').should('be.visible')
         })
 
         it('has tooltip', () => {
-          cy.get('.testing-preferences-toggle').trigger('mouseover')
-          cy.get('.cy-tooltip').should('have.text', 'Open Testing Preferences')
+          cy.get('[data-cy="runnable-options-button"]').trigger('mouseover')
+          cy.get('.cy-tooltip').should('have.text', 'Options')
         })
 
         it('shows when auto-scrolling is enabled and can disable it', () => {
           const switchSelector = '[data-cy=auto-scroll-switch]'
 
-          cy.get('.testing-preferences-toggle').click()
+          cy.get('[data-cy="runnable-options-button"]').click()
+          cy.get('[data-cy="more-options-runnable-popover"]').should('be.visible')
+
           cy.get(switchSelector).invoke('attr', 'aria-checked').should('eq', 'true')
           cy.get(switchSelector).click()
           cy.get(switchSelector).invoke('attr', 'aria-checked').should('eq', 'false')
@@ -132,7 +136,9 @@ describe('header', () => {
         it('can be toggled with shortcut', () => {
           const switchSelector = '[data-cy=auto-scroll-switch]'
 
-          cy.get('.testing-preferences-toggle').click()
+          cy.get('[data-cy="runnable-options-button"]').click()
+          cy.get('[data-cy="more-options-runnable-popover"]').should('be.visible')
+
           cy.get(switchSelector).invoke('attr', 'aria-checked').should('eq', 'true')
           cy.get('body').type('a').then(() => {
             cy.get(switchSelector).invoke('attr', 'aria-checked').should('eq', 'false')
@@ -141,10 +147,70 @@ describe('header', () => {
 
         it('the auto-scroll toggle emits save:state event when clicked', () => {
           cy.spy(runner, 'emit')
-          cy.get('.testing-preferences-toggle').click()
+
+          cy.get('[data-cy="runnable-options-button"]').click()
+          cy.get('[data-cy="more-options-runnable-popover"]').should('be.visible')
+
           cy.get('[data-cy=auto-scroll-switch]').click()
           cy.wrap(runner.emit).should('be.calledWith', 'save:state')
           cy.percySnapshot()
+        })
+
+        it('shows when show fetch requests is enabled and can disable it', () => {
+          const switchSelector = '[data-cy=show-http-requests-switch]'
+
+          cy.get('[data-cy="runnable-options-button"]').click()
+          cy.get('[data-cy="more-options-runnable-popover"]').should('be.visible')
+
+          cy.get(switchSelector).invoke('attr', 'aria-checked').should('eq', 'true')
+          cy.get(switchSelector).click()
+          cy.get(switchSelector).invoke('attr', 'aria-checked').should('eq', 'false')
+        })
+
+        it('the show fetch requests toggle emits save:state event when clicked', () => {
+          cy.spy(runner, 'emit')
+
+          cy.get('[data-cy="runnable-options-button"]').click()
+          cy.get('[data-cy="more-options-runnable-popover"]').should('be.visible')
+
+          cy.get('[data-cy=show-http-requests-switch]').click()
+          cy.wrap(runner.emit).should('be.calledWith', 'save:state')
+          cy.percySnapshot()
+        })
+
+        it('shows code editor line wrap toggle, can toggle it, and emits save:state when clicked', () => {
+          const switchSelector = '[data-cy=code-editor-line-wrap-switch]'
+
+          cy.spy(runner, 'emit')
+
+          cy.get('[data-cy="runnable-options-button"]').click()
+          cy.get('[data-cy="more-options-runnable-popover"]').should('be.visible')
+
+          cy.get(switchSelector).invoke('attr', 'aria-checked').should('eq', 'false')
+          cy.get(switchSelector).click()
+          cy.get(switchSelector).invoke('attr', 'aria-checked').should('eq', 'true')
+          cy.wrap(runner.emit).should('be.calledWith', 'save:state')
+          cy.percySnapshot()
+        })
+
+        it('opens the open in IDE button', () => {
+          cy.spy(runner, 'emit')
+
+          cy.get('[data-cy="runnable-options-button"]').click()
+          cy.get('[data-cy="more-options-runnable-popover"]').should('be.visible')
+
+          cy.get('[data-cy="runnable-popover-open-ide"]').click()
+          cy.wrap(runner.emit).should('be.calledWith', 'open:file:unified')
+        })
+
+        it('opens the new test button', () => {
+          cy.spy(runner, 'emit')
+
+          cy.get('[data-cy="runnable-options-button"]').click()
+          cy.get('[data-cy="more-options-runnable-popover"]').should('be.visible')
+
+          cy.get('[data-cy="runnable-popover-new-test"]').click()
+          cy.wrap(runner.emit).should('be.calledWith', 'studio:init:suite')
         })
       })
 
@@ -174,9 +240,76 @@ describe('header', () => {
           cy.get('.restart').should('not.exist')
         })
 
-        it('does not display next button', () => {
+        it('does not display the next button', () => {
           cy.get('.next').should('not.exist')
         })
+      })
+    })
+
+    describe('when running after resume', () => {
+      beforeEach(() => {
+        runner.emit('run:start')
+        runner.emit('paused')
+        cy.get('.play').click()
+      })
+
+      it('displays next button as disabled when running after resume', () => {
+        cy.get('.next').should('be.visible').and('be.disabled')
+      })
+
+      it('shows "Step (not available)" tooltip when running after resume', () => {
+        cy.get('.next').trigger('mouseover', { force: true })
+        cy.get('.cy-tooltip').should('have.text', 'Step (not available)')
+      })
+
+      it('does not emit runner:next when disabled button is clicked', () => {
+        cy.spy(runner, 'emit')
+        cy.get('.next').click({ force: true })
+        cy.wrap(runner.emit).should('not.be.calledWith', 'runner:next')
+      })
+
+      it('displays stop button when running after resume', () => {
+        cy.get('.stop').should('be.visible')
+      })
+    })
+
+    describe('when paused without next command', () => {
+      beforeEach(() => {
+        runner.emit('paused')
+      })
+
+      it('displays play button', () => {
+        cy.get('.play').should('be.visible')
+      })
+
+      it('displays tooltip for play button', () => {
+        cy.get('.play').trigger('mouseover')
+        cy.get('.cy-tooltip').should('have.text', 'Resume C')
+      })
+
+      it('emits runner:resume when play button is clicked', () => {
+        cy.spy(runner, 'emit')
+        cy.get('.play').click()
+        cy.wrap(runner.emit).should('be.calledWith', 'runner:resume')
+      })
+
+      it('displays next button', () => {
+        cy.get('.next').should('be.visible').and('be.disabled')
+      })
+
+      it('shows "Step (not available)" tooltip when next button is disabled', () => {
+        cy.get('.next').trigger('mouseover', { force: true })
+        cy.get('.cy-tooltip').should('have.text', 'Step (not available)')
+      })
+
+      it('does not emit runner:next when disabled next button is clicked', () => {
+        cy.spy(runner, 'emit')
+        cy.get('.next').click({ force: true })
+        cy.wrap(runner.emit).should('not.be.calledWith', 'runner:next')
+      })
+
+      it('does not display stop button', () => {
+        cy.get('.stop').should('not.exist')
       })
     })
 
@@ -206,7 +339,7 @@ describe('header', () => {
 
       it('displays tooltip for next button', () => {
         cy.get('.next').trigger('mouseover')
-        cy.get('.cy-tooltip').should('have.text', `Next [N]:find`)
+        cy.get('.cy-tooltip').should('have.text', 'Next N : find')
       })
 
       it('emits runner:next when next button is clicked', () => {

@@ -1,11 +1,20 @@
+import { MobxRunnerStore } from '@packages/app/src/store/mobx-runner-store'
 import { EventEmitter } from 'events'
 import { itHandlesFileOpening } from '../support/utils'
-import Err from '../../src/errors/err-model'
-import { RootRunnable } from '../../src/runnables/runnables-store'
+import type Err from '../../src/errors/err-model'
+import type { RootRunnable } from '../../src/runnables/runnables-store'
+
+const runnerStore = new MobxRunnerStore()
+
+runnerStore.setSpec({
+  name: 'foo.js',
+  relative: 'relative/path/to/foo.js',
+  absolute: '/absolute/path/to/foo.js',
+})
 
 describe('test errors', () => {
   let commandErr: Partial<Err>
-  let setError: Function
+  let setError: (err: Partial<Err>) => void
   let runnablesWithErr: RootRunnable
   let runner: EventEmitter
 
@@ -16,11 +25,11 @@ describe('test errors', () => {
     runner = new EventEmitter()
 
     cy.visit('/').then((win) => {
-      setError = (err: Error) => {
-        // @ts-ignore
+      setError = (err) => {
+        // @ts-expect-error - RootRunnable types suites as optional, and the fixture error is a Partial<Err>, not a full ErrProps
         runnablesWithErr.suites[0].tests[0].err = err
 
-        cy.get('.reporter').then(() => {
+        cy.get('.reporter.mounted').then(() => {
           runner.emit('runnables:ready', runnablesWithErr)
           runner.emit('reporter:start', {})
         })
@@ -28,13 +37,7 @@ describe('test errors', () => {
 
       win.render({
         runner,
-        runnerStore: {
-          spec: {
-            name: 'foo.js',
-            relative: 'relative/path/to/foo.js',
-            absolute: '/absolute/path/to/foo.js',
-          },
-        },
+        runnerStore,
       })
     })
   })
@@ -45,12 +48,12 @@ describe('test errors', () => {
     })
 
     it('clicking prints to console', () => {
-      cy.spy(runner, 'emit')
-      cy.get('.runnable-err-print').click().should(() => {
-        expect(runner.emit).to.be.calledWith('runner:console:error')
+      const emit = cy.spy(runner, 'emit')
 
-        // @ts-ignore
-        const err = runner.emit.withArgs('runner:console:error').lastCall.args[1].err
+      cy.get('.runnable-err-print').click().should(() => {
+        expect(emit).to.be.calledWith('runner:console:error')
+
+        const err = emit.withArgs('runner:console:error').lastCall.args[1].err
 
         expect(err.message).to.equal(commandErr.message)
         expect(err.stack).to.equal(commandErr.stack)
@@ -70,7 +73,7 @@ describe('test errors', () => {
     it('does not expand or collapse stack trace when clicking', () => {
       cy.get('.runnable-err-print').click()
       cy.get('.runnable-err-stack-trace').should('not.exist')
-      cy.contains('View stack trace').click()
+      cy.contains('Stack trace').click()
       cy.get('.runnable-err-stack-trace').should('be.visible')
       cy.get('.runnable-err-print').click()
       cy.get('.runnable-err-stack-trace').should('be.visible')
@@ -87,13 +90,13 @@ describe('test errors', () => {
     })
 
     it('opens stack trace on click', () => {
-      cy.contains('View stack trace').click()
+      cy.contains('Stack trace').click()
       cy.get('.runnable-err-stack-trace').should('be.visible')
       cy.percySnapshot()
     })
 
     it('pairs down stack line whitespace', () => {
-      cy.contains('View stack trace').click()
+      cy.contains('Stack trace').click()
 
       cy.get('.runnable-err-stack-trace').within(() => {
         cy.get('.err-stack-line')
@@ -118,7 +121,7 @@ describe('test errors', () => {
     })
 
     it('does not include message in stack trace', () => {
-      cy.contains('View stack trace').click()
+      cy.contains('Stack trace').click()
       cy.get('.runnable-err-stack-trace')
       .invoke('text')
       .should('not.include', 'Some Error')
@@ -126,7 +129,7 @@ describe('test errors', () => {
     })
 
     it('turns files into links', () => {
-      cy.contains('View stack trace').click()
+      cy.contains('Stack trace').click()
 
       cy.get('.runnable-err-stack-trace .runnable-err-file-path')
       .should('have.length', 3)
@@ -141,34 +144,34 @@ describe('test errors', () => {
     })
 
     it('does not turn cypress:// files into links', () => {
-      cy.contains('View stack trace').click()
+      cy.contains('Stack trace').click()
       cy.contains('cypress://').find('a').should('not.exist')
     })
 
     it('does not turn cypress_runner.js files into links', () => {
-      cy.contains('View stack trace').click()
+      cy.contains('Stack trace').click()
       cy.contains('cypress_runner.js').find('a').should('not.exist')
     })
 
     it('does not turn lines without absoluteFile into links', () => {
-      cy.contains('View stack trace').click()
+      cy.contains('Stack trace').click()
       cy.contains('.err-stack-line', 'http://localhost:1234/me/dev/my/app.js:8:11')
       .find('a').should('not.exist')
     })
 
     it('does not turn anything after "From Node.js Internals" into links', () => {
-      cy.contains('View stack trace').click()
+      cy.contains('Stack trace').click()
       cy.contains('events.js').find('a').should('not.exist')
       cy.contains('node/internals.js').find('a').should('not.exist')
     })
 
     it('does not collapse test when clicking', () => {
-      cy.contains('View stack trace').click()
+      cy.contains('Stack trace').click()
       cy.get('.command-wrapper').should('be.visible')
     })
 
     it('displays tooltip on hover', () => {
-      cy.contains('View stack trace').click()
+      cy.contains('Stack trace').click()
 
       cy.get('.runnable-err-stack-trace a').first().trigger('mouseover')
       cy.get('.cy-tooltip').first().should('have.text', 'Open in IDE')
@@ -290,7 +293,7 @@ describe('test errors', () => {
     })
   })
 
-  describe('code frames', () => {
+  describe('code frame fallbacks', () => {
     it('does not show code frame when not included on error', () => {
       commandErr.codeFrame = undefined
       setError(commandErr)
@@ -301,7 +304,7 @@ describe('test errors', () => {
     })
 
     it('falls back to text language class', () => {
-      // @ts-ignore
+      // @ts-expect-error - commandErr is a Partial<Err>, so codeFrame is optional
       commandErr.codeFrame.language = null
       setError(commandErr)
       cy
@@ -310,21 +313,50 @@ describe('test errors', () => {
     })
   })
 
-  describe('studio error', () => {
-    beforeEach(() => {
-      setError(runnablesWithErr)
+  describe('docs url', () => {
+    it('renders docs url with default title', () => {
+      setError(commandErr)
+
+      cy.get('.runnable-err-docs-url').should('have.attr', 'href', commandErr.docsUrl)
+      cy.get('.runnable-err-docs-url').should('have.text', 'Learn more')
     })
 
-    it('is not visible by default', () => {
-      cy.get('.studio-err-wrapper').should('not.exist')
+    it('renders docs url with custom title', () => {
+      commandErr.docsUrlTitle = 'Custom title'
+      setError(commandErr)
+
+      cy.get('.runnable-err-docs-url').should('have.attr', 'href', commandErr.docsUrl)
+      cy.get('.runnable-err-docs-url').should('have.text', 'Custom title')
+    })
+  })
+
+  describe('trigger action', () => {
+    it('shows "Log in to Cypress Cloud." when triggerAction is loginModal', () => {
+      setError({ ...commandErr, triggerAction: 'loginModal' })
+
+      cy.get('.runnable-err-trigger-action').should('be.visible')
+      cy.get('.runnable-err-trigger-action').contains('Log in to Cypress Cloud.')
     })
 
-    it('is visible when studio is active', () => {
-      runner.emit('reporter:start', { studioActive: true })
+    it('shows "Connect project to Cypress Cloud." when triggerAction is projectConnectModal', () => {
+      setError({ ...commandErr, triggerAction: 'projectConnectModal' })
 
-      cy.get('.studio-err-wrapper').should('exist').should('be.visible')
+      cy.get('.runnable-err-trigger-action').should('be.visible')
+      cy.get('.runnable-err-trigger-action').contains('Connect project to Cypress Cloud.')
+    })
 
-      cy.percySnapshot()
+    it('does not show trigger action when triggerAction is not set', () => {
+      setError(commandErr)
+
+      cy.get('.runnable-err-trigger-action').should('not.exist')
+    })
+
+    it('emits open:login:connect:modal when trigger action link is clicked', () => {
+      setError({ ...commandErr, triggerAction: 'loginModal' })
+
+      cy.spy(runner, 'emit')
+      cy.get('.runnable-err-trigger-action a').click()
+      cy.wrap(runner.emit).should('be.calledWith', 'open:login:connect:modal', { utmMedium: 'Reporter Error Learn More' })
     })
   })
 })

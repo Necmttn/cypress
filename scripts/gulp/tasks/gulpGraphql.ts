@@ -1,12 +1,12 @@
 // @ts-expect-error - no types
 import rp from '@cypress/request-promise'
 import path from 'path'
-import pDefer from 'p-defer'
 import chalk from 'chalk'
 import fs from 'fs-extra'
-import { buildSchema, extendSchema, GraphQLSchema, introspectionFromSchema, isObjectType, parse } from 'graphql'
-import { minifyIntrospectionQuery } from '@urql/introspection'
+import type { GraphQLSchema } from 'graphql'
+import { buildSchema, extendSchema, introspectionFromSchema, isObjectType, parse } from 'graphql'
 
+import { writeUrqlIntrospection } from '../../../packages/data-context/scripts/urqlIntrospection'
 import { nexusTypegen, watchNexusTypegen } from '../utils/nexusTypegenUtil'
 import { monorepoPaths } from '../monorepoPaths'
 import { spawned, universalSpawn } from '../utils/childProcessUtils'
@@ -14,39 +14,35 @@ import { DEFAULT_INTERNAL_CLOUD_ENV } from '../gulpConstants'
 
 export async function nexusCodegen () {
   return nexusTypegen({
-    cwd: monorepoPaths.pkgGraphql,
-    filePath: path.join(monorepoPaths.pkgGraphql, 'src/schema.ts'),
-    outputPath: path.join(monorepoPaths.pkgGraphql, 'src/gen/nxs.gen.ts'),
+    cwd: monorepoPaths.pkgDataContext,
+    filePath: path.join(monorepoPaths.pkgDataContext, 'src/schema.ts'),
+    outputPath: path.join(monorepoPaths.pkgDataContext, 'src/gen/nxs.gen.ts'),
   })
 }
 
-/**
- * Watches & regenerates the
- */
 export async function nexusCodegenWatch () {
   return watchNexusTypegen({
-    cwd: monorepoPaths.pkgGraphql,
+    cwd: monorepoPaths.pkgDataContext,
     watchPaths: [
       'src/**/*.ts',
     ],
-    filePath: path.join(monorepoPaths.pkgGraphql, 'src/schema.ts'),
-    outputPath: path.join(monorepoPaths.pkgGraphql, 'src/gen/nxs.gen.ts'),
+    filePath: path.join(monorepoPaths.pkgDataContext, 'graphql/schema.ts'),
+    outputPath: path.join(monorepoPaths.pkgDataContext, 'src/gen/nxs.gen.ts'),
   })
 }
 
 export async function graphqlCodegen () {
-  return spawned('gql-codegen', 'yarn graphql-codegen --config graphql-codegen.yml', {
-    cwd: monorepoPaths.pkgGraphql,
+  return spawned('gql-codegen', 'yarn graphql-codegen --config graphql/graphql-codegen.yml', {
+    cwd: monorepoPaths.pkgDataContext,
     waitForExit: true,
   })
 }
 
 export async function graphqlCodegenWatch () {
-  const spawned = universalSpawn('graphql-codegen', ['--watch', '--config', 'graphql-codegen.yml'], {
-    cwd: monorepoPaths.pkgGraphql,
+  const spawned = universalSpawn('graphql-codegen', ['--watch', '--config', 'graphql/graphql-codegen.yml'], {
+    cwd: monorepoPaths.pkgDataContext,
   })
-  const dfd = pDefer()
-  let hasResolved = false
+  const dfd = Promise.withResolvers()
 
   spawned.stdout.on('data', (chunk) => {
     const strs = `${chunk}`.split('\n').filter((f) => f)
@@ -56,7 +52,7 @@ export async function graphqlCodegenWatch () {
     strs.forEach((str) => {
       let codegenMsg = timestampRegex.test(str) ? str.slice(10) : str
 
-      if (codegenMsg.includes('Watching for changes') && !hasResolved) {
+      if (codegenMsg.includes('Watching for changes')) {
         dfd.resolve({})
       }
 
@@ -96,39 +92,33 @@ export async function syncRemoteGraphQL () {
     const body = await rp.get(`${ENV_MAP[DEFAULT_INTERNAL_CLOUD_ENV]}/test-runner-graphql-schema`)
 
     // TODO(tim): fix
-    await fs.ensureDir(path.join(monorepoPaths.pkgGraphql, 'src/gen'))
-    await fs.promises.writeFile(path.join(monorepoPaths.pkgGraphql, 'schemas/cloud.graphql'), body)
+    await fs.ensureDir(path.join(monorepoPaths.pkgDataContext, 'src/gen'))
+    await fs.promises.writeFile(path.join(monorepoPaths.pkgDataContext, 'schemas/cloud.graphql'), body)
   } catch (error) {
     console.error('Could not sync remote GraphQL schema', error)
   }
 }
 
 /**
- * Generates the schema so the urql GraphCache is
+ * Regenerates both artifacts derived from the committed SDL, which live in
+ * different packages: the test-extended introspection `mountFragment` queries
+ * against, and the introspection the urql GraphCache reads.
  */
 export async function generateFrontendSchema () {
-  const schemaContents = await fs.promises.readFile(path.join(monorepoPaths.pkgGraphql, 'schemas/schema.graphql'), 'utf8')
+  const schemaContents = await fs.promises.readFile(path.join(monorepoPaths.pkgDataContext, 'schemas/schema.graphql'), 'utf8')
   const schema = buildSchema(schemaContents, { assumeValid: true })
   const testExtensions = generateTestExtensions(schema)
   const extendedSchema = extendSchema(schema, parse(testExtensions))
 
-  const URQL_INTROSPECTION_PATH = path.join(monorepoPaths.pkgDataContext, 'src/gen/urql-introspection.gen.ts')
-
-  await fs.ensureDir(path.dirname(URQL_INTROSPECTION_PATH))
   await fs.ensureDir(path.join(monorepoPaths.pkgFrontendShared, 'src/generated'))
   await fs.writeFile(path.join(monorepoPaths.pkgFrontendShared, 'src/generated/schema-for-tests.gen.json'), JSON.stringify(introspectionFromSchema(extendedSchema), null, 2))
 
-  await fs.promises.writeFile(
-    URQL_INTROSPECTION_PATH,
-    `/* eslint-disable */\nexport const urqlSchema = ${JSON.stringify(minifyIntrospectionQuery(introspectionFromSchema(schema)), null, 2)} as const`,
-  )
+  await writeUrqlIntrospection(schema)
 }
 
 /**
- * Adds two fields to the GraphQL types specific to testing
- *
- * @param schema
- * @returns
+ * Extends Query with two fields the component tests use to mount a fragment
+ * against any object type, via a union spanning all of them.
  */
 function generateTestExtensions (schema: GraphQLSchema) {
   const objects: string[] = []

@@ -3,14 +3,14 @@ import { allCommands } from '../cy/commands'
 import { addCommand as addNetstubbingCommand } from '../cy/net-stubbing'
 import $errUtils from './error_utils'
 import $stackUtils from './stack_utils'
-
+import type { $Cy } from './cy'
 import type { QueryFunction } from './state'
 
 const PLACEHOLDER_COMMANDS = ['mount', 'hover']
 
 const builtInCommands = [
   // `default` is necessary if a file uses `export default` syntax.
-  // @ts-ignore
+  // @ts-expect-error - not every command module has a default export
   ..._.toArray(allCommands).map((c) => c.default || c),
   addNetstubbingCommand,
 ]
@@ -40,7 +40,7 @@ const internalError = (path, args) => {
 }
 
 export default {
-  create: (Cypress, cy, state, config) => {
+  create: (Cypress: Cypress.Cypress, cy: $Cy, state, config) => {
     const reservedCommandNames = new Set(Object.keys(cy))
     const commands = {}
     const queries = {}
@@ -53,7 +53,7 @@ export default {
     const Commands = {
       addAllSync (obj) {
         // perf loop
-        for (let name in obj) {
+        for (const name in obj) {
           const fn = obj[name]
 
           Commands.addSync(name, fn)
@@ -63,18 +63,18 @@ export default {
         return null
       },
 
-      addSync (name, fn) {
+      addSync (name: string, fn: (...args: any[]) => any) {
         return cy.addCommandSync(name, fn)
       },
 
-      addAll (options = {}, obj) {
+      addAll (options, obj) {
         if (!obj) {
           obj = options
           options = {}
         }
 
         // perf loop
-        for (let name in obj) {
+        for (const name in obj) {
           const fn = obj[name]
 
           Commands.add(name, options, fn)
@@ -194,7 +194,7 @@ export default {
     }
 
     addingBuiltIns = true
-    for (let cmd of builtInCommands) {
+    for (const cmd of builtInCommands) {
       cmd(Commands, Cypress, cy, state, config)
     }
     addingBuiltIns = false

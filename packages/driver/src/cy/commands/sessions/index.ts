@@ -11,6 +11,7 @@ import {
   SESSION_STEPS,
   statusMap,
 } from './utils'
+import $sourceMapUtils from '../../../cypress/source_map_utils'
 
 /**
  * Session data should be cleared with spec browser launch.
@@ -21,18 +22,20 @@ import {
  *  - session data SHOULD be cleared between specs in run mode
  */
 export default function (Commands, Cypress, cy) {
+  // 20s timeout used for internal cy commands within the session command
+  const INTERNAL_COMMAND_TIMEOUT = 20_000
+
   const sessionsManager = new SessionsManager(Cypress, cy)
   const sessions = sessionsManager.sessions
 
   Cypress.on('run:start', () => {
-    // @ts-ignore
-    Object.values(Cypress.state('activeSessions') || {}).forEach((sessionData: Cypress.ServerSessionData) => {
+    Object.values<Cypress.ServerSessionData>(Cypress.state('activeSessions') || {}).forEach((sessionData) => {
       if (sessionData.cacheAcrossSpecs) {
         sessionsManager.registeredSessions.set(sessionData.id, true)
       }
     })
 
-    Cypress.on('test:before:after:run:async', (test, Cypress, { nextTestHasTestIsolationOn }: {nextTestHasTestIsolationOn?: boolean} = {}) => {
+    Cypress.on('test:before:after:run:async', (test, Cypress, { nextTestHasTestIsolationOn }: { nextTestHasTestIsolationOn?: boolean } = {}) => {
       if (nextTestHasTestIsolationOn || nextTestHasTestIsolationOn === undefined) {
         return navigateAboutBlank({ inBetweenTestsAndNextTestHasTestIsolationOn: true })
       }
@@ -45,8 +48,13 @@ export default function (Commands, Cypress, cy) {
         return
       }
 
-      return sessions.clearCurrentSessionData()
-      .then(() => Cypress.backend('reset:rendered:html:origins'))
+      const renderedOrigins = await sessionsManager.clearSessionData()
+
+      // An empty set has nothing to reset. A page that finishes rendering after
+      // the read stays in the set, so the next test clears its storage too.
+      if (renderedOrigins.length) {
+        await Cypress.backend('reset:rendered:html:origins')
+      }
     })
   })
 
@@ -57,7 +65,7 @@ export default function (Commands, Cypress, cy) {
       }
 
       // stringify deterministically if we were given an object
-      id = _.isString(id) ? id : stringifyStable(id)
+      id = _.isString(id) ? id : stringifyStable(id) as string
 
       if (!setup || !_.isFunction(setup)) {
         $errUtils.throwErrByPath('sessions.session.wrongArgSetup')
@@ -81,7 +89,7 @@ export default function (Commands, Cypress, cy) {
           const expectedType = validOpts[key]
 
           if (!expectedType) {
-            $errUtils.throwErrByPath('sessions.session.wrongArgOptionUnexpected', { args: { key } })
+            $errUtils.throwErrByPath('sessions.session.wrongArgOptionUnexpected', { args: { key, validOpts: Object.keys(validOpts) } })
           }
 
           const actualType = typeof value
@@ -92,7 +100,7 @@ export default function (Commands, Cypress, cy) {
         })
       }
 
-      let session: Cypress.SessionData = sessionsManager.getActiveSession(id)
+      let session: Cypress.SessionData = sessionsManager.getActiveSession(id as string)
       const isRegisteredSessionForSpec = sessionsManager.registeredSessions.has(id)
 
       if (session) {
@@ -148,8 +156,9 @@ export default function (Commands, Cypress, cy) {
           displayName: statusMap.stepName(step),
           message: '',
           type: 'system',
+          defaultCollapsedState: 'closed',
         }, (setupLogGroup) => {
-          return cy.then(async () => {
+          return cy.then({ timeout: INTERNAL_COMMAND_TIMEOUT }, async () => {
             // Catch when a cypress command fails in the setup function to correctly update log status
             // before failing command and ending command queue.
             cy.state('onQueueFailed', (err, _queue) => {
@@ -180,7 +189,7 @@ export default function (Commands, Cypress, cy) {
               cy.breakSubjectLinksToCurrentChainer()
             }
           })
-          .then(async () => {
+          .then({ timeout: INTERNAL_COMMAND_TIMEOUT }, async () => {
             cy.state('onQueueFailed', null)
             const data = await sessions.getCurrentSessionData()
 
@@ -210,6 +219,7 @@ export default function (Commands, Cypress, cy) {
           displayName: 'Restore saved session',
           message: '',
           type: 'system',
+          defaultCollapsedState: 'closed',
           consoleProps: () => {
             return {
               Step: 'Restore saved session',
@@ -235,15 +245,18 @@ export default function (Commands, Cypress, cy) {
           displayName: 'Validate session',
           message: '',
           type: 'system',
+          defaultCollapsedState: 'closed',
           consoleProps: () => {
             return {
               Step: 'Validate Session',
             }
           },
         }, (validateLog) => {
-          return cy.then(async () => {
+          return cy.then({ timeout: INTERNAL_COMMAND_TIMEOUT }, async () => {
             const isValidSession = true
             let caughtCommandErr = false
+            // Declared up front because onQueueFailed reads it when validate() throws
+            // synchronously, before the cy.then() below has assigned it
             let _commandToRunAfterValidation
 
             const enhanceErr = (err) => {
@@ -252,17 +265,18 @@ export default function (Commands, Cypress, cy) {
                 err = new Error(err)
               }
 
+              const userInvocationStack = $errUtils.getUserInvocationStack(err, Cypress.state)
+
               err = $errUtils.enhanceStack({
                 err,
-                userInvocationStack: $errUtils.getUserInvocationStack(err, Cypress.state),
-                projectRoot: Cypress.config('projectRoot'),
+                userInvocationStack,
+                projectRoot: $sourceMapUtils.getSourceMapProjectRoot(),
               })
 
               // show validation error and allow sessions workflow to recreate the session
               if (step === 'restore') {
                 $errUtils.modifyErrMsg(err, `\n\nThis error occurred while validating the restored session. Because validation failed, we will try to recreate the session.`, _.add)
 
-                // @ts-ignore
                 err.isRecovered = true
 
                 validateLog.set({
@@ -303,7 +317,7 @@ export default function (Commands, Cypress, cy) {
               if (step === 'restore') {
                 const commands = queue.get()
                 // determine command queue index of _commandToRunAfterValidation's index
-                let index = _.findIndex(commands, (command: any) => {
+                const index = _.findIndex(commands, (command: any) => {
                   return (
                     _commandToRunAfterValidation
                     && command.attributes.chainerId === _commandToRunAfterValidation.chainerId
@@ -348,7 +362,7 @@ export default function (Commands, Cypress, cy) {
               throw err
             }
 
-            _commandToRunAfterValidation = cy.then(async () => {
+            _commandToRunAfterValidation = cy.then({ timeout: INTERNAL_COMMAND_TIMEOUT }, async () => {
               Cypress.state('onQueueFailed', null)
 
               if (caughtCommandErr) {
@@ -432,7 +446,7 @@ export default function (Commands, Cypress, cy) {
        *   2. validate session
        */
       const createSessionWorkflow = (existingSession, step: 'create' | 'recreate') => {
-        return cy.then(async () => {
+        return cy.then({ timeout: INTERNAL_COMMAND_TIMEOUT }, async () => {
           setSessionLogStatus(statusMap.inProgress(step))
 
           await navigateAboutBlank()
@@ -440,12 +454,8 @@ export default function (Commands, Cypress, cy) {
 
           return cy.whenStable(() => createSession(existingSession, step))
         })
-        .then(() => validateSession(existingSession, step))
-        .then(async (isValidSession: boolean) => {
-          if (!isValidSession) {
-            return 'failed'
-          }
-
+        .then({ timeout: INTERNAL_COMMAND_TIMEOUT }, () => validateSession(existingSession, step))
+        .then({ timeout: INTERNAL_COMMAND_TIMEOUT }, async () => {
           sessionsManager.registeredSessions.set(existingSession.id, true)
           await sessionsManager.saveSessionData(existingSession)
 
@@ -460,15 +470,15 @@ export default function (Commands, Cypress, cy) {
        *   3. if validation fails, catch error and recreate session
        */
       const restoreSessionWorkflow = (existingSession: Cypress.SessionData) => {
-        return cy.then(async () => {
+        return cy.then({ timeout: INTERNAL_COMMAND_TIMEOUT }, async () => {
           setSessionLogStatus(statusMap.inProgress(SESSION_STEPS.restore))
           await navigateAboutBlank()
           await sessions.clearCurrentSessionData()
 
           return restoreSession(existingSession)
         })
-        .then(() => validateSession(existingSession, SESSION_STEPS.restore))
-        .then((isValidSession: boolean) => {
+        .then({ timeout: INTERNAL_COMMAND_TIMEOUT }, () => validateSession(existingSession, SESSION_STEPS.restore))
+        .then({ timeout: INTERNAL_COMMAND_TIMEOUT }, (isValidSession: boolean) => {
           if (!isValidSession) {
             return createSessionWorkflow(existingSession, SESSION_STEPS.recreate)
           }
@@ -490,10 +500,11 @@ export default function (Commands, Cypress, cy) {
       let _log
       const groupDetails = {
         message: `${session.id.length > 50 ? `${session.id.substring(0, 47)}...` : session.id}`,
+        defaultCollapsedState: 'closed' as const,
       }
 
       return logGroup(Cypress, groupDetails, (log) => {
-        return cy.then(async () => {
+        return cy.then({ timeout: INTERNAL_COMMAND_TIMEOUT }, async () => {
           _log = log
 
           if (!session.hydrated) {
@@ -509,7 +520,7 @@ export default function (Commands, Cypress, cy) {
           }
 
           return restoreSessionWorkflow(session)
-        }).then((status: 'created' | 'restored' | 'recreated' | 'failed') => {
+        }).then({ timeout: INTERNAL_COMMAND_TIMEOUT }, (status: 'created' | 'restored' | 'recreated') => {
           return navigateAboutBlank()
           .then(() => {
             setSessionLogStatus(status)

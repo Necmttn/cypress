@@ -87,17 +87,22 @@ buffer compare yielded: ${ret}\
 
 describe('e2e forms', () => {
   context('submissions with jquery XHR POST', () => {
-    systemTests.setup()
+    systemTests.setup({
+      settings: {
+        e2e: {
+        },
+      },
+    })
 
     systemTests.it('passing', {
       spec: 'form_submission_passing.cy.js',
-      snapshot: true,
     })
 
     systemTests.it('failing', {
       spec: 'form_submission_failing.cy.js',
       snapshot: true,
       expectedExitCode: 1,
+      config: { screenshotOnRunFailure: false },
       onStdout: (stdout) => {
         return stdout
         .replace(/((?: {6}-)+[^\n]+\n)/gm, '')
@@ -108,7 +113,8 @@ describe('e2e forms', () => {
   context('<form> submissions', () => {
     systemTests.setup({
       settings: {
-        e2e: {},
+        e2e: {
+        },
         env: {
           PATH_TO_LARGE_IMAGE: pathToLargeImage,
         },

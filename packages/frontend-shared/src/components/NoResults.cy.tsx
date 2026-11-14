@@ -1,5 +1,4 @@
 import NoResults from './NoResults.vue'
-import { defaultMessages } from '@cy/i18n'
 
 describe('<NoResults />', () => {
   it('renders if there is a search message', () => {
@@ -11,8 +10,8 @@ describe('<NoResults />', () => {
     ))
 
     cy.contains(testSearch).should('be.visible')
-    cy.contains(defaultMessages.noResults.defaultMessage).should('be.visible')
-    cy.contains('button', defaultMessages.noResults.clearSearch).should('be.visible')
+    cy.contains('No results matched your search:').should('be.visible')
+    cy.contains('button', 'Clear search').should('be.visible')
     .click()
     .get('@clearSpy')
     .should('have.been.calledOnce')
@@ -23,7 +22,7 @@ describe('<NoResults />', () => {
       <div><NoResults /></div>
     ))
 
-    cy.contains(defaultMessages.noResults.defaultMessage).should('not.exist')
-    cy.contains('button', defaultMessages.noResults.clearSearch).should('not.exist')
+    cy.contains('No results matched your search:').should('not.exist')
+    cy.contains('button', 'Clear search').should('not.exist')
   })
 })

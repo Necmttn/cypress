@@ -14,8 +14,7 @@ const simulateBlurEvent = (el, win) => {
   })
 
   const blurEvt = new FocusEvent('blur', {
-    // @ts-ignore // Bubble isn't available on FocusEvent?
-    bubble: false,
+    bubbles: false,
     cancelable: false,
     view: win,
     relatedTarget: null,
@@ -242,19 +241,19 @@ export const create = (state: StateFunc) => ({
   needsFocus ($elToFocus, $previouslyFocusedEl) {
     const $focused = this.getFocused()
 
-    // if we dont have a focused element
+    // if we don't have a focused element
     // we know we want to fire a focus event
     if (!$focused) {
       return true
     }
 
-    // if we didnt have a previously focused el
+    // if we didn't have a previously focused el
     // then always return true
     if (!$previouslyFocusedEl) {
       return true
     }
 
-    // if we are attemping to focus a differnet element
+    // if we are attempting to focus a different element
     // than the one we currently have, we know we want
     // to fire a focus event
     if ($focused.get(0) !== $elToFocus.get(0)) {
@@ -273,11 +272,16 @@ export const create = (state: StateFunc) => ({
     return false
   },
 
-  getFocused (document = state('document')) {
+  getFocused (document: Document | ShadowRoot | undefined = state('document')) {
     if (document) {
       const { activeElement } = document
 
       if ($dom.isFocused(activeElement)) {
+        // if the active element is a shadow root, we need to recursively get the active element of the shadow root
+        if (activeElement?.shadowRoot && activeElement.shadowRoot.activeElement) {
+          return this.getFocused(activeElement.shadowRoot)
+        }
+
         return $dom.wrap(activeElement)
       }
     }
@@ -286,4 +290,4 @@ export const create = (state: StateFunc) => ({
   },
 })
 
-export interface IFocused extends ReturnType<typeof create> {}
+export type IFocused = ReturnType<typeof create>

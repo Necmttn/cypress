@@ -141,25 +141,6 @@ describe('app state', () => {
     })
   })
 
-  context('#togglePreferencesMenu', () => {
-    it('toggles isPreferencesMenuOpen', () => {
-      const instance = new AppState()
-
-      instance.togglePreferencesMenu()
-      expect(instance.isPreferencesMenuOpen).to.be.true
-      instance.togglePreferencesMenu()
-      expect(instance.isPreferencesMenuOpen).to.be.false
-    })
-
-    it('sets reset value for autoScrollingEnabled', () => {
-      const instance = new AppState()
-
-      instance.togglePreferencesMenu()
-      instance.reset()
-      expect(instance.autoScrollingEnabled).to.be.true
-    })
-  })
-
   context('#setStudioActive', () => {
     it('sets studioActive', () => {
       const instance = new AppState()
@@ -168,6 +149,37 @@ describe('app state', () => {
       expect(instance.studioActive).to.eq(true)
       instance.setStudioActive(false)
       expect(instance.studioActive).to.eq(false)
+    })
+  })
+
+  context('#setShowFetchRequests', () => {
+    it('sets showFetchRequests', () => {
+      const instance = new AppState()
+
+      instance.setShowFetchRequests(true)
+      expect(instance.showFetchRequests).to.eq(true)
+    })
+  })
+
+  context('#toggleCodeEditorLineWrap', () => {
+    it('toggles codeEditorLineWrap', () => {
+      const instance = new AppState()
+
+      instance.toggleCodeEditorLineWrap()
+      expect(instance.codeEditorLineWrap).to.be.true
+      instance.toggleCodeEditorLineWrap()
+      expect(instance.codeEditorLineWrap).to.be.false
+    })
+  })
+
+  context('#setCodeEditorLineWrap', () => {
+    it('sets codeEditorLineWrap', () => {
+      const instance = new AppState()
+
+      instance.setCodeEditorLineWrap(true)
+      expect(instance.codeEditorLineWrap).to.be.true
+      instance.setCodeEditorLineWrap(false)
+      expect(instance.codeEditorLineWrap).to.be.false
     })
   })
 
@@ -226,6 +238,30 @@ describe('app state', () => {
       instance.studioActive = true
       instance.reset()
       expect(instance.studioActive).to.be.false
+    })
+
+    it('preserves cyPromptActionsEnabled', () => {
+      const instance = new AppState()
+
+      // intentionally excluded from reset defaults
+      instance.setCyPromptActionsEnabled(false)
+      instance.reset()
+      expect(instance.cyPromptActionsEnabled).to.be.false
+    })
+  })
+
+  context('#setCyPromptActionsEnabled', () => {
+    it('defaults to true', () => {
+      const instance = new AppState()
+
+      expect(instance.cyPromptActionsEnabled).to.be.true
+    })
+
+    it('sets cyPromptActionsEnabled', () => {
+      const instance = new AppState()
+
+      instance.setCyPromptActionsEnabled(false)
+      expect(instance.cyPromptActionsEnabled).to.be.false
     })
   })
 })

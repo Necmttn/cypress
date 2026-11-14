@@ -2,9 +2,10 @@ import { allowTsModuleStubbing } from '../../support/helpers'
 
 allowTsModuleStubbing()
 
-import $stackUtils from '@packages/driver/src/cypress/stack_utils'
-import $errUtils, { CypressError } from '@packages/driver/src/cypress/error_utils'
-import $errorMessages from '@packages/driver/src/cypress/error_messages'
+import $stackUtils from '../../../src/cypress/stack_utils'
+import type { CypressError } from '../../../src/cypress/error_utils'
+import $errUtils from '../../../src/cypress/error_utils'
+import $errorMessages from '../../../src/cypress/error_messages'
 
 const { sinon } = Cypress
 
@@ -76,7 +77,7 @@ describe('driver/src/cypress/error_utils', () => {
     it('throws error when it is an error', () => {
       const err = new Error('Something unexpected')
 
-      // @ts-ignore
+      // @ts-expect-error - `extraProp` is a custom property added to test error copying
       err.extraProp = 'extra prop'
       const fn = () => {
         $errUtils.throwErr(err)
@@ -118,11 +119,22 @@ describe('driver/src/cypress/error_utils', () => {
 
   context('.errByPath', () => {
     beforeEach(() => {
-      // @ts-ignore
+      // @ts-expect-error - `__test_errors` is a test-only key not in the error messages type
       $errorMessages.__test_errors = {
         obj: {
           message: 'This is a simple error message',
           docsUrl: 'https://on.link.io',
+        },
+        obj_with_trigger_action: {
+          message: 'Error with trigger action',
+          docsUrl: 'https://on.link.io',
+          triggerAction: 'loginModal',
+        },
+        parent_has_trigger: {
+          triggerAction: 'projectConnectModal',
+          child: {
+            message: 'Child error inherits trigger from parent',
+          },
         },
         obj_with_args: {
           message: `This has args like '{{foo}}' and {{bar}}`,
@@ -193,6 +205,20 @@ describe('driver/src/cypress/error_utils', () => {
         expect(err.name).to.eq('CypressError')
         expect(err.message).to.include('This is a simple error message')
         expect(err.docsUrl).to.include('https://on.link.io')
+      })
+
+      it('includes triggerAction when present on the error message object', () => {
+        const err = $errUtils.errByPath('__test_errors.obj_with_trigger_action') as CypressError
+
+        expect(err.message).to.include('Error with trigger action')
+        expect(err.triggerAction).to.eq('loginModal')
+      })
+
+      it('inherits triggerAction from parent when not set on the message object', () => {
+        const err = $errUtils.errByPath('__test_errors.parent_has_trigger.child') as CypressError
+
+        expect(err.message).to.include('Child error inherits trigger from parent')
+        expect(err.triggerAction).to.eq('projectConnectModal')
       })
 
       it('uses args provided for the error', () => {
@@ -336,7 +362,7 @@ describe('driver/src/cypress/error_utils', () => {
     let fn
 
     beforeEach(() => {
-      // @ts-ignore
+      // @ts-expect-error - `__test_errors` is a test-only key not in the error messages type
       $errorMessages.__test_errors = {
         test: 'Simple error {{message}}',
       }
@@ -624,31 +650,24 @@ describe('driver/src/cypress/error_utils', () => {
     })
   })
 
-  context('.getUnsupportedPlugin', () => {
-    it('returns unsupported plugin if the error msg is the expected one', () => {
-      const unsupportedPlugin = $errUtils.getUnsupportedPlugin({
-        invocationDetails: {
-          originalFile: 'node_modules/@cypress/code-coverage',
-        },
-        err: {
-          message: 'glob pattern string required',
+  context('.extendErrorMessages', () => {
+    it('extends error messages', () => {
+      $errUtils.extendErrorMessages({
+        testErrors: {
+          test: 'test error message',
         },
       })
 
-      expect(unsupportedPlugin).to.eq('@cypress/code-coverage')
-    })
+      const fn = () => {
+        $errUtils.throwErrByPath('testErrors.test')
+      }
 
-    it('returns null if the error msg is not the expected one', () => {
-      const unsupportedPlugin = $errUtils.getUnsupportedPlugin({
-        invocationDetails: {
-          originalFile: 'node_modules/@cypress/code-coverage',
-        },
-        err: {
-          message: 'random error msg',
-        },
+      expect(fn).to.throw().and.satisfy((err) => {
+        expect(err.message).to.equal('test error message')
+        expect(err.name).to.eq('CypressError')
+
+        return true
       })
-
-      expect(unsupportedPlugin).to.eq(null)
     })
   })
 
@@ -668,7 +687,7 @@ describe('driver/src/cypress/error_utils', () => {
 
     it('calls Cypress.log with error name and message when error a string', () => {
       $errUtils.logError(cypressMock, 'error', 'Some string error')
-      expect(cypressMock.log).to.have.been.calledWithMatch(sinon.match.has('message', `Error: \"Some string error\"`))
+      expect(cypressMock.log).to.have.been.calledWithMatch(sinon.match.has('message', `Error: "Some string error"`))
     })
 
     it('calls Cypress.log with default error name and provided message message when error is an object with a message', () => {

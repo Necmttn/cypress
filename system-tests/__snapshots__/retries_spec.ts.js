@@ -60,67 +60,6 @@ exports['retries / supports retries'] = `
 
 `
 
-exports['retries / warns about retries plugin'] = `
-We've detected that the incompatible plugin cypress-plugin-retries is installed at: node_modules/cypress-plugin-retries
-
-Test retries is now natively supported in Cypress version 5.0.0.
-
-Remove the plugin from your dependencies to silence this warning.
-
-https://on.cypress.io/test-retries
-
-
-====================================================================================================
-
-  (Run Starting)
-
-  ┌────────────────────────────────────────────────────────────────────────────────────────────────┐
-  │ Cypress:    1.2.3                                                                              │
-  │ Browser:    FooBrowser 88                                                                      │
-  │ Specs:      1 found (main.spec.cy.js)                                                          │
-  │ Searched:   cypress/e2e/main.spec.cy.js                                                        │
-  └────────────────────────────────────────────────────────────────────────────────────────────────┘
-
-
-────────────────────────────────────────────────────────────────────────────────────────────────────
-                                                                                                    
-  Running:  main.spec.cy.js                                                                 (1 of 1)
-
-
-  ✓ foo
-
-  1 passing
-
-
-  (Results)
-
-  ┌────────────────────────────────────────────────────────────────────────────────────────────────┐
-  │ Tests:        1                                                                                │
-  │ Passing:      1                                                                                │
-  │ Failing:      0                                                                                │
-  │ Pending:      0                                                                                │
-  │ Skipped:      0                                                                                │
-  │ Screenshots:  0                                                                                │
-  │ Video:        false                                                                            │
-  │ Duration:     X seconds                                                                        │
-  │ Spec Ran:     main.spec.cy.js                                                                  │
-  └────────────────────────────────────────────────────────────────────────────────────────────────┘
-
-
-====================================================================================================
-
-  (Run Finished)
-
-
-       Spec                                              Tests  Passing  Failing  Pending  Skipped  
-  ┌────────────────────────────────────────────────────────────────────────────────────────────────┐
-  │ ✔  main.spec.cy.js                          XX:XX        1        1        -        -        - │
-  └────────────────────────────────────────────────────────────────────────────────────────────────┘
-    ✔  All specs passed!                        XX:XX        1        1        -        -        -  
-
-
-`
-
 exports['retries / supports retries (chrome)'] = `
 
 ====================================================================================================
@@ -164,8 +103,8 @@ exports['retries / supports retries (chrome)'] = `
 
   (Screenshots)
 
-  -  /XXX/XXX/XXX/cypress/screenshots/fail-twice.cy.js/fail twice (failed).png            (1280x603)
-  -  /XXX/XXX/XXX/cypress/screenshots/fail-twice.cy.js/fail twice (failed) (attempt 2     (1280x603)
+  -  /XXX/XXX/XXX/cypress/screenshots/fail-twice.cy.js/fail twice (failed).png            (1280x633)
+  -  /XXX/XXX/XXX/cypress/screenshots/fail-twice.cy.js/fail twice (failed) (attempt 2     (1280x633)
      ).png                                                                                          
 
 
@@ -177,6 +116,60 @@ exports['retries / supports retries (chrome)'] = `
        Spec                                              Tests  Passing  Failing  Pending  Skipped  
   ┌────────────────────────────────────────────────────────────────────────────────────────────────┐
   │ ✔  fail-twice.cy.js                         XX:XX        1        1        -        -        - │
+  └────────────────────────────────────────────────────────────────────────────────────────────────┘
+    ✔  All specs passed!                        XX:XX        1        1        -        -        -  
+
+
+`
+
+exports['retries / logs one attempt when both beforeEach and afterEach fail'] = `
+
+====================================================================================================
+
+  (Run Starting)
+
+  ┌────────────────────────────────────────────────────────────────────────────────────────────────┐
+  │ Cypress:    1.2.3                                                                              │
+  │ Browser:    FooBrowser 88                                                                      │
+  │ Specs:      1 found (fail-in-both-hooks.cy.js)                                                 │
+  │ Searched:   cypress/e2e/fail-in-both-hooks.cy.js                                               │
+  └────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                                                                    
+  Running:  fail-in-both-hooks.cy.js                                                        (1 of 1)
+
+
+  (Attempt 1 of 3) fails in both hooks
+  ✓ fails in both hooks
+
+  1 passing
+
+
+  (Results)
+
+  ┌────────────────────────────────────────────────────────────────────────────────────────────────┐
+  │ Tests:        1                                                                                │
+  │ Passing:      1                                                                                │
+  │ Failing:      0                                                                                │
+  │ Pending:      0                                                                                │
+  │ Skipped:      0                                                                                │
+  │ Screenshots:  0                                                                                │
+  │ Video:        false                                                                            │
+  │ Duration:     X seconds                                                                        │
+  │ Spec Ran:     fail-in-both-hooks.cy.js                                                         │
+  └────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+
+====================================================================================================
+
+  (Run Finished)
+
+
+       Spec                                              Tests  Passing  Failing  Pending  Skipped  
+  ┌────────────────────────────────────────────────────────────────────────────────────────────────┐
+  │ ✔  fail-in-both-hooks.cy.js                 XX:XX        1        1        -        -        - │
   └────────────────────────────────────────────────────────────────────────────────────────────────┘
     ✔  All specs passed!                        XX:XX        1        1        -        -        -  
 

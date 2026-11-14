@@ -1,12 +1,14 @@
-import {
+import type {
   CreateBundle,
   CreateBundleOpts,
   CreateBundleResult,
   CreateBundleOutputFile,
+} from '../src/packherd'
+import {
   packherd,
 } from '../src/packherd'
 import { expect } from 'chai'
-import type{ Metafile } from 'esbuild'
+import type { Metafile } from 'esbuild'
 import Fixtures from '@tooling/system-tests'
 import * as FixturesScaffold from '@tooling/system-tests/lib/dep-installer'
 import path from 'path'
@@ -44,10 +46,12 @@ describe('Packherd', () => {
     expect(meta.inputs[pathRelativeToCwd(projectBaseDir, 'entry.js')].imports).to.deep.equal([
       {
         kind: 'require-call',
+        original: './node_modules/isobject/index.cjs.js',
         path: pathRelativeToCwd(projectBaseDir, 'node_modules', 'isobject', 'index.cjs.js'),
       },
       {
         kind: 'require-call',
+        original: './node_modules/tmpfile/index.js',
         path: pathRelativeToCwd(projectBaseDir, 'node_modules', 'tmpfile', 'index.js'),
       },
     ])

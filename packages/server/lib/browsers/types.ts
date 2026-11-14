@@ -1,10 +1,10 @@
-import type { FoundBrowser, BrowserLaunchOpts, BrowserNewTabOpts, ProtocolManagerShape } from '@packages/types'
+import type { FoundBrowser, BrowserLaunchOpts, BrowserNewTabOpts, ProtocolManagerShape, CyPromptManagerShape, StudioManagerShape } from '@packages/types'
 import type { EventEmitter } from 'events'
 import type { Automation } from '../automation'
-import type { CDPSocketServer } from '@packages/socket/lib/cdp-socket'
+import type { CDPSocketServer } from '@packages/socket'
 
 export type Browser = FoundBrowser & {
-  majorVersion: number
+  majorVersion: number | string
   isHeadless: boolean
   isHeaded: boolean
 }
@@ -27,6 +27,7 @@ export type BrowserInstance = EventEmitter & {
    * TODO: remove need for this
    */
   isProcessExit?: boolean
+  isOrphanedBrowserProcess?: boolean
 }
 
 export type BrowserLauncher = {
@@ -41,9 +42,27 @@ export type BrowserLauncher = {
    */
   clearInstanceState: () => void
   /**
+   * Marks the browser as crashed after an unexpected crash, so that teardown
+   * commands fail fast instead of hanging on the dead connection. Only
+   * implemented by browsers that support it.
+   */
+  markBrowserCrashed?: () => void
+  /**
    * Used to connect the protocol to an existing browser.
    */
   connectProtocolToBrowser: (options: { protocolManager?: ProtocolManagerShape }) => Promise<void>
+  /**
+   * Used to connect the cy prompt to an existing browser.
+   */
+  connectCyPromptToBrowser: (options: { cyPromptManager?: CyPromptManagerShape }) => Promise<void>
+  /**
+   * Used to connect studio to an existing browser.
+   */
+  connectStudioToBrowser: (options: { studioManager?: StudioManagerShape }) => Promise<void>
+  /**
+   * Closes the protocol connection to the browser.
+   */
+  closeProtocolConnection: () => Promise<void>
   /**
    * Closes any targets that are not the currently-attached Cypress target
    */
@@ -52,4 +71,5 @@ export type BrowserLauncher = {
 
 export type GracefulShutdownOptions = {
   gracefulShutdown?: boolean
+  shouldPreserveCriClient?: boolean
 }

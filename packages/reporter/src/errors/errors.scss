@@ -2,7 +2,7 @@ $code-border-radius: 4px;
 
 .reporter {
   .error {
-    background-color: $gray-1000;
+    background-color: $gray-1100;
     min-height: 20px;
     padding: 24px;
 
@@ -18,7 +18,9 @@ $code-border-radius: 4px;
       }
     }
 
-    p, ul, ol {
+    p,
+    ul,
+    ol {
       font-size: 1.1em;
     }
 
@@ -43,7 +45,7 @@ $code-border-radius: 4px;
     }
 
     ul li {
-      list-style: disc
+      list-style: disc;
     }
 
     ol li {
@@ -54,25 +56,21 @@ $code-border-radius: 4px;
   .recovered-test-err {
     .runnable-err-header,
     .runnable-err-body {
-      padding-left: 49px;
+      padding-left: 48px;
       display: flex;
 
       .err-group-block {
+        @include group-indent-width;
+
         border-left: 1px dotted $err-header-text;
         border-image-slice: 0 0 0 1;
-        border-image-source: repeating-linear-gradient(0deg, transparent, $err-header-text, $err-header-text 4px);
-        width: 12px;
-        min-width: 12px;
+        border-image-source: repeating-linear-gradient(0deg, transparent, $err-header-text, $err-header-text 2px);
 
         &:first-of-type {
-          width: 13px;
-          min-width: 13px;
+          width: 16px;
+          min-width: 16px;
         }
-    } 
-  }
-
-    .runnable-err-header > .runnable-err-name {
-      padding: 5px 4px 5px 15px;
+      }
     }
 
     .runnable-err-content {
@@ -82,17 +80,18 @@ $code-border-radius: 4px;
 
   .runnable-err-content {
     width: 100%;
-    overflow: scroll;
-    padding: 0 18px;
-  }
 
-  .studio-err-wrapper {
-    text-align: center;
+    .is-open {
+      > .runnable-err-stack-expander .err-collapsible-indicator {
+        transform: rotate(90deg);
+      }
+    }
   }
 
   .runnable-err {
     background-color: $err-background;
-    border-left: $err-border;
+    border-left: 2px solid transparent;
+    border-radius: 4px;
     clear: both;
     color: $err-text;
     font-family: $monospace;
@@ -110,20 +109,30 @@ $code-border-radius: 4px;
     display: flex;
     font-weight: bold;
     justify-content: space-between;
-    padding-left: 18px;
 
-    svg {
-      color: $red-400;
-      align-self: center
+    .runnable-err-icon {
+      @include gutter-alignment;
+
+      &.runnable-err-icon-group {
+        width: auto;
+      }
+
+      svg {
+        color: $red-400;
+        align-self: center;
+      }
     }
 
     .runnable-err-name {
+      @include command-info-padding;
+
       color: $err-header-text;
       flex: auto;
       font-size: 12px;
       font-weight: 600;
       line-height: 20px;
-      padding: 5px 4px 5px 24px;
+
+      margin-left: $gutter-margin;
     }
   }
 
@@ -133,11 +142,19 @@ $code-border-radius: 4px;
     font-family: $font-system;
   }
 
+  .runnable-err-trigger-action {
+    margin-top: 14px;
+    font-family: $font-system;
+    a {
+      cursor: pointer;
+    }
+  }
+
   .runnable-err-message {
     font-family: $font-system;
     font-size: 14px;
     font-weight: 400;
-    padding: 10px 0;
+    padding: 8px 14px;
 
     code {
       background-color: rgba($black, 0.2);
@@ -156,9 +173,9 @@ $code-border-radius: 4px;
 
   .runnable-err-stack-expander {
     align-items: center;
-    border-top: 1px dashed rgba($red-400, 0.1);
+    border-top: 1px solid #4b364c40;
     display: flex;
-    padding: 10px 0;
+    padding: 16px 14px;
     flex-wrap: wrap-reverse;
     .collapsible-header {
       flex-grow: 1;
@@ -176,30 +193,24 @@ $code-border-radius: 4px;
         .collapsible-header-text {
           color: $red-100;
         }
-        .collapsible-indicator {
-          .icon-dark {
-            stroke: $red-200;
-          }
+        .err-collapsible-indicator path {
+          stroke: $red-200;
         }
       }
 
-      div {
+      .collapsible-header-inner {
         cursor: pointer;
         outline: none;
-        padding: 6px 0;
+        padding: 0 !important;
         width: 100%;
 
         .collapsible-header-text {
           color: $red-300;
           font-size: 14px;
           font-weight: 500;
-        }
-
-        .collapsible-indicator {
-          line-height: 18px;
-          .icon-dark {
-            stroke: $red-400;
-          }
+          display: inline-flex;
+          gap: 4px;
+          align-items: center;
         }
       }
     }
@@ -256,13 +267,13 @@ $code-border-radius: 4px;
 
       // ensure empty lines still take up vertical space
       &:empty:before {
-        content: ' ';
+        content: " ";
       }
     }
   }
 
   .test-err-code-frame {
-    background-color: $gray-1000;
+    background-color: $gray-1100;
     border: 1px dashed rgba(245, 154, 169, 0.1);
     border-radius: $code-border-radius;
     margin: 0 0 10px;
@@ -291,4 +302,3 @@ $code-border-radius: 4px;
     }
   }
 }
-

@@ -1,9 +1,8 @@
+import { expect, it, describe, beforeEach, afterEach, vi } from 'vitest'
 import path from 'path'
-import proxyquire from 'proxyquire'
-import { expect } from 'chai'
-
 import { createModuleMatrixResult } from './test-helpers/createModuleMatrixResult'
 import EventEmitter from 'events'
+import debug from 'debug'
 
 const cypressConfig = {
   projectRoot: path.join(__dirname, 'test-fixtures'),
@@ -11,19 +10,26 @@ const cypressConfig = {
   indexHtmlFile: path.join(__dirname, 'component-index.html'),
 } as Cypress.PluginConfigOptions
 
-describe('devServer', function () {
-  this.timeout(10 * 1000)
+vi.mock('../src/helpers/sourceRelativeWebpackModules', async (importActual) => {
+  const actual = await importActual()
 
-  it('creates a new devServer webpack4, webpackDevServer3', async () => {
-    const { devServer } = proxyquire('../src/devServer', {
-      './helpers/sourceRelativeWebpackModules': {
-        sourceDefaultWebpackDependencies: () => {
-          return createModuleMatrixResult({
-            webpack: 4,
-            webpackDevServer: 3,
-          })
-        } },
-    }) as typeof import('../src/devServer')
+  return {
+    // @ts-expect-error - importActual() returns unknown, which cannot be spread
+    ...actual,
+    sourceDefaultWebpackDependencies: vi.fn(),
+  }
+})
+
+describe('devServer', { timeout: 10000 }, function () {
+  it('creates a new devServer webpack5, webpackDevServer5', async () => {
+    const sourceRelativeWebpackModules = await import('../src/helpers/sourceRelativeWebpackModules')
+
+    vi.mocked(sourceRelativeWebpackModules.sourceDefaultWebpackDependencies).mockReturnValue(createModuleMatrixResult({
+      webpack: 5,
+      webpackDevServer: 5,
+    }))
+
+    const { devServer } = await import('../src/devServer')
 
     const result = await devServer.create({
       specs: [],
@@ -32,20 +38,21 @@ describe('devServer', function () {
       devServerEvents: new EventEmitter(),
     })
 
-    expect(result.server).to.be.instanceOf(require('webpack-dev-server-3'))
-    expect(result.version).to.eq(3)
+    const webpackDevServer = await import('webpack-dev-server')
+
+    expect(result.server).toBeInstanceOf(webpackDevServer.default)
+    expect(result.version).toEqual(5)
   })
 
-  it('creates a new devServer webpack4, webpackDevServer4', async () => {
-    const { devServer } = proxyquire('../src/devServer', {
-      './helpers/sourceRelativeWebpackModules': {
-        sourceDefaultWebpackDependencies: () => {
-          return createModuleMatrixResult({
-            webpack: 4,
-            webpackDevServer: 4,
-          })
-        } },
-    }) as typeof import('../src/devServer')
+  it('creates a new devServer webpack5, webpackDevServer6', async () => {
+    const sourceRelativeWebpackModules = await import('../src/helpers/sourceRelativeWebpackModules')
+
+    vi.mocked(sourceRelativeWebpackModules.sourceDefaultWebpackDependencies).mockReturnValue(createModuleMatrixResult({
+      webpack: 5,
+      webpackDevServer: 6,
+    }))
+
+    const { devServer } = await import('../src/devServer')
 
     const result = await devServer.create({
       specs: [],
@@ -54,29 +61,45 @@ describe('devServer', function () {
       devServerEvents: new EventEmitter(),
     })
 
-    expect(result.server).to.be.instanceOf(require('webpack-dev-server'))
-    expect(result.version).to.eq(4)
+    // webpack-dev-server 6 ships separate ESM and CommonJS builds, and Cypress loads the CommonJS one
+    expect(result.server).toBeInstanceOf(require('webpack-dev-server-6'))
+    expect(result.version).toEqual(6)
   })
 
-  it('creates a new devServer webpack5, webpackDevServer4', async () => {
-    const { devServer } = proxyquire('../src/devServer', {
-      './helpers/sourceRelativeWebpackModules': {
-        sourceDefaultWebpackDependencies: () => {
-          return createModuleMatrixResult({
-            webpack: 5,
-            webpackDevServer: 4,
-          })
-        } },
-    }) as typeof import('../src/devServer')
+  // Writing to disk includes the correct source map size, where the difference will be made up from stat size vs parsed size
+  // This is critical if a user is trying to debug to determine if they have large source maps or other large files in their dev-server under test
+  describe('writes to disk if DEBUG=cypress-verbose:webpack-dev-server:bundle-analyzer is set', async () => {
+    const WEBPACK_DEV_SERVER_VERSIONS: (5)[] = [5]
 
-    const result = await devServer.create({
-      specs: [],
-      cypressConfig,
-      webpackConfig: {},
-      devServerEvents: new EventEmitter(),
+    beforeEach(() => {
+      debug.enable('cypress-verbose:webpack-dev-server:bundle-analyzer')
     })
 
-    expect(result.server).to.be.instanceOf(require('webpack-dev-server'))
-    expect(result.version).to.eq(4)
+    afterEach(() => {
+      debug.disable()
+    })
+
+    WEBPACK_DEV_SERVER_VERSIONS.forEach((version) => {
+      it(`works for webpack-dev-server v${version}`, async () => {
+        const sourceRelativeWebpackModules = await import('../src/helpers/sourceRelativeWebpackModules')
+
+        vi.mocked(sourceRelativeWebpackModules.sourceDefaultWebpackDependencies).mockReturnValue(createModuleMatrixResult({
+          webpack: version,
+          webpackDevServer: version,
+        }))
+
+        const { devServer } = await import('../src/devServer')
+
+        const result = await devServer.create({
+          specs: [],
+          cypressConfig,
+          webpackConfig: {},
+          devServerEvents: new EventEmitter(),
+        })
+
+        // @ts-expect-error - options isn't typed
+        expect(result.server.options.devMiddleware.writeToDisk).toBe(true)
+      })
+    })
   })
 })

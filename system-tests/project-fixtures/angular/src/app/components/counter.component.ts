@@ -1,18 +1,16 @@
-import { Component } from '@angular/core'
-import { CounterService } from './counter.service'
+import { Component, model } from '@angular/core'
 
 @Component({
   selector: 'counter-component',
+  standalone: false,
   template: `<button (click)="increment()">
-    Increment: {{ count$ | async }}
+    Increment: {{ count() }}
   </button>`,
 })
 export class CounterComponent {
-  count$ = this.counterService.count$;
-
-  constructor (private counterService: CounterService) {}
+  count = model<number>(0)
 
   increment () {
-    this.counterService.increment()
+    this.count.set(this.count() + 1)
   }
 }

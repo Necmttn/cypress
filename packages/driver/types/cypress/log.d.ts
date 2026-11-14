@@ -8,7 +8,7 @@ declare namespace Cypress {
     _hasInitiallyLogged: boolean
     get<K extends keyof InternalLogConfig>(attr: K): InternalLogConfig[K]
     get(): InternalLogConfig
-    set<K extends keyof LogConfig | InternalLogConfig>(key: K, value: LogConfig[K]): InternalLog
+    set<K extends keyof LogConfig | keyof InternalLogConfig>(key: K, value: LogConfig[K]): InternalLog
     set(options: Partial<LogConfig | InternalLogConfig>)
     groupEnd(): void
   }
@@ -20,12 +20,20 @@ declare namespace Cypress {
   }
 
   type Snapshot = {
-    body?: {get: () => any}
-    htmlAttrs?: {[key: string]: any}
+    body?: { get: () => any }
+    htmlAttrs?: { [key: string]: any }
     name?: string
   }
 
   type ConsoleProps = {
+    name?: string
+    type?: string
+    error?: Error
+    snapshot?: string
+    args?: any
+    groups?: any
+    table?: any
+    props?: any
     Command?: string
     Snapshot?: string
     Elements?: number
@@ -48,6 +56,8 @@ declare namespace Cypress {
     message?: string
   }
 
+  type DefaultLogCollapsedState = 'closed' | 'open'
+
   interface InternalLogConfig {
     alias?: string
     aliasType?: 'agent' | 'route' | 'primitive' | 'dom' | undefined
@@ -67,6 +77,8 @@ declare namespace Cypress {
       y: number
     }
     count?: number
+    // the default collapsed state of the log (i.e. if the log is open or closed by default)
+    defaultCollapsedState?: DefaultLogCollapsedState
     // the name override for display purposes only
     displayName?: string
     // the JQuery element for the command. This will highlight the command
@@ -115,7 +127,7 @@ declare namespace Cypress {
     }
     // whether or not to collect snapshots for the command
     snapshot?: boolean
-    snapshots?: []
+    snapshots?: Array<{ name?: string }>
     state?: 'failed' | 'passed' | 'pending' // representative of Mocha.Runnable.constants (not publicly exposed by Mocha types)
     status?: number
     testCurrentRetry?: number
@@ -136,5 +148,6 @@ declare namespace Cypress {
     visible?: boolean
     // the timestamp of when the command started
     wallClockStartedAt?: string
+    options?: unknown
   }
 }

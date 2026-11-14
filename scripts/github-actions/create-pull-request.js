@@ -1,4 +1,4 @@
-const createPullRequest = async ({ context, github, baseBranch, branchName, description, body, reviewers, addToProjectBoard }) => {
+const createPullRequest = async ({ context, github, baseBranch, branchName, description, body, reviewers, team_reviewers, addToProjectBoard }) => {
   const { data: { number } } = await github.rest.pulls.create({
     owner: context.repo.owner,
     repo: context.repo.repo,
@@ -9,13 +9,25 @@ const createPullRequest = async ({ context, github, baseBranch, branchName, desc
     maintainer_can_modify: true,
   })
 
-  if (reviewers) {
-    await github.rest.pulls.requestReviewers({
+  if (reviewers || team_reviewers) {
+    const requestReviewersParams = {
       owner: context.repo.owner,
       repo: context.repo.repo,
       pull_number: number,
-      reviewers,
-    })
+    }
+
+    if (reviewers) requestReviewersParams.reviewers = reviewers
+
+    if (team_reviewers) requestReviewersParams.team_reviewers = team_reviewers
+
+    try {
+      await github.rest.pulls.requestReviewers(requestReviewersParams)
+    } catch (err) {
+      // Requesting a team reviewer requires the token to have org `members: read`
+      // permission. Don't fail the workflow over reviewer assignment - the PR
+      // itself was already created successfully.
+      console.log(`Could not request reviewers for PR #${number}:`, err.message)
+    }
   }
 
   //add to firewatch board
@@ -41,7 +53,7 @@ const createPullRequest = async ({ context, github, baseBranch, branchName, desc
       issueNumber: number,
     }
 
-    let projectBoardNodeId = await github.graphql(
+    const projectBoardNodeId = await github.graphql(
       getProjectV2NodeIdQuery,
       getProjectV2NodeIdQueryVars,
     )

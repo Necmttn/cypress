@@ -1,9 +1,9 @@
 import Debug from 'debug'
 
 import type { ErrorMiddleware } from '@packages/proxy'
-import type { CyHttpMessages } from '../../types'
+import type { CyHttpMessages } from '@packages/network-interception'
 import _ from 'lodash'
-import * as errors from '@packages/server/lib/errors'
+import errors from '@packages/errors'
 
 const debug = Debug('cypress:net-stubbing:server:intercept-error')
 

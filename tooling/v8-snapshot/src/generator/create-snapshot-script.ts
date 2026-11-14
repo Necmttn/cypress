@@ -2,15 +2,19 @@ import debug from 'debug'
 import { strict as assert } from 'assert'
 import { readFileSync } from 'fs'
 import path from 'path'
-import { execSync, ExecSyncOptions, StdioOptions } from 'child_process'
-import { BlueprintConfig, scriptFromBlueprint } from './blueprint'
+import type { ExecSyncOptions, StdioOptions } from 'child_process'
+import { execSync } from 'child_process'
+import type { BlueprintConfig } from './blueprint'
+import { scriptFromBlueprint } from './blueprint'
 import type { CreateBundleOpts, CreateSnapshotScriptOpts, Metadata } from '../types'
-import {
+import type {
   CreateBundle,
-  packherd,
   CreateBundleOpts as PackherdCreateBundleOpts,
   CreateBundleResult,
   CreateBundleSourcemap,
+} from '@tooling/packherd'
+import {
+  packherd,
 } from '@tooling/packherd'
 import { dependencyMapArrayFromInputs } from '../meta/dependency-map'
 import { writeConfigJSON } from './write-config-json'
@@ -44,7 +48,7 @@ export const BUNDLE_WRAPPER_OPEN = Buffer.from(
  * hash.
  * @category snapshot
  */
-export const BUNDLE_WRAPPER_CLOSE = Buffer.from(
+const BUNDLE_WRAPPER_CLOSE = Buffer.from(
   `
   //
   // </esbuild bundle>
@@ -54,15 +58,6 @@ export const BUNDLE_WRAPPER_CLOSE = Buffer.from(
 `,
   'utf8',
 )
-
-/**
- * The function type to create a snapshot script which receives the {@link
- * CreateSnapshotScriptOpts} as configuration.
- * @category snapshot
- */
-export type CreateSnapshotScript = (
-  opts: CreateSnapshotScriptOpts
-) => Promise<{ snapshotScript: string }>
 
 const requireDefinitions = (bundle: Buffer, entryPoint: string) => {
   const code = Buffer.concat([
@@ -117,6 +112,7 @@ export function assembleScript (
     baseSourcemapExternalPath: string | undefined
     processedSourcemapExternalPath: string | undefined
     nodeEnv: string
+    cypressInternalEnv: string
     resolverMap?: Record<string, string>
     meta?: Metadata
     supportTypeScript: boolean
@@ -177,6 +173,7 @@ export function assembleScript (
     includeStrictVerifiers,
     sourceMap: opts.sourceMap,
     nodeEnv: opts.nodeEnv,
+    cypressInternalEnv: opts.cypressInternalEnv,
     basedir,
     processedSourceMapPath: opts.processedSourcemapExternalPath,
     supportTypeScript: opts.supportTypeScript,
@@ -233,6 +230,7 @@ export async function createSnapshotScript (
       baseSourcemapExternalPath: opts.baseSourcemapExternalPath,
       processedSourcemapExternalPath: opts.processedSourcemapExternalPath,
       nodeEnv: opts.nodeEnv,
+      cypressInternalEnv: opts.cypressInternalEnv,
       resolverMap: opts.resolverMap,
       meta,
       supportTypeScript: opts.supportTypeScript,
@@ -361,17 +359,15 @@ const makePackherdCreateBundle: (opts: CreateBundleOpts) => CreateBundle =
 
         return Promise.resolve(result)
       } catch (err: any) {
-        if (err.stderr != null) {
-          logError(err.stderr.toString())
-        }
-
         if (err.stdout != null) {
           logDebug(err.stdout.toString())
         }
 
-        logError(err)
+        // The bundler's stderr names the exact offending file, so surface it on the rejected error.
+        const stderr = err.stderr?.toString().trim()
+        const detail = stderr ? `\n${stderr}` : `\n${err}`
 
-        return Promise.reject(new Error(`Failed command: "${cmd}"`))
+        return Promise.reject(new Error(`Failed command: "${cmd}"${detail}`))
       } finally {
         if (!keepConfig) {
           const err = tryRemoveFileSync(configPath)

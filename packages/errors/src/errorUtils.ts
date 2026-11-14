@@ -3,15 +3,7 @@ import chalk from 'chalk'
 import _ from 'lodash'
 import path from 'path'
 
-const pluralize = require('pluralize')
-const humanTime = require('@packages/server/lib/util/human_time')
-
 import type { CypressError, ErrorLike } from './errorTypes'
-
-export {
-  pluralize,
-  humanTime,
-}
 
 const whileMatching = (othArr: string[]) => {
   return (val: string, index: number) => {

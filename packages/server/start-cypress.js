@@ -1,14 +1,41 @@
-const electronApp = require('./lib/util/electron-app')
+const Debug = require('debug')
+const { isRunning: isElectronRunning } = require('./lib/util/electron-app')
 const { telemetry, OTLPTraceExporterCloud } = require('@packages/telemetry')
 const { apiRoutes } = require('./lib/cloud/routes')
 const encryption = require('./lib/cloud/encryption')
+const { override: overrideTty } = require('./lib/util/tty')
+const { GracefulExit, getPeerWaitTimeoutMs } = require('./lib/util/graceful-exit')
+const { NetProfiler } = require('./lib/util/net_profiler')
+const { debugElapsedTime } = require('./lib/util/performance_benchmark')
+const { suppress } = require('./lib/util/suppress_warnings')
+
+const { calculateCypressInternalEnv, configureLongStackTraces } = require('./lib/environment')
+
+const debug = Debug('cypress:server:start-cypress')
+
+process.env['CYPRESS_INTERNAL_ENV'] = calculateCypressInternalEnv()
+configureLongStackTraces(process.env['CYPRESS_INTERNAL_ENV'])
+process.env['CYPRESS'] = 'true'
+
+// Store the user's value so the config process can restore it for their Node code. This has to run here,
+// because the V8 snapshot can defer loading lib/request (which sets it to '0') until after that process is forked.
+if (process.env.NODE_TLS_REJECT_UNAUTHORIZED !== undefined) {
+  process.env.CYPRESS_INTERNAL_ORIGINAL_NODE_TLS_REJECT_UNAUTHORIZED = process.env.NODE_TLS_REJECT_UNAUTHORIZED
+}
 
 // are we in the main node process or the electron process?
-const isRunningElectron = electronApp.isRunning()
+const isRunningElectron = isElectronRunning()
 
 const pkg = require('@packages/root')
 
 if (isRunningElectron) {
+  // if we are in the electron process, we need to patch the electron switches before Cypress launches the app
+  // @see https://www.electronjs.org/docs/latest/api/environment-variables#electron_run_as_node
+  const { app } = require('electron')
+  const { appendElectronSwitches } = require('./lib/append_electron_switches')
+
+  appendElectronSwitches(app)
+
   // To pass unencrypted telemetry data to an independent open telemetry endpoint,
   // disable the encryption header, update the url, and add any other required headers.
   // For example:
@@ -30,12 +57,27 @@ if (isRunningElectron) {
     exporter,
   })
 
-  const { debugElapsedTime } = require('./lib/util/performance_benchmark')
-
   const v8SnapshotStartupTime = debugElapsedTime('v8-snapshot-startup-time')
   const endTime = v8SnapshotStartupTime + global.cypressServerStartTime
 
   telemetry.startSpan({ name: 'cypress', attachType: 'root', active: true, opts: { startTime: global.cypressBinaryStartTime } })
+
+  GracefulExit.addStep(async (code) => {
+    try {
+      const span = telemetry.getSpan('cypress')
+
+      span?.setAttribute('exitCode', code)
+      span?.end()
+    } catch (error) {
+      debug('Error during cleanup of telemetry span on exit: %o', error)
+    }
+
+    try {
+      await telemetry.shutdown()
+    } catch (error) {
+      debug('Error during telemetry shutdown on exit: %o', error)
+    }
+  }, 'finalize telemetry', getPeerWaitTimeoutMs())
 
   const v8SnapshotSpan = telemetry.startSpan({ name: 'v8snapshot:startup', opts: { startTime: global.cypressServerStartTime } })
 
@@ -51,10 +93,10 @@ const fs = require('fs')
 patchFs(fs)
 
 // override tty if we're being forced to
-require('./lib/util/tty').override()
+overrideTty()
 
 if (process.env.CY_NET_PROFILE && isRunningElectron) {
-  const netProfiler = require('./lib/util/net_profiler')()
+  const netProfiler = new NetProfiler()
 
   process.stdout.write(`Network profiler writing to ${netProfiler.logPath}\n`)
 }
@@ -77,6 +119,6 @@ process.noDeprecation = process.env.CYPRESS_INTERNAL_ENV === 'production'
 // always show stack traces for Electron deprecation warnings
 process.traceDeprecation = true
 
-require('./lib/util/suppress_warnings').suppress()
+suppress()
 
 module.exports = require('./lib/cypress').start(process.argv)

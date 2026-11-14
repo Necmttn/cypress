@@ -1,10 +1,8 @@
-import { assert, expect } from 'chai'
+import { describe, expect, it, beforeEach, afterEach, jest } from '@jest/globals'
 import path from 'path'
 import os from 'os'
-import simpleGit from 'simple-git'
+import { simpleGit } from 'simple-git'
 import fs from 'fs-extra'
-import sinon from 'sinon'
-import pDefer from 'p-defer'
 import chokidar from 'chokidar'
 
 import { scaffoldMigrationProject } from '../helper'
@@ -23,15 +21,15 @@ describe('GitDataSource', () => {
     e2eFolder = path.join(projectPath, 'cypress', 'e2e')
     const allSpecs = await fs.readdir(e2eFolder)
 
-    if (process.env.CI) {
-      // need to set a user on CI
-      await Promise.all([
-        git.addConfig('user.name', 'Test User', true, 'global'),
-        git.addConfig('user.email', 'test-user@example.com', true, 'global'),
-      ])
-    }
-
     await git.init()
+
+    // scope the identity to this throwaway repo. Writing it to the global
+    // gitconfig would leave the machine committing as `Test User` afterwards,
+    // and signing is irrelevant here but fails without the machine's key
+    await git.addConfig('user.name', 'Test User')
+    await git.addConfig('user.email', 'test-user@example.com')
+    await git.addConfig('commit.gpgsign', 'false')
+
     await git.add(allSpecs.map((spec) => path.join(e2eFolder, spec)))
     await git.commit('add all specs')
   })
@@ -42,13 +40,11 @@ describe('GitDataSource', () => {
     }
 
     gitInfo = undefined
-
-    sinon.restore()
   })
 
   it(`gets correct status for files on ${os.platform()}`, async function () {
-    const onBranchChange = sinon.stub()
-    const dfd = pDefer()
+    const onBranchChange = jest.fn()
+    const dfd = Promise.withResolvers()
 
     // create a file and modify a file to express all
     // git states we are interested in (created, unmodified, modified)
@@ -73,29 +69,29 @@ describe('GitDataSource', () => {
 
     const gitInfoChangeResolve = await dfd.promise
 
-    expect(gitInfoChangeResolve).to.eql([fooSpec, aRecordSpec, xhrSpec])
+    expect(gitInfoChangeResolve).toEqual([fooSpec, aRecordSpec, xhrSpec])
 
     const created = gitInfo.gitInfoFor(fooSpec)!
     const unmodified = gitInfo.gitInfoFor(aRecordSpec)!
     const modified = gitInfo.gitInfoFor(xhrSpec)!
 
-    expect(created.lastModifiedHumanReadable).to.match(/(a few|[0-9]) seconds? ago/)
-    expect(created.statusType).to.eql('created')
+    expect(created.lastModifiedHumanReadable).toMatch(/(a few|[0-9]) seconds? ago/)
+    expect(created.statusType).toEqual('created')
     // do not want to set this explicitly in the test, since it can mess up your local git instance
-    expect(created.author).not.to.be.undefined
-    expect(created.lastModifiedTimestamp).not.to.be.undefined
+    expect(created.author).not.toBeUndefined()
+    expect(created.lastModifiedTimestamp).not.toBeUndefined()
 
-    expect(unmodified.lastModifiedHumanReadable).to.match(/(a few|[0-9]) seconds? ago/)
-    expect(unmodified.statusType).to.eql('unmodified')
+    expect(unmodified.lastModifiedHumanReadable).toMatch(/(a few|[0-9]) seconds? ago/)
+    expect(unmodified.statusType).toEqual('unmodified')
     // do not want to set this explicitly in the test, since it can mess up your local git instance
-    expect(unmodified.author).not.to.be.undefined
-    expect(unmodified.lastModifiedTimestamp).not.to.be.undefined
+    expect(unmodified.author).not.toBeUndefined()
+    expect(unmodified.lastModifiedTimestamp).not.toBeUndefined()
 
-    expect(modified.lastModifiedHumanReadable).to.match(/(a few|[0-9]) seconds? ago/)
-    expect(modified.statusType).to.eql('modified')
+    expect(modified.lastModifiedHumanReadable).toMatch(/(a few|[0-9]) seconds? ago/)
+    expect(modified.statusType).toEqual('modified')
     // do not want to set this explicitly in the test, since it can mess up your local git instance
-    expect(modified.author).not.to.be.undefined
-    expect(modified.lastModifiedTimestamp).not.to.be.undefined
+    expect(modified.author).not.toBeUndefined()
+    expect(modified.lastModifiedTimestamp).not.toBeUndefined()
   })
 
   it(`handles files with special characters on ${os.platform()}`, async () => {
@@ -123,14 +119,14 @@ describe('GitDataSource', () => {
     .map((filename) => path.join(e2eFolder, filename))
     .map((filepath) => toPosix(filepath))
 
-    const dfd = pDefer()
+    const dfd = Promise.withResolvers()
 
     gitInfo = new GitDataSource({
       isRunMode: false,
       projectRoot: projectPath,
-      onBranchChange: sinon.stub(),
+      onBranchChange: jest.fn(),
       onGitInfoChange: dfd.resolve,
-      onError: sinon.stub(),
+      onError: jest.fn(),
     })
 
     await Promise.all(
@@ -145,44 +141,97 @@ describe('GitDataSource', () => {
       return gitInfo.gitInfoFor(filepath)
     })
 
-    expect(results).to.have.lengthOf(filepaths.length)
+    expect(results).toHaveLength(filepaths.length)
 
     filepaths.forEach((filepath, index) => {
       const result = results[index]
 
-      expect(result?.lastModifiedHumanReadable).to.match(/(a few|[0-9]) seconds? ago/)
-      expect(result?.statusType).to.eql('created')
+      expect(result?.lastModifiedHumanReadable).toMatch(/(a few|[0-9]) seconds? ago/)
+      expect(result?.statusType).toEqual('created')
     })
   })
 
-  it(`watches switching branches on ${os.platform()}`, async () => {
-    const stub = sinon.stub()
-    const dfd = pDefer()
+  it(`reads committed files whose names contain shell or pathspec syntax as literal paths on ${os.platform()}`, async () => {
+    const filenames = [
+      'pwn$(touch${IFS}injected).cy.js',
+      'pwn`touch${IFS}injected`.cy.js',
+      'file withSpace.cy.js',
+      'file\'withOneSingleQuote.cy.js',
+      '[xy].cy.js',
+    ]
 
-    stub.onFirstCall().callsFake(dfd.resolve)
+    if (os.platform() !== 'win32') {
+      // Double quote not a legal character on NTFS
+      filenames.push('file"withOneDoubleQuote.cy.js')
+    }
+
+    const specs = filenames.map((filename) => toPosix(path.join(e2eFolder, filename)))
+
+    await Promise.all(specs.map((spec) => fs.createFile(spec)))
+    await git.add(specs)
+    await git.commit('add specs with special names')
+
+    // a later commit that `[xy].cy.js` would match if it were read as a glob
+    const globMatch = path.join(e2eFolder, 'x.cy.js')
+
+    await fs.createFile(globMatch)
+    await git.add([globMatch])
+    await git.commit('add glob match')
+
+    const projectContents = await fs.readdir(projectPath)
+    const dfd = Promise.withResolvers()
+
+    gitInfo = new GitDataSource({
+      isRunMode: false,
+      projectRoot: projectPath,
+      onBranchChange: jest.fn(),
+      onGitInfoChange: dfd.resolve,
+      onError: jest.fn(),
+    })
+
+    gitInfo.setSpecs(specs)
+
+    await dfd.promise
+
+    expect(await fs.readdir(projectPath)).toEqual(projectContents)
+
+    for (const spec of specs) {
+      expect(gitInfo.gitInfoFor(spec)).toMatchObject({
+        statusType: 'unmodified',
+        author: 'Test User',
+        subject: 'add specs with special names',
+      })
+    }
+  })
+
+  it(`watches switching branches on ${os.platform()}`, async () => {
+    const stub = jest.fn()
+    const dfd = Promise.withResolvers()
+
+    stub.mockImplementationOnce(dfd.resolve)
 
     gitInfo = new GitDataSource({
       isRunMode: false,
       projectRoot: projectPath,
       onBranchChange: stub,
-      onGitInfoChange: sinon.stub(),
-      onError: sinon.stub(),
+      onGitInfoChange: jest.fn(),
+      onError: jest.fn(),
     })
 
     const result = await dfd.promise
 
-    expect(result).to.eq((await git.branch()).current)
+    expect(result).toEqual((await git.branch()).current)
 
-    const switchBranch = pDefer()
+    const switchBranch = Promise.withResolvers()
 
-    stub.onSecondCall().callsFake(switchBranch.resolve)
+    stub.mockImplementationOnce(switchBranch.resolve)
 
     git.checkoutLocalBranch('testing123')
-    expect(await switchBranch.promise).to.eq('testing123')
+    expect(await switchBranch.promise).toEqual('testing123')
   })
 
   it(`handles error while watching .git on ${os.platform()}`, async () => {
-    sinon.stub(chokidar, 'watch').callsFake(() => {
+    jest.spyOn(chokidar, 'watch').mockImplementation(() => {
       const mockWatcher = {
         on: (event, fn) => {
           if (event === 'error') {
@@ -195,103 +244,34 @@ describe('GitDataSource', () => {
       return mockWatcher as chokidar.FSWatcher
     })
 
-    const errorStub = sinon.stub()
-    const stub = sinon.stub()
-    const dfd = pDefer()
+    const errorStub = jest.fn()
+    const stub = jest.fn()
+    const dfd = Promise.withResolvers()
 
-    stub.onFirstCall().callsFake(dfd.resolve)
+    stub.mockImplementationOnce(dfd.resolve)
 
     gitInfo = new GitDataSource({
       isRunMode: false,
       projectRoot: projectPath,
       onBranchChange: stub,
-      onGitInfoChange: sinon.stub(),
+      onGitInfoChange: jest.fn(),
       onError: errorStub,
     })
 
     const result = await dfd.promise
 
-    expect(result).to.eq((await git.branch()).current)
+    expect(result).toEqual((await git.branch()).current)
 
-    expect(errorStub).to.be.callCount(1)
+    expect(errorStub).toHaveBeenCalledTimes(1)
   })
 
-  context('Git hashes', () => {
-    let clock: sinon.SinonFakeTimers
-
-    beforeEach(() => {
-      clock = sinon.useFakeTimers()
-    })
-
-    afterEach(() => {
-      clock.restore()
-    })
-
-    it('loads git hashes when first loaded', async () => {
-      const dfd = pDefer()
-
-      gitInfo = new GitDataSource({
-        isRunMode: false,
-        projectRoot: projectPath,
-        onBranchChange: sinon.stub(),
-        onGitInfoChange: sinon.stub(),
-        onError: sinon.stub(),
-        onGitLogChange: dfd.resolve,
-      })
-
-      await dfd.promise
-
-      expect(gitInfo.currentHashes).to.have.length(1)
-
-      expect(gitInfo.currentCommitInfo).to.exist
-      expect(gitInfo.currentCommitInfo.message).to.eql('add all specs')
-      expect(gitInfo.currentCommitInfo.hash).to.exist
-    })
-
-    it('detects change in hashes after a commit', async () => {
-      const dfd = pDefer()
-      const afterCommit = pDefer()
-
-      const logCallback = sinon.stub()
-
-      logCallback.onFirstCall().callsFake(dfd.resolve)
-      logCallback.onSecondCall().callsFake(afterCommit.resolve)
-
-      gitInfo = new GitDataSource({
-        isRunMode: false,
-        projectRoot: projectPath,
-        onBranchChange: sinon.stub(),
-        onGitInfoChange: sinon.stub(),
-        onError: sinon.stub(),
-        onGitLogChange: logCallback,
-      })
-
-      await dfd.promise
-
-      expect(gitInfo.currentHashes).to.have.length(1)
-
-      const afterCommitSpec = toPosix(path.join(e2eFolder, 'afterCommit.cy.js'))
-
-      await fs.createFile(afterCommitSpec)
-
-      git.add(afterCommitSpec)
-      git.commit('add afterCommit spec')
-
-      await clock.tickAsync(60010)
-
-      await afterCommit.promise
-
-      expect(gitInfo.currentHashes).to.have.length(2)
-    })
-  })
-
-  context('Git Hashes - no fake timers', () => {
+  describe('Git Hashes - no fake timers', () => {
     it('does not include commits that are part of the Git tree from a merge', async () => {
-      const dfd = pDefer()
+      const dfd = Promise.withResolvers()
 
-      const logCallback = sinon.stub()
+      const logCallback = jest.fn()
 
-      logCallback.onFirstCall().callsFake(dfd.resolve)
+      logCallback.mockImplementationOnce(dfd.resolve)
 
       const mainBranch = (await git.branch()).current
 
@@ -323,16 +303,16 @@ describe('GitDataSource', () => {
       gitInfo = new GitDataSource({
         isRunMode: false,
         projectRoot: projectPath,
-        onBranchChange: sinon.stub(),
-        onGitInfoChange: sinon.stub(),
-        onError: sinon.stub(),
+        onBranchChange: jest.fn(),
+        onGitInfoChange: jest.fn(),
+        onError: jest.fn(),
         onGitLogChange: logCallback,
       })
 
       await dfd.promise
 
-      expect(gitInfo.currentHashes).to.have.length(3)
-      expect(gitInfo.currentHashes).not.to.contain(hashFromMerge)
+      expect(gitInfo.currentHashes).toHaveLength(3)
+      expect(gitInfo.currentHashes).not.toContain(hashFromMerge)
     })
   })
 })

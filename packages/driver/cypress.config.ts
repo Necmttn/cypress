@@ -1,11 +1,16 @@
+// tslint:disable-next-line: no-implicit-dependencies - cypress
 import { defineConfig } from 'cypress'
 import { devServer as cypressWebpackDevServer } from '@cypress/webpack-dev-server'
 
-export default defineConfig({
+export const baseConfig: Cypress.ConfigOptions = {
   projectId: 'ypt4pf',
-  experimentalStudio: true,
-  experimentalMemoryManagement: true,
   experimentalWebKitSupport: true,
+  env: {
+    CI: process.env.CI,
+    CY_ENV_FOO: 'foo',
+    CY_ENV_BAR: 'bar',
+    CY_ENV_BAZ: 'baz',
+  },
   hosts: {
     'foobar.com': '127.0.0.1',
     '*.foobar.com': '127.0.0.1',
@@ -21,6 +26,7 @@ export default defineConfig({
   e2e: {
     experimentalOriginDependencies: true,
     experimentalModifyObstructiveThirdPartyCode: true,
+    removeSRIAttributes: true,
     setupNodeEvents: (on, config) => {
       on('task', {
         log (message) {
@@ -37,7 +43,7 @@ export default defineConfig({
   },
   component: {
     experimentalSingleTabRunMode: true,
-    specPattern: 'cypress/component/**/*.cy.js',
+    specPattern: 'cypress/component/**/*.cy.{js,ts}',
     supportFile: false,
     devServer: (devServerOptions) => {
       return cypressWebpackDevServer({
@@ -46,4 +52,6 @@ export default defineConfig({
       })
     },
   },
-})
+}
+
+export default defineConfig(baseConfig)

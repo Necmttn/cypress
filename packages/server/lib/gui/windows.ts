@@ -1,5 +1,5 @@
 import _ from 'lodash'
-import Bluebird from 'bluebird'
+// tslint:disable-next-line no-implicit-dependencies - electron dep needs to be defined
 import { BrowserWindow } from 'electron'
 import Debug from 'debug'
 import * as savedState from '../saved_state'
@@ -58,10 +58,10 @@ export function removeAllExtensions (win: BrowserWindow) {
   let extensions
 
   try {
-    extensions = win.webContents.session.getAllExtensions()
+    extensions = win.webContents.session.extensions.getAllExtensions()
 
     extensions.forEach(({ id }) => {
-      win.webContents.session.removeExtension(id)
+      win.webContents.session.extensions.removeExtension(id)
     })
   } catch (err) {
     debug('error removing all extensions %o', { err, extensions })
@@ -70,20 +70,6 @@ export function removeAllExtensions (win: BrowserWindow) {
 
 export function reset () {
   windows = {}
-}
-
-export function destroy (type: string) {
-  let win
-
-  if (type && (win = getByType(type))) {
-    return win.destroy()
-  }
-}
-
-export function get (type: string) {
-  return getByType(type) || (() => {
-    throw new Error(`No window exists for: '${type}'`)
-  })()
 }
 
 export function showAll () {
@@ -113,7 +99,7 @@ export function getByWebContents (webContents) {
   return BrowserWindow.fromWebContents(webContents)
 }
 
-export function _newBrowserWindow (options) {
+function _newBrowserWindow (options) {
   return new BrowserWindow(options)
 }
 
@@ -150,6 +136,11 @@ export function create (projectRoot, _options: WindowOptions, newBrowserWindow =
 
   if (options.show === false) {
     options.frame = false
+    // Windows reserves part of a frameless window's client area for resize
+    // targets when it keeps a thick frame, shrinking the web contents and
+    // every screenshot and video frame taken of it
+    // @see https://github.com/cypress-io/cypress/issues/34771
+    options.thickFrame = false
   }
 
   options.webPreferences.webSecurity = !!options.chromeWebSecurity
@@ -185,7 +176,7 @@ export function create (projectRoot, _options: WindowOptions, newBrowserWindow =
     })
   }
 
-  win.webContents.on('crashed', function (...args) {
+  win.webContents.on('render-process-gone', function (...args) {
     return options.onCrashed.apply(win, args)
   })
 
@@ -231,7 +222,7 @@ export async function open (projectRoot: string, options: WindowOpenOptions, new
   if (knownWin) {
     knownWin.show()
 
-    return Bluebird.resolve(knownWin)
+    return Promise.resolve(knownWin)
   }
 
   recentlyCreatedWindow = true
@@ -288,8 +279,8 @@ export function trackState (projectRoot, isTextTerminal, win, keys: TrackStateMa
     .then((state) => {
       return state.set(newState)
     })
-  }
-  , 500))
+  },
+   500))
 
   win.on('moved', _.debounce(() => {
     if (isDestroyed()) {
@@ -306,8 +297,8 @@ export function trackState (projectRoot, isTextTerminal, win, keys: TrackStateMa
     .then((state) => {
       return state.set(newState)
     })
-  }
-  , 500))
+  },
+   500))
 
   win.webContents.on('devtools-opened', () => {
     const newState = {}

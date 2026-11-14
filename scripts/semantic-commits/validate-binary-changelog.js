@@ -4,15 +4,17 @@ const { validateChangelog } = require('./validate-changelog')
 const { getCurrentReleaseData } = require('./get-current-release-data')
 const { getReleaseData } = require('./get-binary-release-data')
 const checkedInBinaryVersion = require('../../package.json').version
+const SENTINEL_VERSION = '0.0.0-development'
 
 const changelog = async () => {
   const latestReleaseInfo = await getCurrentReleaseData()
-  const hasVersionBump = !latestReleaseInfo.versions.includes(checkedInBinaryVersion) // account for branches behind develop
+  const hasVersionBump = checkedInBinaryVersion !== SENTINEL_VERSION &&
+    !latestReleaseInfo.versions.includes(checkedInBinaryVersion) // account for branches behind develop
 
   if (process.env.CIRCLECI) {
     console.log({ checkedInBinaryVersion })
 
-    if (process.env.CIRCLE_BRANCH !== 'develop' && process.env.CIRCLE_BRANCH !== 'add-skip-changelog-validation' && !/^release\/\d+\.\d+\.\d+$/.test(process.env.CIRCLE_BRANCH) && !hasVersionBump) {
+    if (process.env.CIRCLE_BRANCH !== 'develop' && process.env.CIRCLE_BRANCH !== 'add-skip-changelog-validation' && !/^release\/\d+\.\d+\.\d+$/.test(process.env.CIRCLE_BRANCH) && !/^v\d+$/.test(process.env.CIRCLE_BRANCH) && !hasVersionBump) {
       console.log('Only verify the entire changelog for develop, a release branch or any branch that bumped to the Cypress version in the package.json.')
 
       return
@@ -40,7 +42,6 @@ const changelog = async () => {
   return validateChangelog({
     nextVersion,
     changedFiles,
-    pendingRelease: !hasVersionBump,
     commits,
   })
 }

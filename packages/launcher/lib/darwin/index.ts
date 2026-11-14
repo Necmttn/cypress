@@ -1,5 +1,7 @@
-import { findApp, FindAppParams } from './util'
+import type { FindAppParams } from './util'
+import { findApp } from './util'
 import type { Browser, DetectedBrowser } from '@packages/types'
+import type { VersionStringCache } from '../types'
 import * as linuxHelper from '../linux'
 import Debug from 'debug'
 import { get } from 'lodash'
@@ -17,27 +19,35 @@ export const browsers: Detectors = {
     stable: {
       appName: 'Google Chrome.app',
       executable: 'Contents/MacOS/Google Chrome',
-      appId: 'com.google.Chrome',
+      bundleId: 'com.google.Chrome',
       versionProperty: 'KSVersion',
     },
     beta: {
       appName: 'Google Chrome Beta.app',
       executable: 'Contents/MacOS/Google Chrome Beta',
-      appId: 'com.google.Chrome.beta',
+      bundleId: 'com.google.Chrome.beta',
       versionProperty: 'KSVersion',
     },
     canary: {
       appName: 'Google Chrome Canary.app',
       executable: 'Contents/MacOS/Google Chrome Canary',
-      appId: 'com.google.Chrome.canary',
+      bundleId: 'com.google.Chrome.canary',
       versionProperty: 'KSVersion',
+    },
+  },
+  'chrome-for-testing': {
+    stable: {
+      appName: 'Google Chrome for Testing.app',
+      executable: 'Contents/MacOS/Google Chrome for Testing',
+      bundleId: 'com.google.chrome.for.testing',
+      versionProperty: 'CFBundleShortVersionString',
     },
   },
   chromium: {
     stable: {
       appName: 'Chromium.app',
       executable: 'Contents/MacOS/Chromium',
-      appId: 'org.chromium.Chromium',
+      bundleId: 'org.chromium.Chromium',
       versionProperty: 'CFBundleShortVersionString',
     },
   },
@@ -45,19 +55,19 @@ export const browsers: Detectors = {
     stable: {
       appName: 'Firefox.app',
       executable: 'Contents/MacOS/firefox',
-      appId: 'org.mozilla.firefox',
+      bundleId: 'org.mozilla.firefox',
       versionProperty: 'CFBundleShortVersionString',
     },
     dev: {
       appName: 'Firefox Developer Edition.app',
       executable: 'Contents/MacOS/firefox',
-      appId: 'org.mozilla.firefoxdeveloperedition',
+      bundleId: 'org.mozilla.firefoxdeveloperedition',
       versionProperty: 'CFBundleShortVersionString',
     },
     nightly: {
       appName: 'Firefox Nightly.app',
       executable: 'Contents/MacOS/firefox',
-      appId: 'org.mozilla.nightly',
+      bundleId: 'org.mozilla.nightly',
       versionProperty: 'CFBundleShortVersionString',
     },
   },
@@ -65,25 +75,25 @@ export const browsers: Detectors = {
     stable: {
       appName: 'Microsoft Edge.app',
       executable: 'Contents/MacOS/Microsoft Edge',
-      appId: 'com.microsoft.Edge',
-      versionProperty: 'CFBundleShortVersionString',
-    },
-    canary: {
-      appName: 'Microsoft Edge Canary.app',
-      executable: 'Contents/MacOS/Microsoft Edge Canary',
-      appId: 'com.microsoft.Edge.Canary',
+      bundleId: 'com.microsoft.Edge',
       versionProperty: 'CFBundleShortVersionString',
     },
     beta: {
       appName: 'Microsoft Edge Beta.app',
       executable: 'Contents/MacOS/Microsoft Edge Beta',
-      appId: 'com.microsoft.Edge.Beta',
+      bundleId: 'com.microsoft.Edge.Beta',
+      versionProperty: 'CFBundleShortVersionString',
+    },
+    canary: {
+      appName: 'Microsoft Edge Canary.app',
+      executable: 'Contents/MacOS/Microsoft Edge Canary',
+      bundleId: 'com.microsoft.Edge.Canary',
       versionProperty: 'CFBundleShortVersionString',
     },
     dev: {
       appName: 'Microsoft Edge Dev.app',
       executable: 'Contents/MacOS/Microsoft Edge Dev',
-      appId: 'com.microsoft.Edge.Dev',
+      bundleId: 'com.microsoft.Edge.Dev',
       versionProperty: 'CFBundleShortVersionString',
     },
   },
@@ -95,14 +105,14 @@ export const getVersionNumber = linuxHelper.getVersionNumber
 
 export const getPathData = linuxHelper.getPathData
 
-export function detect (browser: Browser): Promise<DetectedBrowser> {
-  let findAppParams = get(browsers, [browser.name, browser.channel])
+export function detect (browser: Browser, versionStringCache?: VersionStringCache): Promise<DetectedBrowser> {
+  const findAppParams = get(browsers, [browser.name, browser.channel])
 
   if (!findAppParams) {
     // ok, maybe it is custom alias?
     debugVerbose('could not find %s in findApp map, falling back to linux detection method', browser.name)
 
-    return linuxHelper.detect(browser)
+    return linuxHelper.detect(browser, versionStringCache)
   }
 
   return findApp(findAppParams)
@@ -110,6 +120,6 @@ export function detect (browser: Browser): Promise<DetectedBrowser> {
   .catch((err) => {
     debugVerbose('could not detect %s using findApp %o, falling back to linux detection method', browser.name, err)
 
-    return linuxHelper.detect(browser)
+    return linuxHelper.detect(browser, versionStringCache)
   })
 }

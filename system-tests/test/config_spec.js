@@ -23,6 +23,9 @@ describe('e2e config', () => {
       project: 'config-with-short-timeout',
       snapshot: true,
       expectedExitCode: 1,
+      config: {
+        screenshotOnRunFailure: false,
+      },
     })
   })
 
@@ -87,30 +90,6 @@ describe('e2e config', () => {
         expectedExitCode: 1,
         snapshot: true,
       })
-    })
-  })
-
-  it('throws error when cypress.json is found in project and need migration', async function () {
-    await Fixtures.scaffoldProject('pristine')
-
-    const projectRoot = Fixtures.projectPath('pristine')
-
-    return fs.writeFile(path.join(projectRoot, 'cypress.json'), '{}').then(() => {
-      return systemTests.exec(this, {
-        project: 'pristine',
-        expectedExitCode: 1,
-        snapshot: true,
-      })
-    })
-  })
-
-  it('throws error when cypress.json is found in project and cypress.config.{js,ts,mjs,cjs} exists as well', async function () {
-    await Fixtures.scaffoldProject('multiple-config-files-with-json')
-
-    return systemTests.exec(this, {
-      project: 'multiple-config-files-with-json',
-      expectedExitCode: 1,
-      snapshot: true,
     })
   })
 
@@ -203,17 +182,6 @@ describe('e2e config', () => {
     })
   })
 
-  it('throws an error if testFiles is set on the config file', async function () {
-    await Fixtures.scaffoldProject('invalid-root-level-config')
-
-    return systemTests.exec(this, {
-      project: 'invalid-root-level-config',
-      configFile: 'invalid-testFiles-config.js',
-      expectedExitCode: 1,
-      snapshot: true,
-    })
-  })
-
   it('setupNodeEvents modify specPattern for current testing type', async function () {
     await Fixtures.scaffoldProject('e2e')
 
@@ -224,23 +192,25 @@ describe('e2e config', () => {
     })
   })
 
-  it('throws an error if componentFolder is set on the config file', async function () {
-    await Fixtures.scaffoldProject('invalid-root-level-config')
-
-    return systemTests.exec(this, {
-      project: 'invalid-root-level-config',
-      configFile: 'invalid-componentFolder-config.js',
-      expectedExitCode: 1,
-      snapshot: true,
-    })
-  })
-
   it('finds supportFiles in projects containing glob syntax', async function () {
     await Fixtures.scaffoldProject('project-with-(glob)-[chars]')
 
     return systemTests.exec(this, {
       project: 'project-with-(glob)-[chars]',
       snapshot: true,
+    })
+  })
+
+  it('launches browser using config.defaultBrowser', async function () {
+    await Fixtures.scaffoldProject('config-defaultBrowser')
+
+    return systemTests.exec(this, {
+      project: 'config-defaultBrowser',
+      command: 'cypress',
+      args: ['run', '--dev', '--project', path.resolve(process.cwd(), './projects/config-defaultBrowser')],
+      onStdout: (stdout) => {
+        expect(stdout).to.include('Browser:        Chrome')
+      },
     })
   })
 })

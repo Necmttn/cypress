@@ -1,12 +1,11 @@
+import { expect, it, describe, beforeEach, afterAll, vi } from 'vitest'
 import path from 'path'
-import { expect } from 'chai'
 import { once, EventEmitter } from 'events'
 import http from 'http'
 import fs from 'fs-extra'
 
 import { devServer } from '..'
 import { restoreLoadHook } from '../src/helpers/sourceRelativeWebpackModules'
-import './support'
 import type { ConfigHandler } from '../src/devServer'
 
 const requestSpecFile = (file: string, port: number) => {
@@ -15,7 +14,7 @@ const requestSpecFile = (file: string, port: number) => {
       host: '127.0.0.1',
       port,
       path: encodeURI(file),
-    }
+    } as http.RequestOptions
 
     const callback = (response: EventEmitter) => {
       let str = ''
@@ -29,7 +28,11 @@ const requestSpecFile = (file: string, port: number) => {
       })
     }
 
-    http.request(opts, callback).end()
+    // give webpack a little time (200ms) to compile before sending the request so the spec is available in the file system.
+    // alternative would be to listen to a compile event or check stdout to see if webpack compiled successfully
+    setTimeout(() => {
+      http.request(opts, callback).end()
+    }, 200)
   })
 }
 
@@ -71,13 +74,13 @@ const cypressConfig = {
   indexHtmlFile: 'test/component-index.html',
 } as any as Cypress.PluginConfigOptions
 
-describe('#devServer', () => {
+describe('#devServer', { timeout: 5000 }, () => {
   beforeEach(() => {
     delete require.cache
     restoreLoadHook()
   })
 
-  after(() => {
+  afterAll(() => {
     restoreLoadHook()
   })
 
@@ -91,7 +94,7 @@ describe('#devServer', () => {
 
     const response = await requestSpecFile('/test/fixtures/foo.spec.js', port as number)
 
-    expect(response).to.eq('const foo = () => {}\n')
+    expect(response).toEqual('const foo = () => {}\n')
 
     await closeServer(close)
   })
@@ -106,9 +109,9 @@ describe('#devServer', () => {
 
     const response = await requestSpecFile('/test/fixtures/[foo]/bar.spec.js', port as number)
 
-    expect(response).to.eq(`it('this is a spec with a path containing []', () => {})\n`)
+    expect(response).toEqual(`it('this is a spec with a path containing []', () => {})\n`)
 
-    return closeServer(close)
+    await closeServer(close)
   })
 
   it('serves specs in directory with non English chars via a webpack dev server', async () => {
@@ -121,9 +124,9 @@ describe('#devServer', () => {
 
     const response = await requestSpecFile('/test/fixtures/サイプレス.spec.js', port as number)
 
-    expect(response).to.eq(`it('サイプレス', () => {})\n`)
+    expect(response).toEqual(`it('サイプレス', () => {})\n`)
 
-    return closeServer(close)
+    await closeServer(close)
   })
 
   it('serves specs in directory with ... in the file name via a webpack dev server', async () => {
@@ -136,9 +139,9 @@ describe('#devServer', () => {
 
     const response = await requestSpecFile('/test/fixtures/[...bar].spec.js', port as number)
 
-    expect(response).to.eq(`it('...bar', () => {})\n`)
+    expect(response).toEqual(`it('...bar', () => {})\n`)
 
-    return closeServer(close)
+    await closeServer(close)
   })
 
   it('serves a file with spaces via a webpack dev server', async () => {
@@ -151,9 +154,9 @@ describe('#devServer', () => {
 
     const response = await requestSpecFile('/test/fixtures/foo bar.spec.js', port as number)
 
-    expect(response).to.eq(`it('this is a spec with a path containing a space', () => {})\n`)
+    expect(response).toEqual(`it('this is a spec with a path containing a space', () => {})\n`)
 
-    return closeServer(close)
+    await closeServer(close)
   })
 
   it('emits dev-server:compile:success event on successful compilation', async () => {
@@ -190,12 +193,14 @@ describe('#devServer', () => {
     const oldmtime = fs.statSync(cypressConfig.indexHtmlFile).mtimeMs
 
     await once(devServerEvents, 'dev-server:compile:success')
-    devServerEvents.emit('dev-server:specs:changed', [newSpec])
+    devServerEvents.emit('dev-server:specs:changed', {
+      specs: [newSpec],
+    })
 
     await once(devServerEvents, 'dev-server:compile:success')
     const updatedmtime = fs.statSync(cypressConfig.indexHtmlFile).mtimeMs
 
-    expect(oldmtime).to.not.equal(updatedmtime)
+    expect(oldmtime).not.toEqual(updatedmtime)
 
     await closeServer(close)
   })
@@ -240,14 +245,14 @@ describe('#devServer', () => {
         const updated = await requestSpecFile('/__cypress/src/spec-0.js', port)
 
         if (updateExpected) {
-          expect(original, message).not.to.equal(updated)
+          expect(original, message).not.toEqual(updated)
         } else {
-          expect(original, message).to.equal(updated)
+          expect(original, message).toEqual(updated)
         }
 
         await closeServer(close)
       } finally {
-        fs.writeFile('./test/fixtures/dependency.js', originalContent)
+        await fs.writeFile('./test/fixtures/dependency.js', originalContent)
       }
     })
   })
@@ -265,9 +270,147 @@ describe('#devServer', () => {
 
     const response = await requestSpecFile('/test/fixtures/foo.spec.js', port as number)
 
-    expect(response).to.eq('const foo = () => {}\n')
+    expect(response).toEqual('const foo = () => {}\n')
 
     await closeServer(close)
   })
 })
-.timeout(5000)
+
+describe('#devServer spec list updates during pre-compilation', { timeout: 15000 }, () => {
+  const makeConfig = (overrides: Partial<Cypress.PluginConfigOptions>) => {
+    // Safe because the other fields are read only by framework handlers these tests don't
+    // use, for an error message, or with a fallback when unset
+    return {
+      projectRoot: root,
+      supportFile: '',
+      devServerPublicPathRoute: '/__cypress/src',
+      indexHtmlFile: 'test/component-index.html',
+      ...overrides,
+    } as Cypress.PluginConfigOptions
+  }
+
+  // Holds the first `fs.pathExists` call open so `beforeCompile` stays suspended
+  // until the test releases it, making the window for a concurrent spec update deterministic.
+  const holdFirstPathExists = () => {
+    const realPathExists = fs.pathExists
+    let release!: () => void
+    let signalEntered!: () => void
+    const released = new Promise<void>((resolve) => release = resolve)
+    const entered = new Promise<void>((resolve) => signalEntered = resolve)
+    let held = false
+
+    // Safe because the plugin only calls the promise form of pathExists
+    const spy = vi.spyOn(fs as { pathExists: (file: string) => Promise<boolean> }, 'pathExists').mockImplementation(async (file) => {
+      if (!held) {
+        held = true
+        signalEntered()
+        await released
+      }
+
+      return realPathExists(file)
+    })
+
+    return { entered, release, restore: () => spy.mockRestore() }
+  }
+
+  beforeEach(() => {
+    restoreLoadHook()
+  })
+
+  afterAll(() => {
+    restoreLoadHook()
+  })
+
+  ;[{
+    title: 'open mode',
+    cypressConfig: makeConfig({ isTextTerminal: false }),
+  }, {
+    title: 'run mode with justInTimeCompile',
+    cypressConfig: makeConfig({ isTextTerminal: true, justInTimeCompile: true }),
+  }].forEach(({ title, cypressConfig }) => {
+    it(`serves the newest spec list when specs change while missing files are being filtered in ${title}`, async () => {
+      const devServerEvents = new EventEmitter()
+      const { close, port } = await devServer({
+        webpackConfig: {},
+        cypressConfig,
+        specs: createSpecs('foo.spec.js'),
+        devServerEvents,
+      })
+
+      await once(devServerEvents, 'dev-server:compile:success')
+
+      const pathExists = holdFirstPathExists()
+
+      try {
+        devServerEvents.emit('dev-server:specs:changed', {
+          specs: createSpecs('[...bar].spec.js'),
+          options: { neededForJustInTimeCompile: true },
+        })
+
+        await pathExists.entered
+
+        devServerEvents.emit('dev-server:specs:changed', {
+          specs: createSpecs('foo bar.spec.js'),
+          options: { neededForJustInTimeCompile: true },
+        })
+
+        // Webpack skips `done` for a compile that is invalidated while it runs, so only
+        // one success is guaranteed here. Every compile from this point builds the same
+        // spec list, so the first one is enough.
+        const compiled = once(devServerEvents, 'dev-server:compile:success')
+
+        pathExists.release()
+        await compiled
+
+        const served = await requestSpecFile('/__cypress/src/spec-0.js', port)
+
+        expect(served).toContain('this is a spec with a path containing a space')
+        expect(served).not.toContain(`it('...bar'`)
+      } finally {
+        pathExists.restore()
+        await closeServer(close)
+      }
+    })
+  })
+
+  it('leaves specs deleted from disk out of the bundle', async () => {
+    const deletedSpec = path.join(root, 'test/fixtures/deleted-before-compile.spec.js')
+
+    await fs.writeFile(deletedSpec, `it('deleted before compile', () => {})\n`)
+
+    // A file modified just before the watcher starts can be reported as changed and
+    // trigger an extra rebuild, which would satisfy the wait for the deletion's rebuild.
+    const beforeWatcherStart = new Date(Date.now() - 60_000)
+
+    await fs.utimes(deletedSpec, beforeWatcherStart, beforeWatcherStart)
+
+    const devServerEvents = new EventEmitter()
+    const { close, port } = await devServer({
+      webpackConfig: {},
+      cypressConfig: makeConfig({ isTextTerminal: false }),
+      specs: [...createSpecs('foo.spec.js'), ...createSpecs('deleted-before-compile.spec.js')],
+      devServerEvents,
+    })
+
+    try {
+      await once(devServerEvents, 'dev-server:compile:success')
+
+      const initial = await requestSpecFile('/__cypress/src/main.js', port)
+
+      expect(initial).toContain('deleted-before-compile.spec.js')
+
+      const recompiled = once(devServerEvents, 'dev-server:compile:success')
+
+      await fs.remove(deletedSpec)
+      await recompiled
+
+      const updated = await requestSpecFile('/__cypress/src/main.js', port)
+
+      expect(updated).toContain('foo.spec.js')
+      expect(updated).not.toContain('deleted-before-compile.spec.js')
+    } finally {
+      await fs.remove(deletedSpec)
+      await closeServer(close)
+    }
+  })
+})

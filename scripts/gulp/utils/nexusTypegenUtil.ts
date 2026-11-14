@@ -1,6 +1,5 @@
 import { spawn, execSync } from 'child_process'
 import chalk from 'chalk'
-import pDefer from 'p-defer'
 import chokidar from 'chokidar'
 import _ from 'lodash'
 import path from 'path'
@@ -33,21 +32,21 @@ async function windowsTouch (filename: string, time: Date) {
 }
 
 export async function nexusTypegen (cfg: NexusTypegenCfg) {
-  const dfd = pDefer()
+  const dfd = Promise.withResolvers()
 
   if (cfg.outputPath) {
-    await fs.ensureDir(path.join(monorepoPaths.pkgGraphql, 'src/gen'))
+    await fs.ensureDir(path.join(monorepoPaths.pkgDataContext, 'src/gen'))
 
-    const pkgGraphql = path.join(monorepoPaths.pkgGraphql, 'src/gen/cloud-source-types.gen.ts')
+    const pkgDataContext = path.join(monorepoPaths.pkgDataContext, 'src/gen/cloud-source-types.gen.ts')
 
     // on windows there is no `touch` equivalent command
     if (process.platform === 'win32') {
       const time = new Date()
 
-      await windowsTouch(pkgGraphql, time)
+      await windowsTouch(pkgDataContext, time)
       await windowsTouch(cfg.outputPath, time)
     } else {
-      execSync(`touch ${pkgGraphql}`)
+      execSync(`touch ${pkgDataContext}`)
       execSync(`touch ${cfg.outputPath}`)
     }
   }
@@ -86,7 +85,7 @@ export async function nexusTypegen (cfg: NexusTypegenCfg) {
   })
 }
 
-let debounced: Record<string, Function> = {}
+const debounced: Record<string, (cfg: NexusTypegenCfg) => void> = {}
 
 const nexusTypegenDebounced = (cfg: NexusTypegenCfg) => {
   debounced[cfg.filePath] =
@@ -100,7 +99,7 @@ interface NexusTypegenWatchCfg extends NexusTypegenCfg {
 }
 
 export async function watchNexusTypegen (cfg: NexusTypegenWatchCfg) {
-  const dfd = pDefer()
+  const dfd = Promise.withResolvers()
 
   const watcher = chokidar.watch(cfg.watchPaths, {
     cwd: cfg.cwd,

@@ -1,4 +1,4 @@
-module.exports = {
+export default {
   component: {
     experimentalSingleTabRunMode: true,
     supportFile: false,

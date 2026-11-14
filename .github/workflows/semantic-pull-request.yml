@@ -17,11 +17,15 @@ permissions:
   security-events: none
   statuses: none
 on:
-  pull_request_target:
+  pull_request:
     types:
       - opened
       - edited
       - synchronize
+    branches:
+      - develop
+      - release/*
+      - 'v[0-9]+'
 
 jobs:
   main:
@@ -29,15 +33,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-      - run: npm install
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/github-actions/semantic-pull-request
+            scripts/semantic-commits
+      - run: npm install --ignore-scripts
         working-directory: scripts/github-actions/semantic-pull-request/
       - name: Lint PR Title and Cypress Changelog Entry
-        if: github.event_name == 'pull_request_target'
-        uses: actions/github-script@v6
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
           script: |
             const verifyPullRequest = require('./scripts/github-actions/semantic-pull-request')

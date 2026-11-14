@@ -13,9 +13,6 @@ export const stubQuery: MaybeResolver<Query> = {
   wizard (source, args, ctx) {
     return ctx.wizard
   },
-  migration (source, args, ctx) {
-    return ctx.migration
-  },
   currentProject (source, args, ctx) {
     return ctx.currentProject
   },
@@ -42,15 +39,5 @@ export const stubQuery: MaybeResolver<Query> = {
   },
   scaffoldedFiles () {
     return null
-  },
-  videoEmbedHtml () {
-    return `<iframe
-      src="https://player.vimeo.com/video/855168407?h=0cbc785eef"
-      title="Video about what is new in Cypress"
-      class="rounded h-full bg-gray-1000 w-full"
-      frameborder="0"
-      allow="autoplay; fullscreen; picture-in-picture"
-      allowfullscreen
-    />`
   },
 }

@@ -2,140 +2,95 @@
   <div
     id="spec-runner-header"
     ref="autHeaderEl"
-    class="min-h-[64px] text-[14px]"
+    class="h-full bg-gray-1100 border-l-[1px] border-gray-900 min-h-[64px] text-[14px]"
   >
-    <div class="flex flex-wrap grow p-[16px] gap-[12px] justify-end">
+    <div class="flex grow p-[16px] gap-[12px] h-[64px] flex-nowrap">
       <div
-        v-if="props.gql.currentTestingType === 'e2e'"
         data-cy="aut-url"
-        class="border rounded flex grow border-gray-100 h-[32px] overflow-hidden align-middle"
-        :class="{
-          'bg-gray-50': autStore.isLoadingUrl
-        }"
+        class="aut-url-container border rounded flex bg-gray-950 grow border-gray-800 h-[32px] align-middle"
       >
-        <Button
-          data-cy="playground-activator"
-          :disabled="isDisabled"
-          class="rounded-none border-gray-100 border-r-[1px] mr-[12px]"
-          variant="text"
-          :aria-label="t('runner.selectorPlayground.toggle')"
-          @click="togglePlayground"
+        <SpecRunnerDropdown
+          v-if="selectedBrowser?.displayName"
+          data-cy="select-browser"
+          :disabled="autStore.isRunning"
         >
-          <i-cy-crosshairs_x16 :class="[selectorPlaygroundStore.show ? 'icon-dark-indigo-500' : 'icon-dark-gray-500']" />
-        </Button>
+          <template #heading>
+            <component
+              :is="allBrowsersIcons[selectedBrowser.displayName?.toLowerCase()] || allBrowsersIcons.generic"
+              class="min-w-[16px] w-[16px]"
+              :alt="selectedBrowser.majorVersion ? `${selectedBrowser.displayName} ${selectedBrowser.majorVersion}` : selectedBrowser.displayName"
+            />
+          </template>
+          <template #default>
+            <div class="max-h-[50vh] overflow-auto">
+              <VerticalBrowserListItems
+                :gql="props.gql"
+                :spec-path="activeSpecPath"
+              />
+            </div>
+          </template>
+        </SpecRunnerDropdown>
         <input
           ref="autUrlInputRef"
-          :value="studioStore.needsUrl ? urlInProgress : autUrl"
           data-cy="aut-url-input"
-          class="flex grow mr-[12px] leading-normal max-w-full text-indigo-500 z-51 self-center hocus-link-default truncate"
+          :readonly="urlReadOnly"
+          :value="inputValue"
+          :placeholder="inputPlaceholder"
+          aria-label="url of the application under test"
+          class="aut-url-input bg-transparent text-gray-300 outline-none text-base font-normal leading-6 flex grow mr-[12px] max-w-full self-center truncate w-full placeholder:text-gray-400 placeholder:text-base placeholder:font-normal placeholder:leading-6 focus:text-indigo-300 focus-visible:outline-none"
+          :class="[urlReadOnly ? 'cursor-pointer' : 'cursor-text']"
           @input="setStudioUrl"
           @click="openExternally"
           @keyup.enter="visitUrl"
         >
-        <StudioUrlPrompt
-          v-if="studioStore.needsUrl"
-          :aut-url-input-ref="autUrlInputRef"
-          :url-in-progress="urlInProgress"
-          @submit="visitUrl"
-          @cancel="() => eventManager.emit('studio:cancel', undefined)"
-        />
-      </div>
 
-      <div
-        v-else
-        class="grow"
-      >
-        <Button
-          data-cy="playground-activator"
-          :disabled="isDisabled"
-          class="border-gray-100 mr-[12px]"
-          variant="outline"
-          :aria-label="t('runner.selectorPlayground.toggle')"
-          @click="togglePlayground"
+        <Tag
+          data-cy="viewport-size"
+          size="20"
+          color="gray-dark"
+          :outline="true"
+          class="self-center mr-[5px] pr-[6px] pl-[6px] viewport-tag"
         >
-          <i-cy-crosshairs_x16 :class="[selectorPlaygroundStore.show ? 'icon-dark-indigo-500' : 'icon-dark-gray-500']" />
-        </Button>
-      </div>
-      <SpecRunnerDropdown
-        v-if="selectedBrowser?.displayName"
-        data-cy="select-browser"
-        :disabled="autStore.isRunning"
-      >
-        <template #heading>
-          <img
-            class="min-w-[16px] w-[16px]"
-            :src="allBrowsersIcons[selectedBrowser.displayName] || allBrowsersIcons.generic"
-            :alt="selectedBrowser.displayName"
-          >
-          {{ selectedBrowser.displayName }} {{ selectedBrowser.majorVersion }}
-        </template>
-
-        <template #default>
-          <div class="max-h-[50vh] overflow-auto">
-            <VerticalBrowserListItems
-              :gql="props.gql"
-              :spec-path="activeSpecPath"
-            />
-          </div>
-        </template>
-      </SpecRunnerDropdown>
-      <SpecRunnerDropdown
-        variant="panel"
-        data-cy="viewport"
-      >
-        <template #heading>
-          <i-cy-ruler_x16 class="icon-dark-gray-500 icon-light-gray-400" />
-          <span class="whitespace-nowrap">{{ autStore.viewportWidth }}x{{ autStore.viewportHeight }}</span>
-          <span
-            v-if="displayScale"
-            class="ml-[-6px] text-gray-500"
-          >
-            ({{ displayScale }})
+          <span class="whitespace-nowrap text-[12px]">{{ autStore.viewportWidth }}x{{
+            autStore.viewportHeight
+          }}</span>
+        </Tag>
+        <Tag
+          v-if="displayScale"
+          data-cy="viewport-scale"
+          size="20"
+          color="gray-dark"
+          :outline="true"
+          class="self-center mr-[5px] pr-[6px] pl-[6px] viewport-tag"
+        >
+          <span class="text-[12px]">
+            {{ displayScale }}
           </span>
-        </template>
-        <template #default>
-          <div class="max-h-50vw p-[24px] pt-5 text-gray-700 leading-5 w-[346px] overflow-auto">
-            <i18n-t
-              tag="p"
-              keypath="runner.viewportTooltip.infoText"
-              class="mb-[24px]"
-            >
-              <strong class="font-bold">{{ autStore.defaultViewportWidth }}px</strong>
-              <strong class="font-bold">{{ autStore.defaultViewportHeight }}px</strong>
-              {{ props.gql.currentTestingType === "e2e" ? 'end-to-end' : 'component' }}
-            </i18n-t>
-
-            <i18n-t
-              tag="p"
-              keypath="runner.viewportTooltip.configText"
-              class="mb-[24px]"
-            >
-              <template #configFile>
-                <!-- disable rule to prevent trailing space from being added to <InlineCodeFragment/> content -->
-                <!-- eslint-disable-next-line vue/singleline-html-element-content-newline -->
-                <InlineCodeFragment class="font-medium text-xs leading-5">{{ props.gql.configFile }}</InlineCodeFragment>
-              </template>
-              <template #viewportCommand>
-                <!-- disable rule to prevent trailing space from being added to <InlineCodeFragment/> content -->
-                <!-- eslint-disable-next-line vue/singleline-html-element-content-newline -->
-                <InlineCodeFragment class="font-medium text-xs leading-5">cy.viewport()</InlineCodeFragment>
-              </template>
-            </i18n-t>
-            <div class="flex justify-center">
-              <Button
-                class="font-medium"
-                data-cy="viewport-docs"
-                :prefix-icon="BookIcon"
-                prefix-icon-class="icon-dark-indigo-500"
-                variant="outline"
-                :href="t('runner.viewportTooltip.buttonHref')"
-              >
-                {{ t('runner.viewportTooltip.buttonText') }}
-              </Button>
-            </div>
-          </div>
-        </template>
-      </SpecRunnerDropdown>
+        </Tag>
+      </div>
+      <Button
+        data-cy="playground-activator"
+        :disabled="isDisabled"
+        :variant="isDisabled ? 'purple-dark-mode' : (selectorPlaygroundStore.show ? 'purple-dark-mode' : 'outline-dark')"
+        size="32"
+        square
+        aria-label="Toggle playground"
+        :class="{
+          'playground-button-purple': selectorPlaygroundStore.show && !isDisabled,
+          'playground-button-disabled': isDisabled
+        }"
+        @click="togglePlayground"
+      >
+        <i-cy-crosshairs_x16
+          :class="isDisabled
+            ? 'icon-dark-gray-700'
+            : (selectorPlaygroundStore.show ? 'icon-dark-white' : 'icon-dark-gray-300')"
+        />
+      </Button>
+      <StudioButton
+        v-if="shouldShowStudioButton"
+        :event-manager="eventManager"
+      />
     </div>
 
     <SelectorPlayground
@@ -143,9 +98,6 @@
       :get-aut-iframe="getAutIframe"
       :event-manager="eventManager"
     />
-
-    <StudioControls v-if="studioStore.isActive" />
-
     <Alert
       v-model="showAlert"
       status="success"
@@ -154,9 +106,9 @@
       <template #title>
         <i-cy-book_x16 class="pr-[2px] inline-block icon-dark-indigo-500 icon-light-indigo-200" />
         <ExternalLink href="https://on.cypress.io/styling-components">
-          {{ t('runner.header.reviewDocs') }}
+          Review the docs
         </ExternalLink>
-        {{ t('runner.header.troubleRendering') }}
+        if you're having trouble rendering your components properly.
       </template>
     </Alert>
   </div>
@@ -168,24 +120,22 @@ import { useRoute } from 'vue-router'
 import { useAutStore, useSpecStore, useSelectorPlaygroundStore } from '../store'
 import { useAutHeader } from './useAutHeader'
 import { gql } from '@urql/vue'
-import { useI18n } from 'vue-i18n'
 import type { SpecRunnerHeaderFragment } from '../generated/graphql'
 import type { EventManager } from './event-manager'
 import type { AutIframe } from './aut-iframe'
-import { togglePlayground as _togglePlayground } from './utils'
+import { togglePlayground as _togglePlayground } from './selector-playground/utils'
+import Tag from '@cypress-design/vue-tag'
+import Button from '@cypress-design/vue-button'
 import SelectorPlayground from './selector-playground/SelectorPlayground.vue'
 import ExternalLink from '@packages/frontend-shared/src/gql-components/ExternalLink.vue'
 import Alert from '@packages/frontend-shared/src/components/Alert.vue'
-import Button from '@packages/frontend-shared/src/components/Button.vue'
-import StudioControls from './studio/StudioControls.vue'
-import StudioUrlPrompt from './studio/StudioUrlPrompt.vue'
+
 import VerticalBrowserListItems from '@packages/frontend-shared/src/gql-components/topnav/VerticalBrowserListItems.vue'
-import InlineCodeFragment from '@packages/frontend-shared/src/components/InlineCodeFragment.vue'
 import SpecRunnerDropdown from './SpecRunnerDropdown.vue'
 import { allBrowsersIcons } from '@packages/frontend-shared/src/assets/browserLogos'
-import BookIcon from '~icons/cy/book_x16'
 import { useStudioStore } from '../store/studio-store'
 import { useExternalLink } from '@cy/gql-components/useExternalLink'
+import StudioButton from '../studio/StudioButton.vue'
 
 gql`
 fragment SpecRunnerHeader on CurrentProject {
@@ -201,8 +151,6 @@ fragment SpecRunnerHeader on CurrentProject {
   ...VerticalBrowserListItems
 }
 `
-
-const { t } = useI18n()
 
 const autStore = useAutStore()
 
@@ -220,6 +168,7 @@ const props = defineProps<{
   gql: SpecRunnerHeaderFragment
   eventManager: EventManager
   getAutIframe: () => AutIframe
+  shouldShowStudioButton: boolean
 }>()
 
 const showAlert = ref(false)
@@ -237,10 +186,6 @@ const displayScale = computed(() => {
 })
 
 const autUrl = computed(() => {
-  if (studioStore.isActive && studioStore.url) {
-    return studioStore.url
-  }
-
   return autStore.url
 })
 
@@ -255,6 +200,30 @@ const activeSpecPath = specStore.activeSpec?.absolute
 
 const isDisabled = computed(() => autStore.isRunning || autStore.isLoading)
 
+const urlReadOnly = computed(() => {
+  return !studioStore.needsUrl || props.gql.currentTestingType === 'component'
+})
+
+const inputPlaceholder = computed(() => {
+  if (props.gql.currentTestingType === 'component') {
+    return 'URL navigation disabled in component testing'
+  }
+
+  if (studioStore.needsUrl) {
+    return 'Enter URL'
+  }
+
+  return ''
+})
+
+const inputValue = computed(() => {
+  if (props.gql.currentTestingType === 'component') {
+    return ''
+  }
+
+  return studioStore.needsUrl ? urlInProgress.value : autUrl.value
+})
+
 const openExternal = useExternalLink()
 
 function setStudioUrl (event: Event) {
@@ -264,14 +233,46 @@ function setStudioUrl (event: Event) {
 }
 
 function visitUrl () {
-  studioStore.visitUrl(urlInProgress.value)
+  studioStore.setUrl(urlInProgress.value)
+  // once we set the url in studio, we can clear the urlInProgress
+  // since we'll rerun the test which will set the url in the autStore
+  urlInProgress.value = ''
 }
 
 function openExternally () {
-  if (!autStore.url || studioStore.isActive) {
+  if (!urlReadOnly.value) {
     return
   }
 
   openExternal(autStore.url)
 }
 </script>
+
+<style scoped>
+.aut-url-container {
+  border: 1px solid #434861;
+  padding: 1px;
+  background-color: #25283c;
+  border-radius: 4px;
+}
+
+.aut-url-container:hover {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 1px;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.1);
+}
+
+.aut-url-container:focus-within,
+.aut-url-container:focus-visible,
+.aut-url-container:focus {
+  border: 2px solid #9aa2fc;
+  padding: 0;
+  box-shadow: 0 0 0 1px rgba(154, 162, 252, 0.35);
+  background-color: #25283c;
+}
+
+/* Override Tag component border-radius with higher specificity */
+.viewport-tag {
+  border-radius: 12px !important;
+}
+</style>

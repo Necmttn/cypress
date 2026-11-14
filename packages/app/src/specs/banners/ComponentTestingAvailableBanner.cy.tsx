@@ -1,12 +1,9 @@
-import { defaultMessages } from '@cy/i18n'
 import ComponentTestingAvailableBanner from './ComponentTestingAvailableBanner.vue'
 import { TrackedBanner_RecordBannerSeenDocument, TrackedBanner_SetProjectStateDocument } from '../../generated/graphql'
 import type Sinon from 'sinon'
 
 const frameworks = [
   { name: 'React', type: 'react' },
-  { name: 'Create React App', type: 'reactscripts' },
-  { name: 'Nuxt.js (v2)', type: 'nuxtjs' },
   { name: 'Vue', type: 'vue3' },
   { name: 'Angular', type: 'angular' },
   { name: 'Next.js', type: 'nextjs' },
@@ -25,7 +22,7 @@ describe('<ComponentTestingBanner />', { viewportWidth: 1200 }, () => {
       )
 
       cy.findByTestId('alert-prefix-icon').should('be.visible')
-      cy.contains(defaultMessages.specPage.banners.ct.title.replace('{0}', framework.name)).should('be.visible')
+      cy.contains(`${framework.name} component testing is available for this project`).should('be.visible')
     })
   })
 
@@ -57,6 +54,7 @@ describe('<ComponentTestingBanner />', { viewportWidth: 1200 }, () => {
         medium: 'Specs CT Available Banner',
         messageId: Cypress.sinon.match.string,
         cohort: null,
+        includeMachineId: false,
       })
     })
 

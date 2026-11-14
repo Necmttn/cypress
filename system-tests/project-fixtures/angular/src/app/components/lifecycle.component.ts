@@ -1,11 +1,12 @@
-import { Component, Input, OnInit, OnChanges, SimpleChanges } from '@angular/core'
+import { Component, input, OnInit, OnChanges, SimpleChanges } from '@angular/core'
 
 @Component({
   selector: 'app-lifecycle',
-  template: `<p>Hi {{ name }}. ngOnInit fired: {{ ngOnInitFired }} and ngOnChanges fired: {{ ngOnChangesFired }} and conditionalName: {{ conditionalName }}</p>`,
+  standalone: false,
+  template: `<p>Hi {{ name() }}. ngOnInit fired: {{ ngOnInitFired }} and ngOnChanges fired: {{ ngOnChangesFired }} and conditionalName: {{ conditionalName }}</p>`,
 })
 export class LifecycleComponent implements OnInit, OnChanges {
-  @Input() name = ''
+  name = input<string>('')
   ngOnInitFired = false
   ngOnChangesFired = false
   conditionalName = false

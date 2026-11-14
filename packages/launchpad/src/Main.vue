@@ -6,22 +6,13 @@
     <MajorVersionWelcome
       v-if="shouldShowWelcome"
       class="pt-[64px]"
-      :video-html="videoHtml"
-      @clearLandingPage="handleClearLandingPage"
-    >
-      <template
-        v-if="videoHtml"
-        #video
-      >
-        <div
-          class="major-version-welcome-video"
-          v-html="videoHtml"
-        />
-      </template>
-    </MajorVersionWelcome>
-    <div
+      role="main"
+      @clear-landing-page="handleClearLandingPage"
+    />
+    <main
       v-else
       class="px-[24px] pt-[86px] pb-[24px]"
+      role="main"
     >
       <BaseError
         v-if="query.data.value.baseError"
@@ -32,9 +23,6 @@
         v-else-if="query.data.value.isGlobalMode && !query.data.value?.currentProject"
         :gql="query.data.value"
       />
-      <MigrationWizard
-        v-else-if="currentProject?.needsLegacyConfigMigration"
-      />
       <template v-else>
         <ScaffoldedFiles
           v-if="query.data.value.scaffoldedFiles"
@@ -44,7 +32,7 @@
         <template v-else-if="!currentProject?.currentTestingType">
           <WarningList :gql="query.data.value" />
           <LaunchpadHeader
-            :title="t('welcomePage.title')"
+            title="Welcome to Cypress!"
             description=""
           />
           <StandardModal
@@ -53,7 +41,7 @@
             help-link="https://on.cypress.io/choosing-testing-type"
           >
             <template #title>
-              {{ t('welcomePage.compareTypes.modalTitle') }}
+              Key differences
             </template>
             <CompareTestingTypes />
           </StandardModal>
@@ -61,7 +49,7 @@
             class="mx-auto mt-[12px] text-indigo-500 text-[18px] block hocus-link-default group"
             @click="isTestingTypeModalOpen = true"
           >
-            {{ t('welcomePage.review') }}<i-cy-arrow-right_x16
+            Review the differences between each testing type<i-cy-arrow-right_x16
               class="ml-[4px] transform transition-transform ease-in translate-y-[-1px] duration-200 inline-block icon-dark-current group-hocus:translate-x-[2px]"
             />
           </button>
@@ -75,14 +63,14 @@
         />
         <template v-else-if="!currentProject?.isFullConfigReady">
           <LaunchpadHeader
-            :title="t('components.loading.config.title')"
-            :description="t('components.loading.config.description')"
+            title="Initializing config..."
+            description="Please wait while we load your project and find browsers installed on your system"
           />
           <Spinner />
         </template>
         <OpenBrowser v-else />
       </template>
-    </div>
+    </main>
     <CloudViewerAndProject />
     <LoginConnectModals />
   </template>
@@ -92,7 +80,7 @@
 
 <script lang="ts" setup>
 import { gql, useMutation, useQuery } from '@urql/vue'
-import { MainLaunchpadQueryDocument, Main_ResetErrorsAndLoadConfigDocument, Main_LaunchProjectDocument } from './generated/graphql'
+import { MainLaunchpadQueryDocument, Main_ResetErrorsAndLoadConfigDocument } from './generated/graphql'
 import TestingTypeCards from './setup/TestingTypeCards.vue'
 import Wizard from './setup/Wizard.vue'
 import GlobalPage from './global/GlobalPage.vue'
@@ -102,20 +90,17 @@ import StandardModal from '@cy/components/StandardModal.vue'
 import HeaderBar from '@cy/gql-components/HeaderBar.vue'
 import Spinner from '@cy/components/Spinner.vue'
 import CompareTestingTypes from './setup/CompareTestingTypes.vue'
-import MigrationWizard from './migration/MigrationWizard.vue'
 import ScaffoldedFiles from './setup/ScaffoldedFiles.vue'
-import MajorVersionWelcome from './migration/MajorVersionWelcome.vue'
-import { useI18n } from '@cy/i18n'
-import { computed, ref } from 'vue'
+import MajorVersionWelcome from './welcome/MajorVersionWelcome.vue'
+import { computed, ref, watch } from 'vue'
 import LaunchpadHeader from './setup/LaunchpadHeader.vue'
 import OpenBrowser from './setup/OpenBrowser.vue'
 import LoginConnectModals from '@cy/gql-components/LoginConnectModals.vue'
 import CloudViewerAndProject from '@cy/gql-components/CloudViewerAndProject.vue'
 import { usePromptManager } from '@cy/gql-components/composables/usePromptManager'
-import { MAJOR_VERSION_FOR_CONTENT } from '@packages/types'
+import { GET_MAJOR_VERSION_FOR_CONTENT } from '@packages/types'
 
 const { setMajorVersionWelcomeDismissed } = usePromptManager()
-const { t } = useI18n()
 const isTestingTypeModalOpen = ref(false)
 
 gql`
@@ -139,13 +124,11 @@ fragment MainLaunchpadQueryData on Query {
     isLoadingConfigFile
     isLoadingNodeEvents
     isFullConfigReady
-    needsLegacyConfigMigration
     currentTestingType
     activeBrowser {
       id
     }
   }
-  videoEmbedHtml
   isGlobalMode
   ...GlobalPage
   ...ScaffoldedFiles
@@ -167,22 +150,7 @@ mutation Main_ResetErrorsAndLoadConfig($id: ID!) {
 }
 `
 
-gql`
-mutation Main_LaunchProject ($testingType: TestingTypeEnum!)  {
-  launchOpenProject {
-    id
-  }
-  setProjectPreferencesInGlobalCache(testingType: $testingType) {
-    currentProject {
-      id
-      title
-    }
-  }
-}
-`
-
 const mutation = useMutation(Main_ResetErrorsAndLoadConfigDocument)
-const launchProject = useMutation(Main_LaunchProjectDocument)
 
 const resetErrorAndLoadConfig = (id: string) => {
   if (!mutation.fetching.value) {
@@ -191,21 +159,64 @@ const resetErrorAndLoadConfig = (id: string) => {
 }
 const query = useQuery({ query: MainLaunchpadQueryDocument })
 const currentProject = computed(() => query.data.value?.currentProject)
+const hasBaseError = computed(() => !!query.data.value?.baseError)
+
+const refetchDelaying = ref(false)
+const refetchCount = ref(0)
+
+/*
+ * Sometimes the config file has not been loaded by the DataContext's config manager by the
+ * time the MainLaunchpadQueryDocument request is sent off. The server ends up resolving
+ * the isLoadingConfigFile field as false. In certain situations, there can be a race between
+ * opening the project and the DataContext completing its retrieval of the configuration.
+ * In these cases, we want to retry the query until the config file is fully loaded.
+ *
+ * If the ProjectConfigIPC encounters an error while loading the config, it will update the
+ * baseError field via subscription, so there is not a limit set here on retries.
+ */
+
+watch(
+  [currentProject, query.fetching],
+  ([currentProject, isFetchingProject]) => {
+    const isLoadingConfig = currentProject?.isLoadingConfigFile
+
+    /*
+     * conditions for refetch are:
+     * - There is a current project, but Config file has not yet loaded
+     * - There are no pending (delayed) refetches, or fetches in progress
+     * - There is no baseError - we don't want to continue to refetch if
+     *   things have errored out.
+     */
+    if (
+      currentProject &&
+      isLoadingConfig &&
+      !isFetchingProject &&
+      !refetchDelaying.value &&
+      !hasBaseError.value
+    ) {
+      refetchDelaying.value = true
+      refetchCount.value++
+      setTimeout(() => {
+        refetchDelaying.value = false
+        if (
+          (currentProject && !isLoadingConfig) || hasBaseError.value
+        ) {
+          return
+        }
+
+        query.executeQuery({ requestPolicy: 'network-only' })
+      }, (refetchCount.value + 1) * 500)
+    }
+  },
+)
 
 function handleClearLandingPage () {
-  setMajorVersionWelcomeDismissed(MAJOR_VERSION_FOR_CONTENT)
-  const wasBrowserSetInCLI = query.data?.value?.localSettings.preferences?.wasBrowserSetInCLI
-
-  const currentTestingType = currentProject.value?.currentTestingType
-
-  if (wasBrowserSetInCLI && currentTestingType) {
-    launchProject.executeMutation({ testingType: currentTestingType })
-  }
+  setMajorVersionWelcomeDismissed(GET_MAJOR_VERSION_FOR_CONTENT())
 }
 
 const shouldShowWelcome = computed(() => {
   if (query.data.value) {
-    const hasThisVersionBeenSeen = query.data.value?.localSettings?.preferences?.majorVersionWelcomeDismissed?.[MAJOR_VERSION_FOR_CONTENT]
+    const hasThisVersionBeenSeen = query.data.value?.localSettings?.preferences?.majorVersionWelcomeDismissed?.[GET_MAJOR_VERSION_FOR_CONTENT()]
     const wasBrowserSetInCLI = query.data?.value?.localSettings.preferences?.wasBrowserSetInCLI
     const currentTestingType = currentProject.value?.currentTestingType
 
@@ -224,8 +235,6 @@ const shouldShowWelcome = computed(() => {
 
   return false
 })
-
-const videoHtml = computed(() => query.data.value?.videoEmbedHtml || '')
 
 </script>
 <style scoped lang="scss">

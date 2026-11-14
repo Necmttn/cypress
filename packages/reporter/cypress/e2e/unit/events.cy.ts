@@ -1,10 +1,11 @@
-import sinon, { SinonSpy, SinonStub } from 'sinon'
+import type { SinonSpy, SinonStub } from 'sinon'
+import sinon from 'sinon'
 
 import events from '../../../src/lib/events'
-import { AppState } from '../../../src/lib/app-state'
-import { RunnablesStore } from '../../../src/runnables/runnables-store'
-import { Scroller } from '../../../src/lib/scroller'
-import { StatsStore } from '../../../src/header/stats-store'
+import type { AppState } from '../../../src/lib/app-state'
+import type { RunnablesStore } from '../../../src/runnables/runnables-store'
+import type { Scroller } from '../../../src/lib/scroller'
+import type { StatsStore } from '../../../src/header/stats-store'
 
 interface RunnerStub {
   on: SinonSpy
@@ -26,6 +27,7 @@ type AppStateStub = AppState & {
   end: SinonSpy
   temporarilySetAutoScrolling: SinonSpy
   setStudioActive: SinonSpy
+  setStudioSingleTestActive: SinonSpy
   stop: SinonSpy
 }
 
@@ -38,6 +40,7 @@ const appStateStub = () => {
     end: sinon.spy(),
     temporarilySetAutoScrolling: sinon.spy(),
     setStudioActive: sinon.spy(),
+    setStudioSingleTestActive: sinon.spy(),
     stop: sinon.spy(),
   } as AppStateStub
 }
@@ -352,36 +355,30 @@ describe('events', () => {
     it('emits save:state on save:state', () => {
       appState.autoScrollingUserPref = false
       appState.isSpecsListOpen = true
+      appState.showFetchRequests = false
+      appState.codeEditorLineWrap = false
       events.emit('save:state')
       expect(runner.emit).to.have.been.calledWith('save:state', {
         autoScrollingEnabled: false,
         isSpecsListOpen: true,
+        showFetchRequests: false,
+        codeEditorLineWrap: false,
       })
     })
 
     it('emits studio:init:test with test id on studio:init:test', () => {
-      events.emit('studio:init:test', 'test id')
-      expect(runner.emit).to.have.been.calledWith('studio:init:test', 'test id')
+      events.emit('studio:init:test', { testId: 'test id' })
+      expect(runner.emit).to.have.been.calledWith('studio:init:test', { testId: 'test id' })
     })
 
-    it('emits studio:init:suite with test id on studio:init:suite', () => {
-      events.emit('studio:init:suite', 'suite id')
-      expect(runner.emit).to.have.been.calledWith('studio:init:suite', 'suite id')
-    })
-
-    it('emits studio:remove:command with command id on studio:remove:command', () => {
-      events.emit('studio:remove:command', 'command id')
-      expect(runner.emit).to.have.been.calledWith('studio:remove:command', 'command id')
+    it('emits studio:init:suite with suite id on studio:init:suite', () => {
+      events.emit('studio:init:suite', { suiteId: 'suite id' })
+      expect(runner.emit).to.have.been.calledWith('studio:init:suite', { suiteId: 'suite id', entrySource: undefined })
     })
 
     it('emits studio:cancel on studio:cancel', () => {
       events.emit('studio:cancel')
       expect(runner.emit).to.have.been.calledWith('studio:cancel')
-    })
-
-    it('emits studio:save on studio:save', () => {
-      events.emit('studio:save')
-      expect(runner.emit).to.have.been.calledWith('studio:save')
     })
   })
 })

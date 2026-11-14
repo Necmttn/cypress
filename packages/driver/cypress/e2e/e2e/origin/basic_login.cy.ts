@@ -18,10 +18,21 @@ describe('basic login', { browser: '!webkit' }, () => {
     // Scenario, Token based auth. Visit site, manually redirect to IDP hosted on secondary origin, login and redirect back to site.
     it('does not redirect', () => {
       cy.visit('/fixtures/auth/index.html') // Establishes primary origin
-      // Missing the call to go to idp.com
+      // Missing the built-in SP → IdP redirect: emulate it with the same mechanics as
+      // `login-idp` (a real click) so command stability lines up before `cy.origin`.
       cy.window().then((win) => {
-        win.location.href = 'http://www.idp.com:3500/fixtures/auth/idp.html'
+        const b = win.document.createElement('button')
+
+        b.dataset.cy = 'manual-idp'
+        b.textContent = 'Manual IdP'
+        b.onclick = () => {
+          win.location.href = `http://www.idp.com:3500/fixtures/auth/idp.html?redirect=${encodeURIComponent(win.location.href)}`
+        }
+
+        win.document.body.appendChild(b)
       })
+
+      cy.get('[data-cy="manual-idp"]').click()
 
       cy.origin('http://www.idp.com:3500', () => {
         cy.get('[data-cy="username"]').type('FJohnson')
@@ -53,7 +64,7 @@ describe('basic login', { browser: '!webkit' }, () => {
   describe('visit secondary first', () => {
     describe('How to determine primary origin', () => {
       // NOTE: Enable to set the top origin to foobar before running the next test.
-      it.skip('reset top', () => {
+      it.skip('reset top before logging in with primary set via baseurl', () => {
         cy.visit('http://www.foobar.com:3500/fixtures/auth/index.html')
       })
 
@@ -71,7 +82,7 @@ describe('basic login', { browser: '!webkit' }, () => {
         .should('equal', 'Welcome FJohnson')
       })
 
-      it('reset top', () => {
+      it('reset top before logging in with primary set via visit', () => {
         cy.visit('http://www.foobar.com:3500/fixtures/auth/index.html')
       })
 

@@ -6,7 +6,7 @@ const manyOptions: Readonly<Option[]> = [
   {
     name: 'Vue.js',
     id: 'vue',
-    type: 'vue2',
+    type: 'vue',
     isDetected: true,
     supportStatus: 'full',
   },
@@ -47,7 +47,7 @@ describe('<SelectFrameworkOrBundler />', () => {
           {
             name: 'VueJs',
             id: 'vue',
-            type: 'vueclivue3',
+            type: 'vite',
             supportStatus: 'full',
           },
         ]}
@@ -89,7 +89,7 @@ describe('<SelectFrameworkOrBundler />', () => {
   })
 
   it('should select the clicked item', () => {
-    let val = ref('react')
+    const val = ref('react')
 
     cy.mount(() => (
       <SelectFrameworkOrBundler
@@ -97,8 +97,7 @@ describe('<SelectFrameworkOrBundler />', () => {
         selectorType="framework"
         options={manyOptions}
         value={val.value}
-        // @ts-ignore
-        onSelectFramework={(newVal: FrontendFramework) => {
+        onSelectFramework={(newVal: string) => {
           val.value = newVal
         }}
       />
@@ -113,7 +112,7 @@ describe('<SelectFrameworkOrBundler />', () => {
     cy.mount(() => (
       <div>
         <div>click out</div>
-        <SelectFrameworkOrBundler selectorType="framework" label="Front-end Framework" options={manyOptions} value="vue2" />
+        <SelectFrameworkOrBundler selectorType="framework" label="Front-end Framework" options={manyOptions} value="vue" />
       </div>
     ))
 

@@ -13,7 +13,11 @@ interface ErrorObj {
   get(type: string, ...args: any[]): Error
 }
 
-export async function insertValuesInConfigFile (file: string, obj: {}, errors: ErrorObj) {
+function toLiteral (value: boolean | number | string) {
+  return typeof value === 'string' ? `'${value.replace(/[\\']/g, '\\$&').replace(/\n/g, '\\n').replace(/\r/g, '\\r')}'` : stringify(value)
+}
+
+export async function insertValuesInConfigFile (file: string, obj: Record<string, any>, errors: ErrorObj) {
   const fileContents = await fs.readFile(file, { encoding: 'utf8' })
 
   const transformedFileContents = await insertValueInJSString(fileContents, obj, errors)
@@ -34,7 +38,7 @@ export async function insertValueInJSString (fileContents: string, obj: Record<s
         && nodePath.node.callee.type === 'Identifier') {
       const functionName = nodePath.node.callee.name
 
-      if (isDefineConfigFunction(ast, functionName)) {
+      if (isDefineConfigFunction(ast as File, functionName)) {
         return handleExport(nodePath.get('arguments', 0))
       }
     }
@@ -95,7 +99,7 @@ export async function insertValueInJSString (fileContents: string, obj: Record<s
   return resultCode + fileContents.slice(nextStartingIndex)
 }
 
-export function isDefineConfigFunction (ast: File, functionName: string): boolean {
+function isDefineConfigFunction (ast: File, functionName: string): boolean {
   let value = false
 
   visit(ast, {
@@ -161,7 +165,7 @@ function setRootKeysSplicers (
     })
   })
 
-  debug('keys to update %O', keysToUpdate)
+  debug('keys to update %o', keysToUpdate)
 
   keysToUpdate.forEach(
     (key) => {
@@ -175,10 +179,10 @@ function setRootKeysSplicers (
 
   const keysToInsert = objKeys.filter((key) => !keysToUpdate.includes(key))
 
-  debug('keys to instert %O', keysToInsert)
+  debug('keys to instert %o', keysToInsert)
 
   if (keysToInsert.length) {
-    const valuesInserted = `\n${lineStartSpacer}${ keysToInsert.map((key) => `${key}: ${stringify(obj[key])},`).join(`\n${lineStartSpacer}`)}`
+    const valuesInserted = `\n${lineStartSpacer}${ keysToInsert.map((key) => `${key}: ${toLiteral(obj[key])},`).join(`\n${lineStartSpacer}`)}`
 
     splicers.push({
       start: objectLiteralStartIndex,
@@ -200,7 +204,7 @@ function setSubKeysSplicers (
 
   const keysToUpdateWithObjects: string[] = []
 
-  const objSubkeys = Object.keys(obj).filter((key) => typeof obj[key] === 'object').reduce((acc: Array<{parent: string, subkey: string}>, key) => {
+  const objSubkeys = Object.keys(obj).filter((key) => typeof obj[key] === 'object').reduce((acc: Array<{ parent: string, subkey: string }>, key) => {
     keysToUpdateWithObjects.push(key)
     Object.entries(obj[key]).forEach(([subkey, value]) => {
       if (['boolean', 'number', 'string'].includes(typeof value)) {
@@ -232,7 +236,7 @@ function setSubKeysSplicers (
   for (const key in keysToInsertForSubKeys) {
     subvaluesInserted += `\n${parentLineStartSpacer}${key}: {`
     keysToInsertForSubKeys[key]?.forEach((subkey) => {
-      subvaluesInserted += `\n${parentLineStartSpacer}${lineStartSpacer}${subkey}: ${stringify(obj[key][subkey])},`
+      subvaluesInserted += `\n${parentLineStartSpacer}${lineStartSpacer}${subkey}: ${toLiteral(obj[key][subkey])},`
     })
 
     subvaluesInserted += `\n${parentLineStartSpacer}},`
@@ -271,7 +275,7 @@ function setSplicerToUpdateProperty (splicers: Splicer[],
     splicers.push({
       start: (propertyToUpdate.value as any).start,
       end: (propertyToUpdate.value as any).end,
-      replaceString: stringify(updatedValue),
+      replaceString: toLiteral(updatedValue),
     })
   } else {
     debug('error', propertyToUpdate?.value)
@@ -294,7 +298,7 @@ function isUndefinedOrNull (value: NodePath['node']): value is namedTypes.Identi
   return value.type === 'Identifier' && ['undefined', 'null'].includes(value.name)
 }
 
-interface Splicer{
+interface Splicer {
   start: number
   end: number
   replaceString: string

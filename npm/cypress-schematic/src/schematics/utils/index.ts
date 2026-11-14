@@ -1,24 +1,16 @@
 import { readdirSync } from 'fs'
 import { resolve } from 'path'
 import { getSystemPath, normalize, strings } from '@angular-devkit/core'
-import { Tree, apply, url, applyTemplates, move, Rule } from '@angular-devkit/schematics'
-import { get } from 'http'
-import { Schema } from '../ng-generate/cypress-test/schema'
+import type { Tree, Rule } from '@angular-devkit/schematics'
+import { apply, url, applyTemplates, move } from '@angular-devkit/schematics'
+import { get } from 'https'
+import type { Schema } from '../ng-generate/cypress-test/schema'
 
-import { getPackageJsonDependency } from './dependencies'
 import { JSONFile } from './jsonFile'
 
 export interface NodePackage {
   name: string
   version: string
-}
-
-export function getAngularVersion (tree: Tree): number {
-  const packageNode = getPackageJsonDependency(tree, '@angular/core')
-
-  const version = packageNode && packageNode.version.split('').find((char) => !!parseInt(char, 10))
-
-  return version ? +version : 0
 }
 
 /**
@@ -30,7 +22,7 @@ export function getLatestNodeVersion (packageName: string): Promise<NodePackage>
   const DEFAULT_VERSION = 'latest'
 
   return new Promise((resolve) => {
-    return get(`http://registry.npmjs.org/${packageName}`, (res) => {
+    return get(`https://registry.npmjs.org/${packageName}`, (res) => {
       let rawData = ''
 
       res.on('data', (chunk) => (rawData += chunk))
@@ -52,7 +44,7 @@ export function getLatestNodeVersion (packageName: string): Promise<NodePackage>
   }
 }
 
-const ctSpecContent = ({ componentName, componentFilename }: {componentName: string, componentFilename: string}): string => {
+const ctSpecContent = ({ componentName, componentFilename }: { componentName: string, componentFilename: string }): string => {
   return `import { ${componentName} } from './${componentFilename}.component'\n
   describe('${componentName}', () => {
     it('should mount', () => {
@@ -62,7 +54,7 @@ const ctSpecContent = ({ componentName, componentFilename }: {componentName: str
   `
 }
 
-function generateCTSpec ({ tree, appPath, component }: { tree: Tree, appPath: string, component: any}): Rule | void {
+function generateCTSpec ({ tree, appPath, component }: { tree: Tree, appPath: string, component: any }): Rule | void {
   const buffer = tree.read(`${appPath}/${component['name']}`)
   const componentString = buffer?.toString()
   const componentMatch = componentString?.match(/(?<=class )\S+/g)
@@ -74,16 +66,13 @@ function generateCTSpec ({ tree, appPath, component }: { tree: Tree, appPath: st
   return tree.create(`${appPath}/${componentFilename}.component.cy.ts`, ctSpecContent({ componentName, componentFilename }))
 }
 
-export function getDirectoriesAndCreateSpecs ({ appPath, tree }: { appPath: string, tree: Tree}) {
-  let components = []
-  let directories = []
-
+export function getDirectoriesAndCreateSpecs ({ appPath, tree }: { appPath: string, tree: Tree }) {
   const projectPath = resolve(getSystemPath(normalize('')))
   const contents = readdirSync(resolve(`${projectPath}/${appPath}`), { withFileTypes: true })
 
   if (contents) {
-    components = contents.filter((file) => file['name'].endsWith(`component.ts`))
-    directories = contents.filter((file) => file.isDirectory())
+    const components = contents.filter((file) => file['name'].endsWith(`component.ts`))
+    const directories = contents.filter((file) => file.isDirectory())
 
     if (components) {
       components.map((component) => {
@@ -99,7 +88,7 @@ export function getDirectoriesAndCreateSpecs ({ appPath, tree }: { appPath: stri
   }
 }
 
-export function createTemplate ({ templatePath, options }: {templatePath: string, options: Schema}): any {
+export function createTemplate ({ templatePath, options }: { templatePath: string, options: Schema }): any {
   return apply(url(templatePath), [
     applyTemplates({
       classify: strings.classify,

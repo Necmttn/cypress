@@ -1,27 +1,22 @@
-import chai from 'chai'
+import { vi, describe, it, expect } from 'vitest'
 import path from 'path'
-import snapshot from 'snap-shot-it'
-import sinon from 'sinon'
-import sinonChai from 'sinon-chai'
-
+import errors from '@packages/errors'
 import * as configUtil from '../src/index'
-
-chai.use(sinonChai)
-const { expect } = chai
+import { breakingOptions, breakingRootOptions, testingTypeBreakingOptions } from '../src/options'
 
 describe('config/src/index', () => {
   describe('.allowed', () => {
     it('returns filter config only containing allowed keys', () => {
       const keys = configUtil.allowed({
         'baseUrl': 'https://url.com',
-        'blacklistHosts': 'breaking option',
+        'videoUploadOnPasses': true,
         'devServerPublicPathRoute': 'internal key',
         'random': 'not a config option',
       })
 
-      expect(keys).to.deep.eq({
+      expect(keys).toEqual({
         'baseUrl': 'https://url.com',
-        'blacklistHosts': 'breaking option',
+        'videoUploadOnPasses': true,
       })
     })
   })
@@ -30,8 +25,8 @@ describe('config/src/index', () => {
     it('returns list of breaking config keys', () => {
       const breakingKeys = configUtil.getBreakingKeys()
 
-      expect(breakingKeys).to.include('blacklistHosts')
-      snapshot(breakingKeys)
+      expect(breakingKeys).to.include('videoUploadOnPasses')
+      expect(breakingKeys).toMatchSnapshot()
     })
   })
 
@@ -39,49 +34,49 @@ describe('config/src/index', () => {
     it('returns list of public config keys', () => {
       const defaultValues = configUtil.getDefaultValues()
 
-      expect(defaultValues).to.deep.include({
+      expect(defaultValues).toEqual(expect.objectContaining({
         defaultCommandTimeout: 4000,
         scrollBehavior: 'top',
         watchForFileChanges: true,
-      })
+      }))
 
-      expect(defaultValues.env).to.deep.eq({})
+      expect(defaultValues.env).toEqual({})
       const cypressBinaryRoot = defaultValues.cypressBinaryRoot.split(path.sep).pop()
 
-      expect(cypressBinaryRoot).to.eq('cypress')
+      expect(cypressBinaryRoot).toEqual('cypress')
       defaultValues.cypressBinaryRoot = `/root/cypress`
 
       // remove these since they are different depending on your machine
       ;['platform', 'arch', 'version'].forEach((x) => {
-        expect(defaultValues[x]).to.exist
+        expect(defaultValues[x]).toEqual(expect.anything())
         delete defaultValues[x]
       })
 
-      snapshot(defaultValues)
+      expect(defaultValues).toMatchSnapshot()
     })
 
     it('returns list of public config keys for selected testing type', () => {
       const defaultValues = configUtil.getDefaultValues({ testingType: 'e2e' })
 
-      expect(defaultValues).to.deep.include({
+      expect(defaultValues).toEqual(expect.objectContaining({
         defaultCommandTimeout: 4000,
         scrollBehavior: 'top',
         watchForFileChanges: true,
-      })
+      }))
 
-      expect(defaultValues.env).to.deep.eq({})
+      expect(defaultValues.env).toEqual({})
       const cypressBinaryRoot = defaultValues.cypressBinaryRoot.split(path.sep).pop()
 
-      expect(cypressBinaryRoot).to.eq('cypress')
+      expect(cypressBinaryRoot).toEqual('cypress')
       defaultValues.cypressBinaryRoot = `/root/cypress`
 
       // remove these since they are different depending on your machine
       ;['platform', 'arch', 'version'].forEach((x) => {
-        expect(defaultValues[x]).to.exist
+        expect(defaultValues[x]).toEqual(expect.anything())
         delete defaultValues[x]
       })
 
-      snapshot(defaultValues)
+      expect(defaultValues).toMatchSnapshot()
     })
   })
 
@@ -89,32 +84,51 @@ describe('config/src/index', () => {
     it('returns list of public config keys', () => {
       const publicConfigKeys = configUtil.getPublicConfigKeys()
 
-      expect(publicConfigKeys).to.include('blockHosts')
-      expect(publicConfigKeys).to.not.include('devServerPublicPathRoute')
-      snapshot(publicConfigKeys)
+      expect(publicConfigKeys).toContain('blockHosts')
+      expect(publicConfigKeys).not.toContain('devServerPublicPathRoute')
+      expect(publicConfigKeys).toMatchSnapshot()
+    })
+  })
+
+  describe('.getCloudRecordingConfigKeys', () => {
+    it('includes every public config key plus component recording extras', () => {
+      const cloudKeys = configUtil.getCloudRecordingConfigKeys()
+      const publicKeys = configUtil.getPublicConfigKeys()
+
+      for (const key of publicKeys) {
+        expect(cloudKeys).toContain(key)
+      }
+
+      expect(cloudKeys).toContain('devServer')
+      expect(cloudKeys).toContain('devServerConfig')
+      expect(cloudKeys).toContain('indexHtmlFile')
+    })
+
+    it('returns the same array instance on each call', () => {
+      expect(configUtil.getCloudRecordingConfigKeys()).toBe(configUtil.getCloudRecordingConfigKeys())
     })
   })
 
   describe('.matchesConfigKey', () => {
     it('returns normalized key when config key has a default value', () => {
-      let normalizedKey = configUtil.matchesConfigKey('EXEC_TIMEOUT')
+      let normalizedKey = configUtil.matchesConfigKey('TASK_TIMEOUT')
 
-      expect(normalizedKey).to.eq('execTimeout')
+      expect(normalizedKey).toEqual('taskTimeout')
 
       normalizedKey = configUtil.matchesConfigKey('Base-url')
-      expect(normalizedKey).to.eq('baseUrl')
+      expect(normalizedKey).toEqual('baseUrl')
     })
 
     it('returns nothing when config key does not has a default value', () => {
-      let normalizedKey = configUtil.matchesConfigKey('random')
+      const normalizedKey = configUtil.matchesConfigKey('random')
 
-      expect(normalizedKey).to.be.undefined
+      expect(normalizedKey).toBeUndefined()
     })
   })
 
   describe('.validate', () => {
     it('validates config', () => {
-      const errorFn = sinon.spy()
+      const errorFn = vi.fn()
       const config = {
         e2e: {
           testIsolation: false,
@@ -127,61 +141,131 @@ describe('config/src/index', () => {
       }
 
       configUtil.validate(config, errorFn, null)
-      expect(errorFn).to.have.callCount(0)
+      expect(errorFn).toHaveBeenCalledTimes(0)
 
       configUtil.validate(config, errorFn, 'e2e')
-      expect(errorFn).to.have.callCount(0)
+      expect(errorFn).toHaveBeenCalledTimes(0)
 
       configUtil.validate(config, errorFn, 'component')
-      expect(errorFn).to.have.callCount(0)
+      expect(errorFn).toHaveBeenCalledTimes(0)
+    })
+
+    it('calls error callback if manageBrowserMemory is not a boolean', () => {
+      const errorFn = vi.fn()
+
+      configUtil.validate({
+        manageBrowserMemory: 'true',
+      }, errorFn, 'e2e')
+
+      expect(errorFn).toHaveBeenCalledWith(expect.objectContaining({ key: 'manageBrowserMemory', type: 'a boolean' }))
     })
 
     it('calls error callback if config is invalid', () => {
-      const errorFn = sinon.spy()
+      const errorFn = vi.fn()
 
       configUtil.validate({
         'baseUrl': ' ',
       }, errorFn, 'e2e')
 
-      expect(errorFn).to.have.been.calledWithMatch({ key: 'baseUrl' })
-      expect(errorFn).to.have.been.calledWithMatch({ type: 'a fully qualified URL (starting with `http://` or `https://`)' })
+      expect(errorFn).toHaveBeenCalledWith(expect.objectContaining({ key: 'baseUrl' }))
+      expect(errorFn).toHaveBeenCalledWith(expect.objectContaining({ type: 'a fully qualified URL (starting with `http://` or `https://`)' }))
     })
   })
 
   describe('.validateNoBreakingConfig', () => {
     it('calls warning callback if config contains breaking option that warns', () => {
-      const warningFn = sinon.spy()
-      const errorFn = sinon.spy()
+      const warningFn = vi.fn()
+      const errorFn = vi.fn()
 
       configUtil.validateNoBreakingConfig({
-        'experimentalNetworkStubbing': 'should break',
+        'experimentalSessionAndOrigin': 'should break',
         configFile: 'config.js',
       }, warningFn, errorFn, 'e2e')
 
-      expect(warningFn).to.have.been.calledOnceWith('EXPERIMENTAL_NETWORK_STUBBING_REMOVED', {
-        name: 'experimentalNetworkStubbing',
+      expect(warningFn).toHaveBeenCalledExactlyOnceWith('EXPERIMENTAL_SESSION_AND_ORIGIN_REMOVED', {
+        name: 'experimentalSessionAndOrigin',
         newName: undefined,
         value: undefined,
         testingType: 'e2e',
         configFile: 'config.js',
       })
 
-      expect(errorFn).to.have.callCount(0)
+      expect(errorFn).toHaveBeenCalledTimes(0)
     })
 
-    it('calls error callback if config contains breaking option that should throw an error', () => {
-      const warningFn = sinon.spy()
-      const errorFn = sinon.spy()
+    it('calls warning callback if config contains experimentalPromptCommand', () => {
+      const warningFn = vi.fn()
+      const errorFn = vi.fn()
 
       configUtil.validateNoBreakingConfig({
-        'blacklistHosts': 'should break',
+        experimentalPromptCommand: true,
         configFile: 'config.js',
       }, warningFn, errorFn, 'e2e')
 
-      expect(warningFn).to.have.been.callCount(0)
-      expect(errorFn).to.have.been.calledOnceWith('RENAMED_CONFIG_OPTION', {
-        name: 'blacklistHosts',
-        newName: 'blockHosts',
+      expect(warningFn).toHaveBeenCalledExactlyOnceWith('EXPERIMENTAL_PROMPT_COMMAND_REMOVED', {
+        name: 'experimentalPromptCommand',
+        newName: undefined,
+        value: undefined,
+        testingType: 'e2e',
+        configFile: 'config.js',
+      })
+
+      expect(errorFn).toHaveBeenCalledTimes(0)
+    })
+
+    it('calls warning callback if config contains experimentalSourceRewriting', () => {
+      const warningFn = vi.fn()
+      const errorFn = vi.fn()
+
+      configUtil.validateNoBreakingConfig({
+        experimentalSourceRewriting: true,
+        configFile: 'config.js',
+      }, warningFn, errorFn, 'e2e')
+
+      expect(warningFn).toHaveBeenCalledExactlyOnceWith('EXPERIMENTAL_SOURCE_REWRITING_REMOVED', {
+        name: 'experimentalSourceRewriting',
+        newName: undefined,
+        value: undefined,
+        testingType: 'e2e',
+        configFile: 'config.js',
+      })
+
+      expect(errorFn).toHaveBeenCalledTimes(0)
+    })
+
+    it('calls warning callback if config contains experimentalMemoryManagement', () => {
+      const warningFn = vi.fn()
+      const errorFn = vi.fn()
+
+      configUtil.validateNoBreakingConfig({
+        experimentalMemoryManagement: false,
+        configFile: 'config.js',
+      }, warningFn, errorFn, 'e2e')
+
+      expect(warningFn).toHaveBeenCalledExactlyOnceWith('EXPERIMENTAL_MEMORY_MANAGEMENT_REMOVED', {
+        name: 'experimentalMemoryManagement',
+        newName: undefined,
+        value: undefined,
+        testingType: 'e2e',
+        configFile: 'config.js',
+      })
+
+      expect(errorFn).toHaveBeenCalledTimes(0)
+    })
+
+    it('calls error callback if config contains breaking option that should throw an error', () => {
+      const warningFn = vi.fn()
+      const errorFn = vi.fn()
+
+      configUtil.validateNoBreakingConfig({
+        experimentalSkipDomainInjection: true,
+        configFile: 'config.js',
+      }, warningFn, errorFn, 'e2e')
+
+      expect(warningFn).toHaveBeenCalledTimes(0)
+      expect(errorFn).toHaveBeenCalledExactlyOnceWith('EXPERIMENTAL_SKIP_DOMAIN_INJECTION_REMOVED', {
+        name: 'experimentalSkipDomainInjection',
+        newName: undefined,
         value: undefined,
         testingType: 'e2e',
         configFile: 'config.js',
@@ -189,67 +273,155 @@ describe('config/src/index', () => {
     })
   })
 
+  describe('breaking option warnings', () => {
+    const warningOptions = [
+      ...breakingOptions,
+      ...breakingRootOptions,
+      ...Object.values(testingTypeBreakingOptions).flat(),
+    ].filter((option) => option.isWarning)
+
+    // a single run can print several of these one after another, so each has to
+    // end with a blank line or the messages run together in the terminal
+    warningOptions.forEach(({ errorKey, name, newName }) => {
+      it(`${errorKey} ends with a blank line`, () => {
+        const err = errors.get(errorKey, {
+          name,
+          newName,
+          value: undefined,
+          configFile: 'cypress.config.js',
+          testingType: 'e2e',
+        })
+
+        expect(err.message).toMatch(/\n$/)
+      })
+    })
+  })
+
   describe('.validateOverridableAtRunTime', () => {
     it('calls onError handler if configuration override level=never', () => {
-      const errorFn = sinon.spy()
+      const errorFn = vi.fn()
 
-      configUtil.validateOverridableAtRunTime({ chromeWebSecurity: false }, false, errorFn)
+      configUtil.validateOverridableAtRunTime({ chromeWebSecurity: false }, undefined, errorFn)
 
-      expect(errorFn).to.have.callCount(1)
-      expect(errorFn).to.have.been.calledWithMatch({
+      expect(errorFn).toHaveBeenCalledTimes(1)
+      expect(errorFn).toHaveBeenCalledWith(expect.objectContaining({
         invalidConfigKey: 'chromeWebSecurity',
         supportedOverrideLevel: 'never',
-      })
+      }))
     })
 
     describe('configuration override level=suite', () => {
       it('does not calls onError handler if validating level is suite', () => {
-        const errorFn = sinon.spy()
+        const errorFn = vi.fn()
 
-        const isSuiteOverride = true
+        configUtil.validateOverridableAtRunTime({ testIsolation: true }, 'suite', errorFn)
 
-        configUtil.validateOverridableAtRunTime({ testIsolation: true }, isSuiteOverride, errorFn)
-
-        expect(errorFn).to.have.callCount(0)
+        expect(errorFn).toHaveBeenCalledTimes(0)
       })
 
-      it('calls onError handler if validating level is not suite', () => {
-        const errorFn = sinon.spy()
+      it('calls onError handler if validating level is test', () => {
+        const errorFn = vi.fn()
 
-        const isSuiteOverride = false
+        configUtil.validateOverridableAtRunTime({ testIsolation: 'off' }, 'test', errorFn)
 
-        configUtil.validateOverridableAtRunTime({ testIsolation: 'off' }, isSuiteOverride, errorFn)
-
-        expect(errorFn).to.have.callCount(1)
-        expect(errorFn).to.have.been.calledWithMatch({
+        expect(errorFn).toHaveBeenCalledTimes(1)
+        expect(errorFn).toHaveBeenCalledWith(expect.objectContaining({
           invalidConfigKey: 'testIsolation',
           supportedOverrideLevel: 'suite',
-        })
+        }))
+      })
+
+      it('calls onError handler if validating level is run-time', () => {
+        const errorFn = vi.fn()
+
+        configUtil.validateOverridableAtRunTime({ testIsolation: 'off' }, 'runtime', errorFn)
+
+        expect(errorFn).toHaveBeenCalledTimes(1)
+        expect(errorFn).toHaveBeenCalledWith(expect.objectContaining({
+          invalidConfigKey: 'testIsolation',
+          supportedOverrideLevel: 'suite',
+        }))
+      })
+    })
+
+    describe('configuration override level=suiteOrTest', () => {
+      it('does not call onError handler if validating level is suite', () => {
+        const errorFn = vi.fn()
+
+        configUtil.validateOverridableAtRunTime({ viewportWidth: 200, blockHosts: 'example.com' }, 'suite', errorFn)
+
+        expect(errorFn).toHaveBeenCalledTimes(0)
+      })
+
+      it('does not call onError handler if validating level is test', () => {
+        const errorFn = vi.fn()
+
+        configUtil.validateOverridableAtRunTime({ viewportHeight: 100, blockHosts: 'example.com' }, 'test', errorFn)
+
+        expect(errorFn).toHaveBeenCalledTimes(0)
+      })
+
+      it('does not call onError handler outside test execution (e.g. file load)', () => {
+        const errorFn = vi.fn()
+
+        configUtil.validateOverridableAtRunTime({ viewportWidth: 200, viewportHeight: 100, blockHosts: 'example.com' }, undefined, errorFn)
+
+        expect(errorFn).toHaveBeenCalledTimes(0)
+      })
+
+      it('calls onError handler if validating level is run-time', () => {
+        const errorFn = vi.fn()
+
+        configUtil.validateOverridableAtRunTime({ viewportWidth: 200, viewportHeight: 100, blockHosts: 'example.com' }, 'runtime', errorFn)
+
+        expect(errorFn).toHaveBeenCalledTimes(3)
+        expect(errorFn).toHaveBeenCalledWith(expect.objectContaining({
+          invalidConfigKey: 'viewportWidth',
+          supportedOverrideLevel: 'suiteOrTest',
+        }))
+
+        expect(errorFn).toHaveBeenCalledWith(expect.objectContaining({
+          invalidConfigKey: 'viewportHeight',
+          supportedOverrideLevel: 'suiteOrTest',
+        }))
+
+        expect(errorFn).toHaveBeenCalledWith(expect.objectContaining({
+          invalidConfigKey: 'blockHosts',
+          supportedOverrideLevel: 'suiteOrTest',
+        }))
       })
     })
 
     it(`does not call onErr if config override level=any`, () => {
-      const errorFn = sinon.spy()
+      const errorFn = vi.fn()
 
-      configUtil.validateOverridableAtRunTime({ requestTimeout: 1000 }, false, errorFn)
+      configUtil.validateOverridableAtRunTime({ requestTimeout: 1000 }, undefined, errorFn)
 
-      expect(errorFn).to.have.callCount(0)
+      expect(errorFn).toHaveBeenCalledTimes(0)
     })
 
     it('does not call onErr if configuration is a non-Cypress config option', () => {
-      const errorFn = sinon.spy()
+      const errorFn = vi.fn()
 
-      configUtil.validateOverridableAtRunTime({ foo: 'bar' }, true, errorFn)
+      configUtil.validateOverridableAtRunTime({ foo: 'bar' }, 'suite', errorFn)
 
-      expect(errorFn).to.have.callCount(0)
+      expect(errorFn).toHaveBeenCalledTimes(0)
     })
   })
 
   describe('.validateNeedToRestartOnChange', () => {
     it('returns the need to restart if given key has changed', () => {
-      const result = configUtil.validateNeedToRestartOnChange({ blockHosts: [] }, { blockHosts: ['https://example.com'] })
+      expect(configUtil.validateNeedToRestartOnChange({ blockHosts: [] }, { blockHosts: ['https://example.com'] })).toEqual({
+        server: true,
+        browser: false,
+      })
 
-      expect(result).to.eql({
+      expect(configUtil.validateNeedToRestartOnChange({ injectDocumentDomain: true }, {})).toEqual({
+        server: true,
+        browser: false,
+      })
+
+      expect(configUtil.validateNeedToRestartOnChange({ env: { TEST_VAR: 'test' } }, {})).toEqual({
         server: true,
         browser: false,
       })

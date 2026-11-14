@@ -11,13 +11,13 @@ import { OTLPTraceExporter as OTLPTraceExporterHttp } from '@opentelemetry/expor
 
 import { sendWithHttp } from '@opentelemetry/otlp-exporter-base'
 
-export interface OTLPExporterNodeConfigBasePlusEncryption extends OTLPExporterNodeConfigBase {
+interface OTLPExporterNodeConfigBasePlusEncryption extends OTLPExporterNodeConfigBase {
   encryption?: {
     encryptRequest: (requestOptions: {
       url: string
       method: string
       body: string
-    }) => (Promise<{jwe: string}>)
+    }) => (Promise<{ jwe: string }>)
   }
 }
 
@@ -30,10 +30,11 @@ export class OTLPTraceExporter extends OTLPTraceExporterHttp {
     onSuccess: () => void
     onError: (error: OTLPExporterError) => void
   }[]
+
   enc: OTLPExporterNodeConfigBasePlusEncryption['encryption'] | undefined
   projectId?: string
   recordKey?: string
-  requirementsToExport: 'met'| 'unmet' | 'unknown'
+  requirementsToExport: 'met' | 'unmet' | 'unknown'
   sendWithHttp: typeof sendWithHttp
   constructor (config: OTLPExporterNodeConfigBasePlusEncryption = {}) {
     super(config)
@@ -140,6 +141,8 @@ export class OTLPTraceExporter extends OTLPTraceExporterHttp {
 
     if (this.requirementsToExport === 'unmet') {
       onError(new Error('Spans cannot be sent, exporter has unmet requirements, either project id or record key are undefined.'))
+
+      return
     }
 
     let serviceRequest: string

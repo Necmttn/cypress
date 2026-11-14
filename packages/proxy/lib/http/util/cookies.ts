@@ -1,11 +1,11 @@
 import _ from 'lodash'
 import type Debug from 'debug'
 import { URL } from 'url'
-import { cors } from '@packages/network'
-import { urlOriginsMatch, urlSameSiteMatch } from '@packages/network/lib/cors'
-import { SerializableAutomationCookie, Cookie, CookieJar, toughCookieToAutomationCookie } from '@packages/server/lib/util/cookies'
-import type { RequestCredentialLevel } from '../../types'
-import type { ResourceType } from 'cypress/types/net-stubbing'
+import type { SerializableAutomationCookie, Cookie } from '@packages/server/lib/automation/cookie/jar'
+import { CookieJar, toughCookieToAutomationCookie } from '@packages/server/lib/automation/cookie/jar'
+import type { RequestCredentialLevel, ResourceType } from '../../resourceTypeAndCredentialManager'
+
+import { urlOriginsMatch, urlSameSiteMatch } from '@packages/network-tools'
 
 type SiteContext = 'same-origin' | 'same-site' | 'cross-site'
 
@@ -31,7 +31,12 @@ interface RequestDetails {
  * @returns {boolean}
  */
 export const shouldAttachAndSetCookies = (requestUrl: string, AUTUrl: string | undefined, resourceType?: ResourceType, credentialLevel?: RequestCredentialLevel, isAutFrame?: boolean): boolean => {
-  if (!AUTUrl) return false
+  // no AUT URL means this is the first visit. cookies set by that AUT-frame document
+  // response must still land in the jar so they can be re-attached after a later
+  // cross-origin redirect back to the primary origin
+  if (!AUTUrl) {
+    return !!isAutFrame
+  }
 
   const siteContext = calculateSiteContext(requestUrl, AUTUrl)
 
@@ -122,7 +127,7 @@ export const getSameSiteContext = (autUrl: string | undefined, requestUrl: strin
   // if there's no AUT URL, it's a request for the first URL visited, or if
   // the request origin is considered the same site as the AUT origin;
   // both indicate that it's not a cross-site request
-  if (!autUrl || cors.urlSameSiteMatch(autUrl, requestUrl)) {
+  if (!autUrl || urlSameSiteMatch(autUrl, requestUrl)) {
     return 'strict'
   }
 

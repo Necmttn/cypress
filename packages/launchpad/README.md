@@ -9,8 +9,7 @@ It replaces the original electron app, `desktop-gui`.
 - Allow users to log in through Cypress Cloud
 - Onboarding for new users (configure Component Testing dev server, install dependencies, etc)
 - Select testing mode (E2E, Component)
-- Provide UI to perform automated migration steps (for example migrating `cypress.json` to `cypress.config.js` for projects upgrading from 9.x or below)
-- Provide a dismissable Welcome Screen for every major release of Cypress
+- Provide a dismissible Welcome Screen for every major release of Cypress
 
 It is using the following technologies:
 
@@ -23,13 +22,13 @@ It is using the following technologies:
 
 More details on the front-end setup are found in the `@packages/frontend-shared` [package README](../frontend-shared/README.md).
 
-Cypress' entire back-end is powered by the `@packages/server` package. Launchpad interfaces with it via a GraphQL layer, found in `@packages/graphql`.
+Cypress' entire back-end is powered by the `@packages/server` package. Launchpad interfaces with it via a GraphQL layer, found in `@packages/data-context/graphql`.
 
 [Here is a short tutorial](https://github.com/lmiller1990/vue-3-urql-example) building a simple app using the same technologies we are using for launchpad. There are a lot of moving pieces; understanding how everything works will help you contribute to Launchpad.
 
 ## Major Version Welcome Content
 
-The content is bundled with the launchpad and at the time of writing this, it lives in `src/migration/MajorVersionWelcome.vue`. Shipping it as part of the app means it is always available upon release and it will always work offline. Guidelines for the management of the content itself are documented internally in our `prod-eng-docs`, but the implementation is documented here.
+The content is bundled with the launchpad and at the time of writing this, it lives in `src/welcome/MajorVersionWelcome.vue`. Shipping it as part of the app means it is always available upon release and it will always work offline. Guidelines for the management of the content itself are documented internally in our `prod-eng-docs`, but the implementation is documented here.
 
 A constant named `MAJOR_VERSION_FOR_CONTENT` defines which major version the content is associated with for the purposes of recording user dismissal in persisted state. This needs to be bumped to match the major version that will be released, since that value is the key that records the dismissal.
 

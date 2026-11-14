@@ -1,5 +1,6 @@
 import _ from 'lodash'
-import { handleInvalidEventTarget, handleInvalidAnchorTarget, GuardedEvent, GuardedAnchorEvent } from './top_attr_guards'
+import type { GuardedEvent, GuardedAnchorEvent } from './top_attr_guards'
+import { handleInvalidEventTarget, handleInvalidAnchorTarget } from './top_attr_guards'
 
 const HISTORY_ATTRS = 'pushState replaceState'.split(' ')
 const HISTORY_NAV_ATTRS = 'go back forward'.split(' ')
@@ -13,7 +14,7 @@ type BoundEvent<K extends keyof WindowEventMap> = [
   win: Window,
   event: keyof WindowEventMap,
   fn: BoundEventHandler<K>,
-  capture?: boolean
+  capture?: boolean,
 ]
 
 let events: BoundEvent<any>[] = []
@@ -22,7 +23,7 @@ let listenersAdded: boolean | null = null
 const removeAllListeners = () => {
   listenersAdded = false
 
-  for (let e of events) {
+  for (const e of events) {
     const [win, event, cb, capture] = e
 
     // Cast to `any` to ignore `GuardedEvent`/`GuardedAnchorEvent`.
@@ -61,7 +62,7 @@ type BoundCallbacks = {
   onSubmit: (e) => any
   onLoad: (e) => any
   onBeforeUnload: (e) => undefined | Promise<undefined>
-  onUnload: (e) => any
+  onUnload: (e: BeforeUnloadEvent) => any
   onNavigation: (...args) => any
   onAlert: (str) => any
   onConfirm: (str) => boolean
@@ -83,14 +84,14 @@ export const bindToListeners = (contentWindow, callbacks: BoundCallbacks) => {
     callbacks.onLoad(e)
   })
 
-  addListener(contentWindow, 'beforeunload', (e) => {
+  addListener(contentWindow, 'beforeunload', async (e) => {
     // bail if we've canceled this event (from another source)
     // or we've set a returnValue on the original event
     if (e.defaultPrevented || eventHasReturnValue(e)) {
       return
     }
 
-    callbacks.onBeforeUnload(e)
+    await callbacks.onBeforeUnload(e)
   })
 
   addListener(contentWindow, 'unload', (e) => {
@@ -105,7 +106,7 @@ export const bindToListeners = (contentWindow, callbacks: BoundCallbacks) => {
     callbacks.onNavigation('hashchange', e)
   })
 
-  for (let attr of HISTORY_NAV_ATTRS) {
+  for (const attr of HISTORY_NAV_ATTRS) {
     const orig = contentWindow.history?.[attr]
 
     if (!orig) {
@@ -119,7 +120,7 @@ export const bindToListeners = (contentWindow, callbacks: BoundCallbacks) => {
     }
   }
 
-  for (let attr of HISTORY_ATTRS) {
+  for (const attr of HISTORY_ATTRS) {
     const orig = contentWindow.history?.[attr]
 
     if (!orig) {

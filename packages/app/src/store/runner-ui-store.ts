@@ -1,14 +1,7 @@
 import { defineStore } from 'pinia'
 import { runnerConstants } from '../runner/runner-constants'
-
-export const automation = {
-  CONNECTING: 'CONNECTING',
-  MISSING: 'MISSING',
-  CONNECTED: 'CONNECTED',
-  DISCONNECTED: 'DISCONNECTED',
-} as const
-
-export type AutomationStatus = keyof typeof automation
+import { automation } from './automation-status'
+import type { AutomationStatus } from './automation-status'
 
 /**
  * Store for reactive properties used in the runner UI.
@@ -21,9 +14,12 @@ export type AutomationStatus = keyof typeof automation
 export interface RunnerUiState {
   showChooseExternalEditorModal: boolean
   autoScrollingEnabled: boolean
+  codeEditorLineWrap: boolean
   isSpecsListOpen: boolean
+  showFetchRequests: boolean
   specListWidth: number
   reporterWidth: number
+  studioWidth: number
   automationStatus: AutomationStatus
   randomString: string
   hideCommandLog: boolean
@@ -38,12 +34,15 @@ export const useRunnerUiStore = defineStore({
       showChooseExternalEditorModal: false,
       autoScrollingEnabled: true,
       isSpecsListOpen: false,
+      showFetchRequests: true,
       specListWidth: runnerConstants.defaultSpecListWidth,
       reporterWidth: runnerConstants.defaultReporterWidth,
+      studioWidth: runnerConstants.defaultStudioWidth,
       automationStatus: automation.CONNECTING,
       randomString: `${Math.random()}`,
       hideCommandLog: window.__CYPRESS_CONFIG__.hideCommandLog,
       hideRunnerUi: window.__CYPRESS_CONFIG__.hideRunnerUi,
+      codeEditorLineWrap: false,
     }
   },
 

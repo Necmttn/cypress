@@ -1,5 +1,4 @@
 {
-  "extends": "../ts/tsconfig.json",
   "include": [
     "src/*.ts",
     "src/**/*.ts"
@@ -10,10 +9,14 @@
     "esModuleInterop": true,
     "noUnusedLocals": false,
     "noUnusedParameters": false,
-    "experimentalDecorators": true,
     "allowJs": true,
-    "types": [],
     "noUncheckedIndexedAccess": true,
-    "importsNotUsedAsValues": "error"
-  },
+    "skipLibCheck": true,
+    "declaration": true,
+    "resolveJsonModule": true,
+    "types": [
+      "mocha",
+      "node"
+    ]
+  }
 }

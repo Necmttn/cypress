@@ -32,9 +32,7 @@ export * from './reporter'
 
 export * from './server'
 
-export * from './util'
-
-export * from './warning'
+export * from './types'
 
 export * from './modeOptions'
 
@@ -45,3 +43,11 @@ export * from './video'
 export * from './protocol'
 
 export * from './proxy'
+
+export * from './studio'
+
+export * from './cy-prompt'
+
+export * from './injection'
+
+export * from './keyboard-layout'

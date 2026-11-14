@@ -1,5 +1,6 @@
-import type { MutationSetProjectPreferencesInGlobalCacheArgs } from '@packages/graphql/src/gen/nxs.gen'
-import { InitializeProjectOptions, FoundBrowser, OpenProjectLaunchOptions, Preferences, TestingType, ReceivedCypressOptions, AddProject, FullConfig, AllowedState, SpecWithRelativeRoot, OpenProjectLaunchOpts, RUN_ALL_SPECS, RUN_ALL_SPECS_KEY } from '@packages/types'
+import type { MutationSetProjectPreferencesInGlobalCacheArgs } from '../gen/nxs.gen'
+import { RUN_ALL_SPECS, RUN_ALL_SPECS_KEY } from '@packages/types'
+import type { InitializeProjectOptions, FoundBrowser, OpenProjectLaunchOptions, Preferences, TestingType, ReceivedCypressOptions, AddProject, FullConfig, AllowedState, SpecWithRelativeRoot, OpenProjectLaunchOpts } from '@packages/types'
 import type { EventEmitter } from 'events'
 import execa from 'execa'
 import path from 'path'
@@ -12,16 +13,23 @@ import templates from '../codegen/templates'
 import { insertValuesInConfigFile, toPosix } from '../util'
 import { getError } from '@packages/errors'
 import { resetIssuedWarnings } from '@packages/config'
-import type { RunSpecErrorCode } from '@packages/graphql/src/schemaTypes'
+import type { RunSpecErrorCode } from '../../graphql/schemaTypes'
 import debugLib from 'debug'
+import { logError } from '@packages/stderr-filtering'
 
-export class RunSpecError extends Error {
+class RunSpecError extends Error {
   constructor (public code: typeof RunSpecErrorCode[number], msg: string) {
     super(msg)
   }
 }
 
 export interface ProjectApiShape {
+  /**
+   * Records, for `cypress tap`, that the project could not load and why. Replaced by
+   * the session record once the project server starts.
+   */
+  setSessionLoadError(args: { projectRoot: string, testingType: Cypress.TestingType | null, loadError: string }): Promise<void>
+  clearSessionLoadError(): Promise<void>
   /**
    * "Initializes" the given mode, since plugins can define the browsers available
    * TODO(tim): figure out what this is actually doing, it seems it's necessary in
@@ -46,13 +54,13 @@ export interface ProjectApiShape {
   setProjectPreferences(stated: AllowedState): void
   makeProjectSavedState(projectRoot: string): void
   getDevServer (): {
-    updateSpecs(specs: SpecWithRelativeRoot[]): void
-    start(options: {specs: Cypress.Spec[], config: FullConfig}): Promise<{port: number}>
+    updateSpecs(specs: SpecWithRelativeRoot[], options?: { neededForJustInTimeCompile?: boolean }): void
+    start(options: { specs: Cypress.Spec[], config: FullConfig }): Promise<{ port: number }>
     close(): void
     emitter: EventEmitter
   }
   isListening: (url: string) => Promise<void>
-  resetBrowserTabsForNextTest(shouldKeepTabOpen: boolean): Promise<void>
+  resetBrowserTabsForNextSpec(shouldKeepTabOpen: boolean): Promise<void>
   resetServer(): void
   runSpec(spec: Cypress.Spec): Promise<void>
   routeToDebug(runNumber: number): void
@@ -89,6 +97,14 @@ type SetForceReconfigureProjectByTestingType = {
 const debug = debugLib('cypress:data-context:ProjectActions')
 
 export class ProjectActions {
+  /**
+   * @var globalLaunchCount
+   * Read by the `shouldLaunchBrowserFromOpenBrowser` resolver so the
+   * launchpad's `--browser` auto-launch fires only once. Incremented as a
+   * launch starts: a launch takes seconds, and dismissing the major-version
+   * welcome mounts OpenBrowser, which re-reads this inside that window (#34868).
+   */
+  private globalLaunchCount = 0
   constructor (private ctx: DataContext) {}
 
   private get api () {
@@ -110,15 +126,21 @@ export class ProjectActions {
       d.scaffoldedFiles = null
       d.app.browserStatus = 'closed'
       d.app.browserUserAgent = null
+      d.currentRecordingInfo = {}
     })
+
+    // The project a load error was recorded for is gone
+    this.ctx.clearLoadErrorForTap()
 
     // Also clear any data associated with the linked cloud project
     this.ctx.actions.cloudProject.clearCloudProject()
 
-    this.ctx.actions.migration.reset()
+    // Close the project before tearing down the lifecycle: `after:run` is dispatched
+    // from the project server's close, and the config manager owns the plugins process
+    // that has to answer it.
+    await this.api.closeActiveProject()
     await this.ctx.lifecycleManager.clearCurrentProject()
     resetIssuedWarnings()
-    await this.api.closeActiveProject()
   }
 
   private set projects (projects: ProjectShape[]) {
@@ -127,18 +149,32 @@ export class ProjectActions {
     })
   }
 
-  openDirectoryInIDE (projectPath: string) {
-    this.ctx.debug(`opening ${projectPath} in ${this.ctx.coreData.localSettings.preferences.preferredEditorBinary}`)
+  get launchCount () {
+    return this.globalLaunchCount
+  }
 
-    if (!this.ctx.coreData.localSettings.preferences.preferredEditorBinary) {
+  set launchCount (count) {
+    this.globalLaunchCount = count
+  }
+
+  async openDirectoryInIDE (projectPath: string) {
+    const binary = await this.ctx.actions.localSettings.getLaunchableEditor()
+
+    this.ctx.debug(`opening ${projectPath} in ${binary}`)
+
+    if (!binary) {
       return
     }
 
-    if (this.ctx.coreData.localSettings.preferences.preferredEditorBinary === 'computer') {
+    if (binary === 'computer') {
       this.ctx.actions.electron.showItemInFolder(projectPath)
+
+      return
     }
 
-    execa(this.ctx.coreData.localSettings.preferences.preferredEditorBinary, [projectPath])
+    execa(binary, [projectPath]).catch((err) => {
+      this.ctx.debug('error opening %s in %s: %o', projectPath, binary, err)
+    })
   }
 
   setAndLoadCurrentTestingType (type: TestingType) {
@@ -195,9 +231,7 @@ export class ProjectActions {
         }
       })
     } catch (e) {
-      // TODO(tim): remove / replace with ctx.log.error
-      // eslint-disable-next-line
-      console.error(e)
+      logError(e)
       throw e
     }
   }
@@ -240,7 +274,7 @@ export class ProjectActions {
 
       return dir
     } catch (exception) {
-      throw Error(`Cannot add ${projectRoot} to projects as it does not exist in the file system`)
+      throw Error(`Cannot add ${projectRoot} to projects as it does not exist in the file system`, { cause: exception })
     }
   }
 
@@ -279,11 +313,19 @@ export class ProjectActions {
 
     // Used for run-all-specs feature
     if (options?.shouldLaunchNewTab) {
-      await this.api.resetBrowserTabsForNextTest(true)
+      await this.api.resetBrowserTabsForNextSpec(true)
       this.api.resetServer()
     }
 
-    await this.api.launchProject(browser, activeSpec ?? emptySpec, options)
+    this.globalLaunchCount++
+
+    try {
+      await this.api.launchProject(browser, activeSpec ?? emptySpec, options)
+    } catch (err) {
+      // A launch that never happened should not use up the one-shot auto-launch
+      this.globalLaunchCount--
+      throw err
+    }
 
     return
   }
@@ -474,7 +516,7 @@ export class ProjectActions {
     }
   }
 
-  async runSpec ({ specPath }: { specPath: string}) {
+  async runSpec ({ specPath }: { specPath: string }) {
     const waitForBrowserToOpen = async () => {
       const browserStatusSubscription = this.ctx.emitter.subscribeTo('browserStatusChange', { sendInitial: false })
 

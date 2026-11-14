@@ -35,35 +35,70 @@ async function removeEmptyDirectories (directory) {
   }
 }
 
+// Snapshot metadata follows the dev install's hoisting, so on a case-insensitive filesystem a stale
+// path can hit a different file, e.g. mime 1's `mime/mime.js` resolving to mime 3's `mime/Mime.js`.
+const createExactCaseChecker = (baseDir) => {
+  const dirEntries = new Map()
+
+  const readDir = (dir) => {
+    if (!dirEntries.has(dir)) {
+      dirEntries.set(dir, fs.readdir(dir).catch(() => []))
+    }
+
+    return dirEntries.get(dir)
+  }
+
+  return async (relativePath) => {
+    let dir = baseDir
+
+    for (const segment of relativePath.split(/[\\/]/).filter((s) => s && s !== '.')) {
+      if (!(await readDir(dir)).includes(segment)) {
+        return false
+      }
+
+      dir = path.join(dir, segment)
+    }
+
+    return true
+  }
+}
+
 const getDependencyPathsToKeep = async (buildAppDir) => {
   const unixBuildAppDir = buildAppDir.split(path.sep).join(path.posix.sep)
   const startingEntryPoints = [
     'packages/server/lib/plugins/child/require_async_child.js',
-    'packages/server/lib/plugins/child/register_ts_node.js',
-    'packages/server/node_modules/@cypress/webpack-batteries-included-preprocessor/index.js',
+    'packages/server/node_modules/@cypress/webpack-batteries-included-preprocessor/dist/index.js',
     'packages/server/node_modules/ts-loader/index.js',
-    'packages/rewriter/lib/threads/worker.js',
-    'npm/webpack-batteries-included-preprocessor/index.js',
+    'npm/webpack-batteries-included-preprocessor/dist/index.js',
+    // needed in the server entry point
+    'node_modules/tsx/dist/cjs/index.cjs',
+    'node_modules/tsx/dist/loader.mjs',
+    'node_modules/tslib/tslib.js',
+    // esbuild is also a runtime dependency with tsx
+    'node_modules/esbuild/lib/main.js',
     'node_modules/find-up/index.js',
     'node_modules/webpack/lib/webpack.js',
     'node_modules/webpack-dev-server/lib/Server.js',
-    'node_modules/html-webpack-plugin-4/index.js',
     'node_modules/html-webpack-plugin-5/index.js',
-    'node_modules/mocha-7.0.1/index.js',
+    'node_modules/mocha-7.2.0/index.js',
+    'packages/server/node_modules/webdriver/build/index.js',
+    'packages/server/node_modules/@wdio/utils/build/node.js',
+    // jimp is deferred in the snapshot, so its dependencies are loaded from disk
+    'node_modules/jimp/dist/commonjs/index.js',
+    // dependencies needed for geckodriver when running firefox in the binary
+    'node_modules/pump/index.js',
+    'node_modules/sprintf-js/src/sprintf.js',
+    'node_modules/esutils/lib/utils.js',
+    'node_modules/through/index.js',
+    'node_modules/string-width/index.js',
+    'node_modules/proxy-from-env/index.js',
+    // end needed deps for geckodriver
+    // better-sqlite3 is needed to be loaded in dynamically in studio
+    'node_modules/better-sqlite3/lib/index.js',
   ]
 
-  let entryPoints = new Set([
+  const entryPoints = new Set([
     ...startingEntryPoints.map((entryPoint) => path.join(unixBuildAppDir, entryPoint)),
-    // These dependencies are completely dynamic using the pattern `require(`./${name}`)` and will not be pulled in by esbuild but still need to be kept in the binary.
-    ...['ibmi',
-      'sunos',
-      'android',
-      'darwin',
-      'freebsd',
-      'linux',
-      'openbsd',
-      'sunos',
-      'win32'].map((platform) => path.join(unixBuildAppDir, `node_modules/default-gateway/${platform}.js`)),
   ])
   let esbuildResult
   let newEntryPointsFound = true
@@ -83,6 +118,9 @@ const getDependencyPathsToKeep = async (buildAppDir) => {
       external: [
         './transpile-ts',
         './start-cypress',
+        // TypeScript lowers `import('electron')` to `require('electron')`; esbuild must not
+        // try to bundle it (electron is not installed under the packed app tree).
+        'electron',
         'fsevents',
         'pnpapi',
         '@swc/core',
@@ -91,8 +129,6 @@ const getDependencyPathsToKeep = async (buildAppDir) => {
         'uglify-js',
         'esbuild',
         'enhanced-resolve/lib/createInnerCallback',
-        '@babel/preset-typescript/package.json',
-        './addon/addon-native',
       ],
     })
 
@@ -135,6 +171,7 @@ const createServerEntryPointBundle = async (buildAppDir) => {
     external: [
       './transpile-ts',
       './start-cypress',
+      'electron',
     ],
   })
 
@@ -142,19 +179,8 @@ const createServerEntryPointBundle = async (buildAppDir) => {
 
   await fs.copy(path.join(workingDir, 'index.js'), path.join(buildAppDir, 'packages', 'server', 'index.js'))
 
-  console.log(`compiling server entry point bundle to ${path.join(buildAppDir, 'packages', 'server', 'index.jsc')}`)
-
-  // Use bytenode to compile the entry point bundle. This will save time on the v8 compile step and ensure the integrity of the entry point
-  const bytenode = await import('bytenode')
-
-  await bytenode.compileFile({
-    filename: path.join(buildAppDir, 'packages', 'server', 'index.js'),
-    output: path.join(buildAppDir, 'packages', 'server', 'index.jsc'),
-    electron: true,
-  })
-
   // Convert these inputs to a relative file path. Note that these paths are posix paths.
-  return [...Object.keys(esbuildResult.metafile.inputs)].map((input) => `./${input}`)
+  return [...Object.keys(esbuildResult.metafile.inputs)].filter((input) => input !== 'packages/server/index.js').map((input) => `./${input}`)
 }
 
 const buildEntryPointAndCleanup = async (buildAppDir) => {
@@ -178,11 +204,13 @@ const buildEntryPointAndCleanup = async (buildAppDir) => {
   console.log(`potentially removing ${potentiallyRemovedDependencies.length} dependencies`)
 
   // 4. Remove all dependencies that are in the snapshot but not in the list of kept dependencies from the binary
+  const existsWithExactCase = createExactCaseChecker(buildAppDir)
+
   await Promise.all(potentiallyRemovedDependencies.map(async (dependency) => {
     const typeScriptlessDependency = dependency.replace(/\.ts$/, '.js')
 
-    // marionette-client and babel/runtime require all of their dependencies in a very non-standard dynamic way. We will keep anything in marionette-client and babel/runtime
-    if (!keptDependencies.includes(typeScriptlessDependency.slice(2)) && !typeScriptlessDependency.includes('marionette-client') && !typeScriptlessDependency.includes('@babel/runtime')) {
+    // babel/runtime requires all of its dependencies in a very non-standard dynamic way. We will keep anything in babel/runtime
+    if (!keptDependencies.includes(typeScriptlessDependency.slice(2)) && !typeScriptlessDependency.includes('@babel/runtime') && await existsWithExactCase(typeScriptlessDependency)) {
       await fs.remove(path.join(buildAppDir, typeScriptlessDependency))
     }
   }))
@@ -207,7 +235,6 @@ const cleanupUnneededDependencies = async (buildAppDir) => {
     path.join(buildAppDir, '**', '@babel', '**', 'esm'),
     path.join(buildAppDir, '**', 'ramda', 'es'),
     path.join(buildAppDir, '**', 'jimp', 'es'),
-    path.join(buildAppDir, '**', '@jimp', '**', 'es'),
     path.join(buildAppDir, '**', 'nexus', 'dist-esm'),
     path.join(buildAppDir, '**', '@graphql-tools', '**', '*.mjs'),
     path.join(buildAppDir, '**', 'graphql', '**', '*.mjs'),
@@ -221,8 +248,6 @@ const cleanupUnneededDependencies = async (buildAppDir) => {
     path.join(buildAppDir, '**', '*.d.ts'),
     path.join(buildAppDir, '**', 'ajv', 'lib', '**', '*.ts'),
     path.join(buildAppDir, '**', '*.flow'),
-    // Example files are not needed
-    path.join(buildAppDir, '**', 'jimp', 'browser', 'examples'),
     // Documentation files are not needed
     path.join(buildAppDir, '**', 'JSV', 'jsdoc-toolkit'),
     path.join(buildAppDir, '**', 'JSV', 'docs'),
@@ -230,7 +255,11 @@ const cleanupUnneededDependencies = async (buildAppDir) => {
     // Files used as part of prebuilding are not necessary
     path.join(buildAppDir, '**', 'node_gyp_bins'),
     path.join(buildAppDir, '**', 'better-sqlite3', 'bin'),
+    // better-sqlite3 loads these ahead of build/Release; the Linux ones need a newer glibc than Cypress supports
+    path.join(buildAppDir, '**', 'better-sqlite3', 'prebuilds'),
     path.join(buildAppDir, '**', 'registry-js', 'prebuilds'),
+    // x86_64-only, and only mocha's watch CLI reaches it, which Cypress never runs
+    path.join(buildAppDir, '**', 'mocha-7.2.0', 'node_modules', 'fsevents'),
     path.join(buildAppDir, '**', '*.cc'),
     path.join(buildAppDir, '**', '*.o'),
     path.join(buildAppDir, '**', '*.c'),
@@ -255,6 +284,7 @@ const cleanupUnneededDependencies = async (buildAppDir) => {
 }
 
 module.exports = {
+  createExactCaseChecker,
   buildEntryPointAndCleanup,
   cleanupUnneededDependencies,
 }

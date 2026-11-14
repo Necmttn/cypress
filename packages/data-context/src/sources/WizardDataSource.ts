@@ -31,8 +31,9 @@ export class WizardDataSource {
   async installDependenciesCommand () {
     const commands = {
       'npm': 'npm install -D',
-      'pnpm': 'pnpm install -D',
+      'pnpm': 'pnpm add -D',
       'yarn': 'yarn add -D',
+      'bun': 'bun add -D',
     } as const
 
     const deps = (await this.ctx.wizard.packagesToInstall())

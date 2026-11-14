@@ -2,6 +2,8 @@ exports['RECORD_PARAMS_WITHOUT_RECORDING-ciBuildId 1'] = `
 You passed the --ci-build-id, --group, --tag, --parallel, or --auto-cancel-after-failures flag without also passing the --record flag.
 
 The --ci-build-id flag you passed was: ciBuildId123
+The --parallel flag you passed was: undefined
+The --auto-cancel-after-failures flag you passed was: undefined
 
 These flags can only be used when recording to Cypress Cloud.
 
@@ -22,6 +24,8 @@ exports['RECORD_PARAMS_WITHOUT_RECORDING-group 1'] = `
 You passed the --ci-build-id, --group, --tag, --parallel, or --auto-cancel-after-failures flag without also passing the --record flag.
 
 The --group flag you passed was: e2e-tests
+The --parallel flag you passed was: undefined
+The --auto-cancel-after-failures flag you passed was: undefined
 
 These flags can only be used when recording to Cypress Cloud.
 
@@ -32,6 +36,7 @@ exports['RECORD_PARAMS_WITHOUT_RECORDING-parallel 1'] = `
 You passed the --ci-build-id, --group, --tag, --parallel, or --auto-cancel-after-failures flag without also passing the --record flag.
 
 The --parallel flag you passed was: true
+The --auto-cancel-after-failures flag you passed was: undefined
 
 These flags can only be used when recording to Cypress Cloud.
 
@@ -43,6 +48,7 @@ You passed the --ci-build-id, --group, --tag, --parallel, or --auto-cancel-after
 
 The --group flag you passed was: electron-smoke-tests
 The --parallel flag you passed was: true
+The --auto-cancel-after-failures flag you passed was: undefined
 
 These flags can only be used when recording to Cypress Cloud.
 
@@ -53,34 +59,14 @@ exports['INDETERMINATE_CI_BUILD_ID-group 1'] = `
 You passed the --group or --parallel flag but we could not automatically determine or generate a ciBuildId.
 
 The --group flag you passed was: e2e-tests
+The --parallel flag you passed was: undefined
 
 In order to use either of these features a ciBuildId must be determined.
 
 The ciBuildId is automatically detected if you are running Cypress in any of the these CI providers:
 
- - appveyor
- - azure
- - awsCodeBuild
- - bamboo
- - bitbucket
- - buildkite
  - circle
- - codeshipBasic
- - codeshipPro
- - concourse
- - codeFresh
- - drone
  - githubActions
- - gitlab
- - goCD
- - googleCloud
- - jenkins
- - semaphore
- - shippable
- - teamfoundation
- - travis
- - netlify
- - layerci
 
 Because the ciBuildId could not be auto-detected you must pass the --ci-build-id flag manually.
 
@@ -96,29 +82,8 @@ In order to use either of these features a ciBuildId must be determined.
 
 The ciBuildId is automatically detected if you are running Cypress in any of the these CI providers:
 
- - appveyor
- - azure
- - awsCodeBuild
- - bamboo
- - bitbucket
- - buildkite
  - circle
- - codeshipBasic
- - codeshipPro
- - concourse
- - codeFresh
- - drone
  - githubActions
- - gitlab
- - goCD
- - googleCloud
- - jenkins
- - semaphore
- - shippable
- - teamfoundation
- - travis
- - netlify
- - layerci
 
 Because the ciBuildId could not be auto-detected you must pass the --ci-build-id flag manually.
 
@@ -135,29 +100,8 @@ In order to use either of these features a ciBuildId must be determined.
 
 The ciBuildId is automatically detected if you are running Cypress in any of the these CI providers:
 
- - appveyor
- - azure
- - awsCodeBuild
- - bamboo
- - bitbucket
- - buildkite
  - circle
- - codeshipBasic
- - codeshipPro
- - concourse
- - codeFresh
- - drone
  - githubActions
- - gitlab
- - goCD
- - googleCloud
- - jenkins
- - semaphore
- - shippable
- - teamfoundation
- - travis
- - netlify
- - layerci
 
 Because the ciBuildId could not be auto-detected you must pass the --ci-build-id flag manually.
 
@@ -221,6 +165,7 @@ You passed the --parallel flag, but this run group was originally created withou
 
 The existing run is: https://cloud.cypress.io/runs/12345
 
+The --tag flag you passed was: 
 The --group flag you passed was: electron-smoke-tests
 The --ciBuildId flag you passed was: ciBuildId123
 
@@ -274,6 +219,9 @@ https://on.cypress.io/stale-run
 
 exports['RECORD_PARAMS_WITHOUT_RECORDING-tag 1'] = `
 You passed the --ci-build-id, --group, --tag, --parallel, or --auto-cancel-after-failures flag without also passing the --record flag.
+
+The --parallel flag you passed was: undefined
+The --auto-cancel-after-failures flag you passed was: undefined
 
 These flags can only be used when recording to Cypress Cloud.
 
@@ -383,7 +331,7 @@ exports['CLOUD_RECOMMENDATION_MESSAGE'] = `
   │ Skipped:      undefined                                                                        │
   │ Screenshots:  0                                                                                │
   │ Video:        false                                                                            │
-  │ Duration:     undefined seconds                                                                │
+  │ Duration:     X seconds                                                                        │
   │ Spec Ran:     test1.js                                                                         │
   └────────────────────────────────────────────────────────────────────────────────────────────────┘
 
@@ -401,27 +349,20 @@ exports['CLOUD_RECOMMENDATION_MESSAGE'] = `
 
 ----------------------------------------------------------------------------------------------------
 
-  Having trouble debugging your CI failures?
+  Debug faster with full visibility.
 
-  Record your runs to Cypress Cloud to watch video recordings for each test,
-  debug failing and flaky tests, and integrate with your favorite tools.
+  Record to Cypress Cloud and get instant access to full test details and replays.
+  Inspect the DOM, network events, and console logs exactly as they ran in CI.
 
   >> https://on.cypress.io/cloud-get-started
 
 ----------------------------------------------------------------------------------------------------
 `
 
-exports['RECORD_PARAMS_WITHOUT_RECORDING-no-auto-cancel-after-failures 1'] = `
-You passed the --ci-build-id, --group, --tag, --parallel, or --auto-cancel-after-failures flag without also passing the --record flag.
-
-These flags can only be used when recording to Cypress Cloud.
-
-https://on.cypress.io/record-params-without-recording
-`
-
 exports['RECORD_PARAMS_WITHOUT_RECORDING-auto-cancel-after-failures 1'] = `
 You passed the --ci-build-id, --group, --tag, --parallel, or --auto-cancel-after-failures flag without also passing the --record flag.
 
+The --parallel flag you passed was: undefined
 The --auto-cancel-after-failures flag you passed was: 4
 
 These flags can only be used when recording to Cypress Cloud.

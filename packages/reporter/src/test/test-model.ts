@@ -1,15 +1,17 @@
 import _ from 'lodash'
-import { action, computed, observable } from 'mobx'
+import { action, computed, observable, makeObservable } from 'mobx'
 
-import { FileDetails, TestState } from '@packages/types'
+import type { FileDetails, TestState } from '@packages/types'
 import Attempt from '../attempts/attempt-model'
-import Err, { ErrProps } from '../errors/err-model'
-import { HookProps } from '../hooks/hook-model'
-import Runnable, { RunnableProps } from '../runnables/runnable-model'
-import { CommandProps } from '../commands/command-model'
-import { AgentProps } from '../agents/agent-model'
-import { RouteProps } from '../routes/route-model'
-import { RunnablesStore, LogProps } from '../runnables/runnables-store'
+import type { ErrProps } from '../errors/err-model'
+import Err from '../errors/err-model'
+import type { HookProps } from '../hooks/hook-model'
+import type { RunnableProps } from '../runnables/runnable-model'
+import Runnable from '../runnables/runnable-model'
+import type { CommandProps } from '../commands/command-model'
+import type { AgentProps } from '../agents/agent-model'
+import type { RouteProps } from '../routes/route-model'
+import type { RunnablesStore, LogProps } from '../runnables/runnables-store'
 
 export type UpdateTestCallback = () => void
 
@@ -51,16 +53,36 @@ export default class Test extends Runnable {
   type = 'test'
 
   _callbackAfterUpdate: UpdateTestCallback | null = null
-  hooks: HookProps[]
   invocationDetails?: FileDetails
 
-  @observable attempts: Attempt[] = []
-  @observable _isOpen: boolean | null = null
-  @observable isOpenWhenActive: Boolean | null = null
-  @observable _isFinished = false
+  attempts: Attempt[] = []
+  _isOpen: boolean | null = null
+  isOpenWhenActive: boolean | null = null
+  _isFinished = false
 
   constructor (props: TestProps, level: number, private store: RunnablesStore) {
     super(props, level)
+
+    makeObservable(this, {
+      attempts: observable,
+      _isOpen: observable,
+      isOpenWhenActive: observable,
+      _isFinished: observable,
+      isLongRunning: computed,
+      isOpen: computed,
+      state: computed,
+      err: computed,
+      lastAttempt: computed,
+      hasMultipleAttempts: computed,
+      hasRetried: computed,
+      isActive: computed,
+      currentRetry: computed,
+      isSelfHealed: computed,
+      start: action,
+      update: action,
+      setIsOpen: action,
+      finish: action,
+    })
 
     this.invocationDetails = props.invocationDetails
 
@@ -79,13 +101,13 @@ export default class Test extends Runnable {
     this._addAttempt(props)
   }
 
-  @computed get isLongRunning () {
+  get isLongRunning () {
     return _.some(this.attempts, (attempt: Attempt) => {
       return attempt.isLongRunning
     })
   }
 
-  @computed get isOpen () {
+  get isOpen () {
     if (this._isOpen === null) {
       return Boolean(this.state === 'failed'
       || this.isLongRunning
@@ -96,34 +118,34 @@ export default class Test extends Runnable {
     return this._isOpen
   }
 
-  @computed get state () {
+  get state () {
     // Use the outerStatus of the last attempt to determine overall test status, if present,
     // as the last attempt may have 'passed', but the outerStatus may be marked as failed.
     return this.lastAttempt ? (this.lastAttempt._testOuterStatus || this.lastAttempt.state) : 'active'
   }
 
-  @computed get err () {
+  get err () {
     return this.lastAttempt ? this.lastAttempt.err : new Err({})
   }
 
-  @computed get lastAttempt () {
+  get lastAttempt () {
     return _.last(this.attempts) as Attempt
   }
 
-  @computed get hasMultipleAttempts () {
+  get hasMultipleAttempts () {
     return this.attempts.length > 1
   }
 
-  @computed get hasRetried () {
+  get hasRetried () {
     return this.state === 'passed' && this.hasMultipleAttempts
   }
 
   // TODO: make this an enum with states: 'QUEUED, ACTIVE, INACTIVE'
-  @computed get isActive (): boolean {
+  get isActive (): boolean {
     return _.some(this.attempts, { isActive: true })
   }
 
-  @computed get currentRetry () {
+  get currentRetry () {
     return this.attempts.length - 1
   }
 
@@ -151,7 +173,7 @@ export default class Test extends Runnable {
     })
   }
 
-  @action start (props: TestProps) {
+  start (props: TestProps) {
     let attempt = this.getAttemptByIndex(props.currentRetry)
 
     if (!attempt) {
@@ -161,7 +183,7 @@ export default class Test extends Runnable {
     attempt.start()
   }
 
-  @action update (props: UpdatableTestProps, cb: UpdateTestCallback) {
+  update (props: UpdatableTestProps, cb: UpdateTestCallback) {
     if (this.state === 'processing' && !props.state) {
       cb()
     }
@@ -185,6 +207,10 @@ export default class Test extends Runnable {
     cb()
   }
 
+  setIsOpen (isOpen: boolean) {
+    this._isOpen = isOpen
+  }
+
   // this is called to sync up the command log UI for the sake of
   // screenshots, so we only ever need to open the last attempt
   setIsOpenWhenActive (isOpen: boolean) {
@@ -198,7 +224,7 @@ export default class Test extends Runnable {
     }
   }
 
-  @action finish (props: UpdatableTestProps, isInteractive: boolean) {
+  finish (props: UpdatableTestProps, isInteractive: boolean) {
     this._isFinished = !(props.retries && props.currentRetry) || props.currentRetry >= props.retries
 
     this._withAttempt(props.currentRetry ?? 0, (attempt: Attempt) => {
@@ -232,5 +258,13 @@ export default class Test extends Runnable {
     if (attempt) return cb(attempt)
 
     return null
+  }
+
+  get isSelfHealed () {
+    // Compute self-healed status from the commands in all attempts
+    // This ensures the badge is shown correctly even across retries
+    return _.some(this.attempts, (attempt: Attempt) => {
+      return _.some(attempt.commands, (command) => command.isSelfHealed)
+    })
   }
 }

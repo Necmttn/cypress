@@ -22,11 +22,12 @@ import { getRunnerElement, empty } from './utils'
 import { IframeModel } from './iframe-model'
 import { AutIframe } from './aut-iframe'
 import { EventManager } from './event-manager'
-import { createWebsocket as createWebsocketIo } from '@packages/socket/lib/browser'
-import { decodeBase64Unicode } from '@packages/frontend-shared/src/utils/base64'
+import { createWebsocket as createWebsocketIo } from '@packages/socket/browser/client'
 import type { AutomationElementId } from '@packages/types'
+import { SPEC_BRIDGE_FRAME_NAME_IDENTIFIER, SPEC_FRAME_NAME_IDENTIFIER } from '@packages/types'
 import { useSnapshotStore } from './snapshot-store'
 import { useStudioStore } from '../store/studio-store'
+import { getRunnerConfigFromWindow } from './get-runner-config-from-window'
 
 let _eventManager: EventManager | undefined
 
@@ -38,21 +39,27 @@ export function createWebsocket (config: Cypress.Config) {
   })
 
   ws.on('change:to:url', (url) => {
+    // Assigning an identical hash URL fires no hashchange, so targeting the spec
+    // that is already active would silently no-op — restart it instead.
+    if (url && url === window.location.hash && _eventManager) {
+      void _eventManager.rerunSpec()
+
+      return
+    }
+
     window.location.href = url
   })
 
   return ws
 }
 
-export function initializeEventManager (UnifiedRunner: any) {
+function initializeEventManager (UnifiedRunner: any) {
   if (!window.ws) {
     throw Error('Need window.ws to exist before initializing event manager')
   }
 
   _eventManager = new EventManager(
     UnifiedRunner.CypressDriver,
-    UnifiedRunner.MobX,
-    UnifiedRunner.selectorPlaygroundModel,
     window.ws,
   )
 }
@@ -100,9 +107,6 @@ function createIframeModel () {
     autIframe.highlightEl,
     autIframe.doesAUTMatchTopSuperDomainOrigin,
     getEventManager(),
-    {
-      selectorPlaygroundModel: getEventManager().selectorPlaygroundModel,
-    },
   )
 
   iframeModel.listen()
@@ -131,17 +135,10 @@ function setupRunner () {
   getEventManager().start(config)
 
   const autStore = useAutStore()
-  const studioStore = useStudioStore()
 
   watchEffect(() => {
     autStore.viewportUpdateCallback?.()
   }, { flush: 'post' })
-
-  watchEffect(() => {
-    window.UnifiedRunner.MobX.runInAction(() => {
-      mobxRunnerStore.setCanSaveStudioLogs(studioStore.logs.length > 0)
-    })
-  })
 
   _autIframeModel = new AutIframe(
     'Test Project',
@@ -185,27 +182,24 @@ function teardownSpec (isRerun: boolean = false) {
   return getEventManager().teardown(getMobxRunnerStore(), isRerun)
 }
 
-let isTorndown = false
-
 /**
  * Called when navigating away from the runner page.
  * This will teardown the reporter, event manager, and
  * any associated events.
  */
-export async function teardown () {
+async function teardown () {
   UnifiedReporterAPI.setInitializedReporter(false)
   _eventManager?.stop()
-  _eventManager?.teardown(getMobxRunnerStore())
+  await _eventManager?.teardown(getMobxRunnerStore())
   await _eventManager?.resetReporter()
   _eventManager = undefined
-  isTorndown = true
 }
 
 /**
  * Add a cross origin iframe for cy.origin support
  */
 export function addCrossOriginIframe (location) {
-  const id = `Spec Bridge: ${location.origin}`
+  const id = `${SPEC_BRIDGE_FRAME_NAME_IDENTIFIER}: ${location.origin}`
 
   // if it already exists, don't add another one
   if (document.getElementById(id)) {
@@ -246,7 +240,10 @@ function runSpecCT (config, spec: SpecFile) {
 
   // create new AUT
   const autIframe = getAutIframeModel()
-  const $autIframe: JQuery<HTMLIFrameElement> = autIframe.create().appendTo($container)
+
+  const { autIframe: $autIframe } = autIframe.create()
+
+  $autIframe.appendTo($container)
 
   // the iframe controller will forward the specpath via header to the devserver.
   // using a query parameter allows us to recognize relative requests and proxy them to the devserver.
@@ -261,7 +258,7 @@ function runSpecCT (config, spec: SpecFile) {
   $autIframe.prop('src', specSrc)
 
   // initialize Cypress (driver) with the AUT!
-  getEventManager().initialize($autIframe, config)
+  getEventManager().initialize({ $autIframe, config })
 }
 
 /**
@@ -271,7 +268,8 @@ function runSpecCT (config, spec: SpecFile) {
 function addIframe ({ $container, id, src, className }) {
   const $addedIframe = document.createElement('iframe')
 
-  $addedIframe.id = id,
+  $addedIframe.id = id
+  $addedIframe.name = id
   $addedIframe.className = className
 
   $container.appendChild($addedIframe)
@@ -292,7 +290,7 @@ function setSpecForDriver (spec: SpecFile) {
  * a Spec IFrame to load the spec's source code, and
  * initialize Cypress on the AUT.
  */
-function runSpecE2E (config, spec: SpecFile) {
+async function runSpecE2E (config, spec: SpecFile) {
   const $runnerRoot = getRunnerElement()
 
   // clear AUT, if there is one.
@@ -301,6 +299,7 @@ function runSpecE2E (config, spec: SpecFile) {
   // create root for new AUT
   const $container = document.createElement('div')
 
+  $container.id = 'aut-iframes-container'
   $container.classList.add('screenshot-height-container')
 
   $runnerRoot.append($container)
@@ -308,14 +307,20 @@ function runSpecE2E (config, spec: SpecFile) {
   // create new AUT
   const autIframe = getAutIframeModel()
 
-  const $autIframe: JQuery<HTMLIFrameElement> = autIframe.create().appendTo($container)
+  const { autIframe: $autIframe, autSnapshotIframes: $autSnapshotIframes } = autIframe.create()
+
+  $autIframe.appendTo($container)
+
+  $autSnapshotIframes.forEach((iframe) => {
+    iframe.appendTo($container)
+  })
 
   // Remove the spec bridge iframe
   document.querySelectorAll('iframe.spec-bridge-iframe').forEach((el) => {
     el.remove()
   })
 
-  autIframe.visitBlankPage()
+  await autIframe.visitBlankPage()
 
   // create Spec IFrame
   const specSrc = getSpecUrl({
@@ -324,27 +329,16 @@ function runSpecE2E (config, spec: SpecFile) {
     specSrc: encodeURIComponent(spec.relative),
   })
 
-  // FIXME: BILL Determine where to call client with to force browser repaint
-  /**
-   * call the clientWidth to force the browser to repaint for viewport changes
-   * otherwise firefox may fail when changing the viewport in between origins
-   * this.refs.container.clientWidth
-   */
-
   // append to document, so the iframe will execute the spec
   addIframe({
     $container,
     src: specSrc,
-    id: `Your Spec: '${specSrc}'`,
+    id: `${SPEC_FRAME_NAME_IDENTIFIER}: '${specSrc}'`,
     className: 'spec-iframe',
   })
 
   // initialize Cypress (driver) with the AUT!
-  getEventManager().initialize($autIframe, config)
-}
-
-export function getRunnerConfigFromWindow () {
-  return JSON.parse(decodeBase64Unicode(window.__CYPRESS_CONFIG__.base64Config)) as Cypress.Config
+  getEventManager().initialize({ $autIframe, $autSnapshotIframes, config })
 }
 
 /**
@@ -357,13 +351,7 @@ export function getRunnerConfigFromWindow () {
 async function initialize () {
   await dfd.promise
 
-  isTorndown = false
-
   const config = getRunnerConfigFromWindow()
-
-  if (isTorndown) {
-    return
-  }
 
   // Reset stores
   const autStore = useAutStore()
@@ -372,24 +360,29 @@ async function initialize () {
 
   const studioStore = useStudioStore()
 
-  studioStore.cancel()
+  studioStore.reset()
 
-  // TODO(lachlan): UNIFY-1318 - use GraphQL to get the viewport dimensions
-  // once it is more practical to do so
-  // find out if we need to continue managing viewportWidth/viewportHeight in MobX at all.
   autStore.updateDimensions(config.viewportWidth, config.viewportHeight)
 
   // window.UnifiedRunner exists now, since the Webpack bundle with
   // the UnifiedRunner namespace was injected by `injectBundle`.
   initializeEventManager(window.UnifiedRunner)
 
-  window.UnifiedRunner.MobX.runInAction(() => {
-    const store = initializeMobxStore(window.__CYPRESS_TESTING_TYPE__)
-
-    store.updateDimensions(config.viewportWidth, config.viewportHeight)
-  })
+  initializeMobxStore()
 
   window.UnifiedRunner.MobX.runInAction(() => setupRunner())
+}
+
+async function updateDevServerWithSpec (spec: SpecFile) {
+  return new Promise<void>((resolve, _reject) => {
+    // currently, we don't have criteria to reject the promise
+    // as the dev-server can take a long time to compile, which is variable per user.
+    Cypress.once('dev-server:on-spec-updated', () => {
+      resolve()
+    })
+
+    Cypress.emit('dev-server:on-spec-update', spec)
+  })
 }
 
 /**
@@ -432,11 +425,25 @@ async function executeSpec (spec: SpecFile, isRerun: boolean = false) {
   // initializes a bunch of listeners watches spec file for changes.
   await getEventManager().setup(config)
 
+  if (!_eventManager) {
+    // with functional react components and bridging the unified runner between Vue and React,
+    // we sometimes get into a state where the runner has torn down the reporter, which in turn tears down the event manager,
+    // while we are in the process of executing the next spec. In this case, we have a no-op execute spec and need to exit early without error.
+    return
+  }
+
   if (window.__CYPRESS_TESTING_TYPE__ === 'e2e') {
     return runSpecE2E(config, spec)
   }
 
   if (window.__CYPRESS_TESTING_TYPE__ === 'component') {
+    if (config.justInTimeCompile && !config.isTextTerminal) {
+      // If running with justInTimeCompile enabled and in open mode,
+      // send a signal to the dev server to load the spec before running
+      // since the spec and related resources are not yet compiled.
+      await updateDevServerWithSpec(spec)
+    }
+
     return runSpecCT(config, spec)
   }
 

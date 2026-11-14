@@ -4,14 +4,15 @@ import 'tailwindcss/tailwind.css'
 import urql from '@urql/vue'
 import App from './App.vue'
 import { makeUrqlClient } from '@packages/frontend-shared/src/graphql/urqlClient'
-import { createI18n } from '@cy/i18n'
 import { createRouter } from './router/router'
+import { TapManager } from './tap/tap-manager'
 import { injectBundle } from './runner/injectBundle'
 import { createPinia } from './store'
 import Toast, { POSITION } from 'vue-toastification'
 import 'vue-toastification/dist/index.css'
-import { createWebsocket, getRunnerConfigFromWindow } from './runner'
-import { telemetry } from '@packages/telemetry/src/browser'
+import { createWebsocket } from './runner'
+import { getRunnerConfigFromWindow } from './runner/get-runner-config-from-window'
+import { telemetry } from '@packages/telemetry/browser/client'
 
 // Grab the time just before loading config to include that in the cypress:app span
 const now = performance.now()
@@ -26,6 +27,8 @@ const ws = createWebsocket(config)
 
 window.ws = ws
 
+window.__CYPRESS_TAP_BINDING__ = new TapManager(config.version)
+
 telemetry.attachWebSocket(ws)
 
 // This injects the Cypress driver and Reporter, which are bundled with Webpack.
@@ -39,11 +42,16 @@ app.use(Toast, {
   closeOnClick: false,
 })
 
-makeUrqlClient({ target: 'app', namespace: config.namespace, socketIoRoute: config.socketIoRoute }).then((client) => {
+await makeUrqlClient({ target: 'app', namespace: config.namespace, socketIoRoute: config.socketIoRoute, port: config.port }).then((client) => {
   app.use(urql, client)
   app.use(createRouter())
-  app.use(createI18n())
   app.use(createPinia())
 
   app.mount('#app')
 })
+
+telemetry.startSpan({
+  name: 'app:mounted',
+  parentSpan: telemetry.getSpan('cypress:app'),
+  opts: { startTime: now, attributes: { timeToScriptStartMs: Math.round(now) } },
+})?.end()

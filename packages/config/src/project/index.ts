@@ -2,7 +2,8 @@ import _ from 'lodash'
 import Debug from 'debug'
 import deepDiff from 'return-deep-diff'
 
-import errors, { ConfigValidationFailureInfo, CypressError } from '@packages/errors'
+import type { ConfigValidationFailureInfo, CypressError } from '@packages/errors'
+import errors from '@packages/errors'
 import type {
   ResolvedFromConfig, TestingType, FullConfig,
 } from '@packages/types'
@@ -14,6 +15,7 @@ import {
 import {
   setPluginResolvedOn,
   mergeDefaults,
+  shouldHonorNumTestsKeptInMemory,
 } from './utils'
 
 const debug = Debug('cypress:config:project')
@@ -21,13 +23,11 @@ const debug = Debug('cypress:config:project')
 // TODO: any -> SetupFullConfigOptions in data-context/src/data/ProjectConfigManager.ts
 export function setupFullConfigWithDefaults (obj: any = {}, getFilesByGlob: any): Promise<FullConfig> {
   debug('setting config object %o', obj)
-  let { projectRoot, projectName, config, envFile, options, cliConfig, repoRoot } = obj
+  const { projectRoot, projectName, envFile, options, cliConfig, repoRoot } = obj
 
   // just force config to be an object so we dont have to do as much
   // work in our tests
-  if (config == null) {
-    config = {}
-  }
+  const config = obj.config ?? {}
 
   debug('config is %o', config)
 
@@ -37,7 +37,7 @@ export function setupFullConfigWithDefaults (obj: any = {}, getFilesByGlob: any)
   config.projectName = projectName
   config.repoRoot = repoRoot
 
-  // @ts-ignore
+  // @ts-expect-error - mergeDefaults is typed to return Promise<Config>, but it sets resolved and the other FullConfig fields
   return mergeDefaults(config, options, cliConfig, getFilesByGlob)
 }
 
@@ -53,7 +53,7 @@ export function updateWithPluginValues (cfg: FullConfig, modifiedConfig: any, te
   // make sure every option returned from the plugins file
   // passes our validation functions
   validate(modifiedConfig, (validationResult: ConfigValidationFailureInfo | string) => {
-    let configFile = cfg.configFile!
+    const configFile = cfg.configFile!
 
     if (_.isString(validationResult)) {
       return errors.throwErr('CONFIG_VALIDATION_MSG_ERROR', 'configFile', configFile, validationResult)
@@ -105,8 +105,16 @@ export function updateWithPluginValues (cfg: FullConfig, modifiedConfig: any, te
     debug('resolved config object %o', cfg.resolved)
   }
 
+  const diffsClone = _.cloneDeep(diffs) ?? {}
+
   // merge cfg into overrides
-  const merged = _.defaultsDeep(diffs, cfg)
+  const merged = _.defaultsDeep(diffs, cfg) ?? {}
+
+  for (const [key, value] of Object.entries(diffsClone)) {
+    if (Array.isArray(value)) {
+      merged[key] = _.cloneDeep(value)
+    }
+  }
 
   debug('merged config object %o', merged)
 
@@ -126,6 +134,14 @@ export function updateWithPluginValues (cfg: FullConfig, modifiedConfig: any, te
     if (originalResolvedBrowsers) {
       merged.resolved.browsers = originalResolvedBrowsers
     }
+  }
+
+  // setupNodeEvents may have returned a non-zero numTestsKeptInMemory, which
+  // would otherwise stick after merging. In run mode we force it back to 0
+  // (unless explicitly honored via env var) so that snapshots can be captured
+  // properly when recording to protocol.
+  if (merged.isTextTerminal && !shouldHonorNumTestsKeptInMemory()) {
+    merged.numTestsKeptInMemory = 0
   }
 
   debug('merged plugins config %o', merged)

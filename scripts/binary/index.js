@@ -11,18 +11,32 @@ const minimist = require('minimist')
 const la = require('lazy-ass')
 const check = require('check-more-types')
 const debug = require('debug')('cypress:binary')
-const questionsRemain = require('@cypress/questions-remain')
 const rp = require('@cypress/request-promise')
+const semver = require('semver')
 
 const zip = require('./zip')
 const ask = require('./ask')
 const meta = require('./meta')
 const build = require('./build')
 const upload = require('./upload')
+const questionsRemain = require('./util/questions-remain')
 const uploadUtils = require('./util/upload')
 const { uploadArtifactToS3 } = require('./upload-build-artifact')
 const { moveBinaries } = require('./move-binaries')
-const { exec } = require('child_process')
+const { checkIfBinaryExistsOnCdn } = require('./check-binary-on-cdn')
+const xvfb = require('../../cli/lib/exec/xvfb').default
+const smoke = require('./smoke')
+const { needsSandbox } = require('../../cli/lib/tasks/verify')
+const execa = require('execa')
+
+const MANIFEST_URL = 'https://download.cypress.io/desktop.json'
+
+const log = function (msg) {
+  const time = new Date()
+  const timeStamp = time.toLocaleTimeString()
+
+  console.log(timeStamp, chalk.yellow(msg), chalk.blue(meta.PLATFORM))
+}
 
 const success = (str) => {
   return console.log(chalk.bgGreen(` ${chalk.black(str)} `))
@@ -48,6 +62,31 @@ const askMissingOptions = function (properties = []) {
   const pickedQuestions = _.pick(questions, properties)
 
   return questionsRemain(pickedQuestions)
+}
+
+async function testExecutableVersion (buildAppExecutable, version) {
+  log('#testVersion')
+
+  console.log('testing built app executable version')
+  console.log(`by calling: ${buildAppExecutable} --version`)
+
+  const args = ['--version']
+
+  if (needsSandbox()) {
+    args.push('--no-sandbox')
+  }
+
+  const result = await execa(buildAppExecutable, args)
+
+  la(result.stdout, 'missing output when getting built version', result)
+
+  console.log('built app version', result.stdout)
+  la(
+    result.stdout.trim() === version.trim(),
+    `different version reported: '${result.stdout.trim()}' from input version to build '${version.trim()}'`,
+  )
+
+  console.log('✅ using --version on the Cypress binary works')
 }
 
 // hack for @packages/server modifying cwd
@@ -88,16 +127,30 @@ const deploy = {
     const options = this.parseOptions(process.argv)
 
     const release = ({ version, commit }) => {
-      return upload.s3Manifest(version)
-      .then(() => {
-        if (commit) {
-          return commitVersion(version)
+      return this.getManifest()
+      .then((manifest) => {
+        const updatesManifest = !semver.lt(version, manifest.version)
+
+        if (!updatesManifest) {
+          console.log(`Leaving the manifest at ${chalk.yellow(manifest.version)}, since ${chalk.yellow(version)} is older.`)
         }
-      }).then(() => {
-        return success('Release Complete')
-      }).catch((err) => {
-        fail('Release Failed')
-        throw err
+
+        return Promise.resolve(updatesManifest && upload.s3Manifest(version))
+        .then(() => {
+          if (commit) {
+            return commitVersion(version)
+          }
+        }).then(() => {
+          return success('Release Complete')
+        }).catch((err) => {
+          fail('Release Failed')
+          throw err
+        })
+        .then(() => {
+          if (updatesManifest) {
+            return this.checkManifest({ version })
+          }
+        })
       })
       .then(() => {
         return this.checkDownloads({ version })
@@ -106,6 +159,26 @@ const deploy = {
 
     return askMissingOptions(['version'])(options)
     .then(release)
+  },
+
+  getManifest () {
+    return rp.get(MANIFEST_URL).then(JSON.parse)
+  },
+
+  checkManifest ({ version }) {
+    process.stdout.write(`Checking for ${chalk.yellow(version)} in the manifest at ${chalk.cyan(MANIFEST_URL)} ... `)
+
+    return this.getManifest().then((manifest) => {
+      const versionMatches = manifest.version === version
+
+      process.stdout.write(`${versionMatches ? '✅' : '❌'}\n`)
+
+      if (!versionMatches) {
+        console.log(chalk.red(`\nFound ${manifest.version} in the manifest, but ${version} was requested.`))
+
+        process.exit(1)
+      }
+    })
   },
 
   checkDownloads ({ version }) {
@@ -212,6 +285,38 @@ const deploy = {
 
       return build.packageElectronApp(options)
     })
+  },
+
+  async smoke (options) {
+    console.log('#smoke')
+
+    if (options == null) {
+      options = this.parseOptions(process.argv)
+    }
+
+    debug('parsed build options %o', options)
+
+    await askMissingOptions(['version'])(options)
+
+    // runSmokeTests
+    const usingXvfb = xvfb.isNeeded()
+
+    try {
+      if (usingXvfb) {
+        await xvfb.start()
+      }
+
+      log(`#testExecutableVersion ${meta.buildAppExecutable()}`)
+      await testExecutableVersion(meta.buildAppExecutable(), options.version)
+
+      const executablePath = meta.buildAppExecutable()
+
+      await smoke.test(executablePath, meta.buildAppDir())
+    } finally {
+      if (usingXvfb) {
+        await xvfb.stop()
+      }
+    }
   },
 
   zip (options) {
@@ -336,30 +441,7 @@ const deploy = {
     })
   },
 
-  async checkIfBinaryExistsOnCdn (args = process.argv) {
-    console.log('#checkIfBinaryExistsOnCdn')
-
-    const url = await uploadArtifactToS3([...args, '--dry-run', 'true'])
-
-    console.log(`Checking if ${url} exists...`)
-
-    const binaryExists = await rp.head(url)
-    .then(() => true)
-    .catch(() => false)
-
-    if (binaryExists) {
-      console.log('A binary was already built for this operating system and commit hash. Skipping binary build process...')
-      exec('circleci-agent step halt', (_, __, stdout) => {
-        console.log(stdout)
-      })
-
-      return
-    }
-
-    console.log('Binary does not yet exist. Continuing to build binary...')
-
-    return binaryExists
-  },
+  checkIfBinaryExistsOnCdn,
 }
 
 module.exports = _.bindAll(deploy, _.functions(deploy))

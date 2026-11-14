@@ -3,7 +3,7 @@ import { logger } from '../../../src/runner/logger'
 import _ from 'lodash'
 
 describe('logger', () => {
-  let spyLog = sinon.spy(logger, 'log')
+  const spyLog = sinon.spy(logger, 'log')
 
   afterEach(() => {
     // reset after each unit test
@@ -20,8 +20,31 @@ describe('logger', () => {
     expect(spyLog).to.have.been.calledWith(`%c  [2]:`, 'font-weight: bold', 3)
   })
 
+  it('cy.log() logs groups correctly', () => {
+    logger.logFormatted({ groups: [{ name: 'test', items: { 'key1': 'value1', 'longerkey2': 'value2' } }] })
+
+    expect(spyLog).to.have.been.calledWith(`%cKey1:       `, 'color: #4a90e2', 'value1')
+    expect(spyLog).to.have.been.calledWith(`%cLongerkey2: `, 'color: #4a90e2', 'value2')
+  })
+
+  it('ensures a fresh set of logs each time logger.logFormatted() is called', () => {
+    const props = { groups: [{ name: 'test', items: { 'key1': 'value1', 'longerkey2': 'value2' } }] }
+
+    logger.logFormatted(props)
+
+    expect(spyLog).to.have.been.calledWith(`%cKey1:       `, 'color: #4a90e2', 'value1')
+    expect(spyLog).to.have.been.calledWith(`%cLongerkey2: `, 'color: #4a90e2', 'value2')
+
+    spyLog.resetHistory()
+
+    logger.logFormatted(props)
+
+    expect(spyLog).to.have.been.calledWith(`%cKey1:       `, 'color: #4a90e2', 'value1')
+    expect(spyLog).to.have.been.calledWith(`%cLongerkey2: `, 'color: #4a90e2', 'value2')
+  })
+
   describe('_logValues', () => {
-    let spyTrim = sinon.spy(_, 'trim')
+    const spyTrim = sinon.spy(_, 'trim')
 
     afterEach(() => {
       // reset after each unit test

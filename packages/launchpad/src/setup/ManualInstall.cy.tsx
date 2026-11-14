@@ -1,9 +1,8 @@
 import sinon from 'sinon'
 import { ManualInstallFragmentDoc } from '../generated/graphql-test'
 import ManualInstall from './ManualInstall.vue'
-import * as deps from '@packages/scaffold-config/src/dependencies'
-import { defaultMessages } from '@cy/i18n'
 import { Clipboard_CopyToClipboardDocument } from '../generated/graphql'
+import { WIZARD_DEPENDENCY_REACT, WIZARD_DEPENDENCY_TYPESCRIPT } from '@packages/scaffold-config/browser/dependencies'
 
 describe('<ManualInstall />', () => {
   it('playground', () => {
@@ -17,8 +16,8 @@ describe('<ManualInstall />', () => {
   })
 
   it('lists packages and can copy install command to clipboard', { viewportWidth: 800, viewportHeight: 600 }, () => {
-    const framework = deps.WIZARD_DEPENDENCY_REACT_SCRIPTS
-    const language = deps.WIZARD_DEPENDENCY_TYPESCRIPT
+    const framework = WIZARD_DEPENDENCY_REACT
+    const language = WIZARD_DEPENDENCY_TYPESCRIPT
 
     const stubCopy = sinon.stub()
 
@@ -38,17 +37,17 @@ describe('<ManualInstall />', () => {
       })
     })
 
-    const installCommand = `npm install -D react-scripts typescript`
+    const installCommand = `npm install -D react react-dom typescript`
 
-    cy.findByText(defaultMessages.setupWizard.installDependencies.pasteCommand).should('be.visible')
+    cy.findByText('Paste this command into your terminal to install the following packages:').should('be.visible')
     cy.findByDisplayValue(installCommand).should('be.visible')
-    cy.findByRole('button', { name: 'Copy' }).click()
-    cy.findByRole('button', { name: 'Copied!' }).should('be.visible')
+    cy.getByRole('button', { name: 'Copy' }).click()
+    cy.getByRole('button', { name: 'Copied!' }).should('be.visible')
 
     cy.wrap(stubCopy).should('have.been.calledWith', installCommand)
 
     const validatePackage = (packageName: string) => {
-      cy.findByRole('link', { name: packageName })
+      cy.getByRole('link', { name: packageName })
       .should('have.attr', 'href', `https://www.npmjs.com/package/${packageName}`)
 
       cy.contains(framework.description.split('<span')[0])
@@ -67,6 +66,6 @@ describe('<ManualInstall />', () => {
       ),
     })
 
-    cy.findByLabelText('installed').should('be.visible')
+    cy.get('[aria-label="installed"]').should('be.visible')
   })
 })

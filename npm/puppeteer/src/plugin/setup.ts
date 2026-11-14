@@ -1,6 +1,8 @@
 import isPlainObject from 'lodash/isPlainObject'
-import defaultPuppeteer, { Browser, PuppeteerNode } from 'puppeteer-core'
+import type { Browser, PuppeteerNode } from 'puppeteer-core'
+import defaultPuppeteer from 'puppeteer-core'
 import { pluginError } from './util'
+import { activateMainTab } from './activateMainTab'
 
 type MessageHandler = (browser: Browser, ...args: any[]) => any | Promise<any>
 
@@ -15,14 +17,14 @@ function messageHandlerError (err: any) {
 
   if (typeof err === 'string') {
     errObject.message = err
-  } else if (typeof err === 'object') {
+  } else if (err && typeof err === 'object') {
     Object.assign(errObject, {
       name: err.name,
       message: err.message,
       stack: err.stack,
     })
   } else {
-    errObject.message = err
+    errObject.message = String(err)
   }
 
   return {
@@ -61,12 +63,17 @@ export function setup (options: SetupOptions) {
   let debuggerUrl: string
 
   try {
-    options.on('after:browser:launch', async (browser, options) => {
+    options.on('after:browser:launch', (browser: Cypress.Browser, options: Cypress.AfterBrowserLaunchDetails) => {
+      if (Number(browser.majorVersion) >= 137 && browser.name === 'chrome' && browser.isHeaded) {
+        // @see https://github.com/cypress-io/cypress/issues/31703
+        throw pluginError('@cypress/puppeteer does not work in Google Chrome v137 and higher in cypress open mode (or headed run mode). If you need to use @cypress/puppeteer in headed mode, please use Electron, Chrome for Testing, Chromium, or another Chrome variant that supports loading extensions.')
+      }
+
       cypressBrowser = browser
       debuggerUrl = options.webSocketDebuggerUrl
     })
   } catch (err: any) {
-    throw pluginError(`Could not set up \`after:browser:launch\` task. Ensure you are running Cypress >= 13.6.0. The following error was encountered:\n\n${err.stack}`)
+    throw pluginError(`Could not set up \`after:browser:launch\` task. Ensure you are running Cypress >= 14.0.0. The following error was encountered:\n\n${err.stack}`)
   }
 
   options.on('task', {
@@ -104,17 +111,41 @@ export function setup (options: SetupOptions) {
 
       let result: any
       let error: any
+      let didThrow = false
 
       try {
         result = await messageHandler(browser, ...args)
       } catch (err: any) {
         error = err
-      } finally {
-        await browser.disconnect()
+        didThrow = true
       }
 
-      if (error) {
+      // - Only implemented for Chromium right now. Support for Firefox/webkit
+      //   could be added later
+      // - Electron doesn't have tabs
+      // - Focus doesn't matter for headless browsers and old headless Chrome
+      //   doesn't run the extension
+      const isHeadedChromium = cypressBrowser.isHeaded && cypressBrowser.family === 'chromium' && cypressBrowser.name !== 'electron'
+      let didFailToActivateMainTab = false
+
+      if (isHeadedChromium) {
+        try {
+          await activateMainTab(browser)
+        } catch (e) {
+          didFailToActivateMainTab = true
+        }
+      }
+
+      await browser.disconnect()
+
+      // The handler's own error is the root cause, so it takes precedence
+      // over a failure to refocus the main tab afterwards
+      if (didThrow) {
         return messageHandlerError(error)
+      }
+
+      if (didFailToActivateMainTab) {
+        return messageHandlerError(pluginError('Cannot communicate with the Cypress Chrome extension. Ensure the extension is enabled when using the Puppeteer plugin.'))
       }
 
       // cy.task() errors if `undefined` is returned, so return null in that case

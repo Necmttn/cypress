@@ -1,13 +1,11 @@
-import Chai, { expect } from 'chai'
+import path from 'path'
+import { fileURLToPath } from 'node:url'
+import { vi, describe, it, beforeEach, expect } from 'vitest'
 import { EventEmitter } from 'events'
-import * as vite from 'vite'
+import * as vite8 from 'vite-8'
 import { scaffoldSystemTestProject } from './test-helpers/scaffoldProject'
-import { createViteDevServerConfig } from '../src/resolveConfig'
-import sinon from 'sinon'
-import SinonChai from 'sinon-chai'
+import { createViteDevServerConfig, JSX_REFRESH_SCRIPT_RE } from '../src/resolveConfig'
 import type { ViteDevServerConfig } from '../src/devServer'
-
-Chai.use(SinonChai)
 
 const getViteDevServerConfig = (projectRoot: string) => {
   return {
@@ -21,80 +19,116 @@ const getViteDevServerConfig = (projectRoot: string) => {
     framework: 'react',
   } as unknown as ViteDevServerConfig
 }
+const MAJOR_VERSIONS: ({ version: 8, vite: typeof vite8 })[] = [
+  {
+    version: 8,
+    vite: vite8,
+  },
+]
 
 describe('resolveConfig', function () {
-  this.timeout(1000 * 60)
+  MAJOR_VERSIONS.forEach(({ version, vite: discoveredVite }) => {
+    describe(`config resolution: v${version}`, () => {
+      it('with <project-root>/vite.config.js', async () => {
+        const projectRoot = await scaffoldSystemTestProject(`vite${version}-inspect`)
+        const viteDevServerConfig = getViteDevServerConfig(projectRoot)
 
-  context('config resolution', () => {
-    it('with <project-root>/vite.config.js', async () => {
-      const projectRoot = await scaffoldSystemTestProject('vite-inspect')
-      const viteDevServerConfig = getViteDevServerConfig(projectRoot)
+        const viteConfig = await createViteDevServerConfig(viteDevServerConfig, discoveredVite)
 
-      const viteConfig = await createViteDevServerConfig(viteDevServerConfig, vite)
-
-      expect(viteConfig.configFile).to.contain('vite-inspect')
-      expect(viteConfig.plugins.map((p: any) => p.name)).to.have.members(['cypress:main', 'cypress:sourcemap'])
-    })
-
-    it('with component.devServer.viteConfig provided', async () => {
-      const projectRoot = await scaffoldSystemTestProject('vite-inspect')
-      const inlineViteConfig = { base: '/will-be-overwritten', server: { port: 99999 } }
-      const viteDevServerConfig = { ...getViteDevServerConfig(projectRoot), viteConfig: inlineViteConfig }
-
-      const viteConfig = await createViteDevServerConfig(viteDevServerConfig, vite)
-
-      expect(viteConfig.configFile).eq(false)
-      expect(viteConfig.base).eq('/__cypress/src/')
-      expect(viteConfig.server.port).eq(99999)
-    })
-
-    it('calls viteConfig if it is a function', async () => {
-      const viteConfigFn = sinon.spy(async () => {
-        return {
-          server: {
-            fs: {
-              allow: ['some/other/file'],
-            },
-          },
-        }
+        expect(viteConfig.configFile).to.contain(`vite${version}-inspect`)
+        expect(viteConfig.plugins.map((p: any) => p.name)).to.have.members(['cypress:main', 'cypress:sourcemap'])
       })
 
-      const projectRoot = await scaffoldSystemTestProject('vite-inspect')
+      it('with component.devServer.viteConfig provided', async () => {
+        const projectRoot = await scaffoldSystemTestProject(`vite${version}-inspect`)
+        const inlineViteConfig = { base: '/will-be-overwritten', server: { port: 99999 } }
+        const viteDevServerConfig = { ...getViteDevServerConfig(projectRoot), viteConfig: inlineViteConfig }
+
+        const viteConfig = await createViteDevServerConfig(viteDevServerConfig, discoveredVite)
+
+        expect(viteConfig.configFile).eq(false)
+        expect(viteConfig.base).eq('/__cypress/src/')
+        expect(viteConfig.server.port).eq(99999)
+      })
+
+      it('calls viteConfig if it is a function', async () => {
+        const viteConfigFn = vi.fn().mockImplementation(async () => {
+          return {
+            server: {
+              fs: {
+                allow: ['some/other/file'],
+              },
+            },
+          }
+        })
+
+        const projectRoot = await scaffoldSystemTestProject(`vite${version}-inspect`)
+        const viteDevServerConfig = {
+          ...getViteDevServerConfig(projectRoot),
+          viteConfig: viteConfigFn,
+        }
+
+        const viteConfig = await createViteDevServerConfig(viteDevServerConfig, discoveredVite)
+
+        expect(viteConfigFn).toHaveBeenCalled()
+        expect(viteConfig.server?.fs?.allow).to.include('some/other/file')
+      })
+    })
+
+    describe('file watching', () => {
+      let viteDevServerConfig: ViteDevServerConfig
+
+      beforeEach(async () => {
+        const projectRoot = await scaffoldSystemTestProject(`vite${version}-inspect`)
+
+        viteDevServerConfig = getViteDevServerConfig(projectRoot)
+      })
+
+      it('should be disabled in run mode', async () => {
+        viteDevServerConfig.cypressConfig.isTextTerminal = true
+        const viteConfig = await createViteDevServerConfig(viteDevServerConfig, discoveredVite)
+
+        expect(viteConfig.server?.watch?.ignored).to.eql('**/*')
+        expect(viteConfig.server?.hmr).toBe(false)
+      })
+
+      it('uses defaults in open mode', async () => {
+        viteDevServerConfig.cypressConfig.isTextTerminal = false
+        const viteConfig = await createViteDevServerConfig(viteDevServerConfig, discoveredVite)
+
+        expect(viteConfig.server?.watch?.ignored).toBeUndefined()
+        expect(viteConfig.server?.hmr).toBeUndefined()
+      })
+    })
+  })
+
+  describe('Vite JSX refresh excludes component specs', () => {
+    // Real package root so createRequire can resolve `vite` like a consumer project; inline viteConfig skips fixture scaffolding.
+    const viteDevServerPackageRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
+
+    it('sets oxc.jsxRefreshInclude and jsxRefreshExclude from Cypress specs', async () => {
+      const specAbsolutes = [
+        path.join(viteDevServerPackageRoot, 'src', 'Hello.cy.tsx'),
+        path.join(viteDevServerPackageRoot, 'src', 'Other.cy.tsx'),
+      ]
       const viteDevServerConfig = {
-        ...getViteDevServerConfig(projectRoot),
-        viteConfig: viteConfigFn,
-      }
+        ...getViteDevServerConfig(viteDevServerPackageRoot),
+        viteConfig: {},
+        specs: [
+          { absolute: specAbsolutes[0], relative: 'src/Hello.cy.tsx' },
+          { absolute: specAbsolutes[1], relative: 'src/Other.cy.tsx' },
+        ],
+      } as unknown as ViteDevServerConfig
 
-      const viteConfig = await createViteDevServerConfig(viteDevServerConfig, vite)
+      const viteConfig = await createViteDevServerConfig(viteDevServerConfig, vite8)
 
-      expect(viteConfigFn).to.be.called
-      expect(viteConfig.server?.fs?.allow).to.include('some/other/file')
+      expect(viteConfig.oxc?.jsxRefreshInclude).to.equal(JSX_REFRESH_SCRIPT_RE)
+      expect(viteConfig.oxc?.jsxRefreshExclude).to.eql(specAbsolutes)
+    })
+
+    it('matches only script-like paths so imported CSS (e.g. support files) is not run through transformWithOxc', () => {
+      expect(JSX_REFRESH_SCRIPT_RE.test('/project/cypress/support/backgroundColor.css')).toBe(false)
+      expect(JSX_REFRESH_SCRIPT_RE.test('/project/src/App.cy.tsx')).toBe(true)
     })
   })
-
-  context('file watching', () => {
-    let viteDevServerConfig: ViteDevServerConfig
-
-    beforeEach(async () => {
-      const projectRoot = await scaffoldSystemTestProject('vite-inspect')
-
-      viteDevServerConfig = getViteDevServerConfig(projectRoot)
-    })
-
-    it('should be disabled in run mode', async () => {
-      viteDevServerConfig.cypressConfig.isTextTerminal = true
-      const viteConfig = await createViteDevServerConfig(viteDevServerConfig, vite)
-
-      expect(viteConfig.server?.watch?.ignored).to.eql('**/*')
-      expect(viteConfig.server?.hmr).to.be.false
-    })
-
-    it('uses defaults in open mode', async () => {
-      viteDevServerConfig.cypressConfig.isTextTerminal = false
-      const viteConfig = await createViteDevServerConfig(viteDevServerConfig, vite)
-
-      expect(viteConfig.server?.watch?.ignored).to.be.undefined
-      expect(viteConfig.server?.hmr).to.be.undefined
-    })
-  })
-})
+}, 1000 * 60)

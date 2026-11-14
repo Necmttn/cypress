@@ -1,9 +1,10 @@
 import Debug from 'debug'
 import preprocessor from './plugins/preprocessor'
+import { isSpecFrameScript } from './util/spec_frame_scripts'
 import { SocketBase } from './socket-base'
+import type { StartListeningOptions } from './socket-base'
 import { fs } from './util/fs'
 import type { DestroyableHttpServer } from './util/server_destroy'
-import * as studio from './studio'
 import type { FoundSpec } from '@packages/types'
 
 const debug = Debug('cypress:server:socket-e2e')
@@ -21,24 +22,38 @@ export class SocketE2E extends SocketBase {
     this.testFilePath = null
 
     this.onTestFileChange = this.onTestFileChange.bind(this)
-    this.onStudioTestFileChange = this.onStudioTestFileChange.bind(this)
-    this.removeOnStudioTestFileChange = this.removeOnStudioTestFileChange.bind(this)
 
     if (config.watchForFileChanges) {
       preprocessor.emitter.on('file:updated', this.onTestFileChange)
     }
   }
 
-  onStudioTestFileChange (filePath) {
+  onBeforeSave (config) {
+    // even if the user has turned off file watching
+    // we want to force a reload on save
+    if (!config.watchForFileChanges) {
+      preprocessor.emitter.on('file:updated', this.onCloudTestFileChange)
+    }
+  }
+
+  onAfterSave (config, error) {
+    // even if the user has turned off file watching
+    // we want to force a reload on save
+    if (error && !config.watchForFileChanges) {
+      preprocessor.emitter.off('file:updated', this.onCloudTestFileChange)
+    }
+  }
+
+  onCloudTestFileChange = (filePath) => {
     // wait for the studio test file to be written to disk, then reload the test
     // and remove the listener (since this handler is only invoked when watchForFileChanges is false)
     return this.onTestFileChange(filePath).then(() => {
-      this.removeOnStudioTestFileChange()
+      this.removeOnCloudTestFileChange()
     })
   }
 
-  removeOnStudioTestFileChange () {
-    return preprocessor.emitter.off('file:updated', this.onStudioTestFileChange)
+  removeOnCloudTestFileChange () {
+    return preprocessor.emitter.off('file:updated', this.onCloudTestFileChange)
   }
 
   onTestFileChange = (filePath) => {
@@ -70,6 +85,13 @@ export class SocketE2E extends SocketBase {
       specConfig.relative = specConfig.relative.slice(1)
     }
 
+    // getFile refuses a non-spec path too, but bail before touching watch state
+    if (!isSpecFrameScript(config, specConfig.relative)) {
+      debug('refusing to watch %o', specConfig.relative)
+
+      return
+    }
+
     // bail if we're already watching this exact file
     if (specConfig.relative === this.testFilePath) {
       return
@@ -90,7 +112,7 @@ export class SocketE2E extends SocketBase {
     .catch(() => {})
   }
 
-  startListening (server: DestroyableHttpServer, automation, config, options) {
+  startListening (server: DestroyableHttpServer, automation, config, options: StartListeningOptions) {
     return super.startListening(server, automation, config, options, {
       onSocketConnection: (socket) => {
         socket.on('watch:test:file', (specInfo: FoundSpec, cb = function () { }) => {
@@ -100,32 +122,6 @@ export class SocketE2E extends SocketBase {
 
           // callback is only for testing purposes
           return cb()
-        })
-
-        socket.on('studio:save', (saveInfo, cb) => {
-          // even if the user has turned off file watching
-          // we want to force a reload on save
-          if (!config.watchForFileChanges) {
-            preprocessor.emitter.on('file:updated', this.onStudioTestFileChange)
-          }
-
-          studio.save(saveInfo)
-          .then((err) => {
-            cb(err)
-
-            // onStudioTestFileChange will remove itself after being called
-            // but if there's an error, it never gets called so we manually remove it
-            if (err && !config.watchForFileChanges) {
-              this.removeOnStudioTestFileChange()
-            }
-          })
-          .catch(() => {})
-        })
-
-        socket.on('studio:get:commands:text', (commands, cb) => {
-          const commandsText = studio.getCommandsText(commands)
-
-          cb(commandsText)
         })
       },
     })

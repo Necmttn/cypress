@@ -1,4 +1,5 @@
 import { defineConfig } from 'cypress'
+import { setupCyInCyVariables } from '@packages/frontend-shared/cypress/tasks/cy-in-cy-variables'
 
 export default defineConfig({
   projectId: 'ypt4pf',
@@ -13,7 +14,14 @@ export default defineConfig({
       delete process.env.HTTP_PROXY_TARGET_FOR_ORIGIN_REQUESTS
       delete process.env.CYPRESS_INTERNAL_E2E_TESTING_SELF_PARENT_PROJECT
       process.env.CYPRESS_INTERNAL_E2E_TESTING_SELF = 'true'
+
       const { e2ePluginSetup } = require('@packages/frontend-shared/cypress/e2e/e2ePluginSetup') as typeof import('@packages/frontend-shared/cypress/e2e/e2ePluginSetup')
+      const { setCyInCyVariables, getCyInCyVariables } = setupCyInCyVariables()
+
+      on('task', {
+        setCyInCyVariables,
+        getCyInCyVariables,
+      })
 
       return await e2ePluginSetup(on, config)
     },
@@ -21,7 +29,7 @@ export default defineConfig({
   retries: {
     runMode: 2,
   },
-  // @ts-ignore We are setting these namespaces in order to properly test Cypress in Cypress
+  // @ts-expect-error - these internal options are not in the public config type; set them to test Cypress in Cypress
   clientRoute: '/__app/',
   namespace: '__cypress-app',
   socketIoRoute: '/__app-socket',

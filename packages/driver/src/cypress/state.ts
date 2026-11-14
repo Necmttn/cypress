@@ -1,5 +1,3 @@
-/// <reference path="../../types/cypress/log.d.ts" />
-
 import type Bluebird from 'bluebird'
 
 import type { RouteMap } from '../cy/net-stubbing/types'
@@ -31,9 +29,8 @@ export interface StateFunc {
   (k: 'specWindow', v?: Window): Window
   (k: 'runnable', v?: CypressRunnable): CypressRunnable
   (k: 'isStable', v?: boolean): boolean
-  (k: 'whenStable', v?: null | (() => Promise<any>)): () => Promise<any>
   (k: 'current', v?: $Command): $Command
-  (k: 'canceld', v?: boolean): boolean
+  (k: 'canceled', v?: boolean): boolean
   (k: 'error', v?: Error): Error
   (k: 'assertUsed', v?: boolean): boolean
   (k: 'currentAssertionUserInvocationStack', v?: string): string
@@ -54,6 +51,7 @@ export interface StateFunc {
   (k: 'promise', v?: Bluebird<unknown>): Bluebird<unknown>
   (k: 'reject', v?: (err: any) => any): (err: any) => any
   (k: 'cancel', v?: () => void): () => void
+  (k: 'aliasRequests', v?: Record<string, number>): Record<string, number>
   (k: string, v?: any): any
   state: StateFunc
   reset: () => Record<string, any>

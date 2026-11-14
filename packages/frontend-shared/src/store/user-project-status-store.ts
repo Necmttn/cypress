@@ -7,9 +7,12 @@ interface LoginUserData {
   email: string | null
 }
 
+export type AuthFlow = 'login' | 'signup'
+
 export interface UserProjectStatusState {
   hasInitiallyLoaded: boolean
   isLoginConnectOpen: boolean
+  authFlow: AuthFlow
   utmMedium: string
   utmContent?: string
   cypressFirstOpened?: number
@@ -49,14 +52,14 @@ export const CLOUD_STATUSES = [
   'allTasksCompleted',
 ] as const
 
-export const PROJECT_STATUSES = [
+const _PROJECT_STATUSES = [
   'isComponentTestingCandidate',
   'allTasksCompleted',
 ] as const
 
 export type CloudStatus = typeof CLOUD_STATUSES[number]
 
-export type ProjectStatus = typeof PROJECT_STATUSES[number]
+export type ProjectStatus = typeof _PROJECT_STATUSES[number]
 
 export const useUserProjectStatusStore = defineStore({
   id: 'userProjectStatus',
@@ -67,6 +70,7 @@ export const useUserProjectStatusStore = defineStore({
       utmMedium: '',
       utmContent: undefined,
       isLoginConnectOpen: false,
+      authFlow: 'login',
       cypressFirstOpened: undefined,
       userData: undefined,
       testingType: undefined,
@@ -99,11 +103,19 @@ export const useUserProjectStatusStore = defineStore({
     },
     openLoginConnectModal ({ utmMedium, utmContent }: { utmMedium: string, utmContent?: string }) {
       this.isLoginConnectOpen = true
+      this.authFlow = 'login'
+      this.utmMedium = utmMedium
+      this.utmContent = utmContent
+    },
+    openSignupConnectModal ({ utmMedium, utmContent }: { utmMedium: string, utmContent?: string }) {
+      this.isLoginConnectOpen = true
+      this.authFlow = 'signup'
       this.utmMedium = utmMedium
       this.utmContent = utmContent
     },
     closeLoginConnectModal () {
       this.isLoginConnectOpen = false
+      this.authFlow = 'login'
       this.utmMedium = ''
       this.utmContent = undefined
     },

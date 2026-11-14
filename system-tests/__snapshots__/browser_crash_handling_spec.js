@@ -28,7 +28,6 @@ This can happen for a number of different reasons.
 
 If you're running lots of tests on a memory intense application.
   - Try increasing the CPU/memory on the machine you're running on.
-  - Try enabling experimentalMemoryManagement in your config file.
   - Try lowering numTestsKeptInMemory in your config file during 'cypress open'.
 
 You can learn more here:
@@ -121,7 +120,6 @@ This can happen for a number of different reasons.
 
 If you're running lots of tests on a memory intense application.
   - Try increasing the CPU/memory on the machine you're running on.
-  - Try enabling experimentalMemoryManagement in your config file.
   - Try lowering numTestsKeptInMemory in your config file during 'cypress open'.
 
 You can learn more here:
@@ -496,7 +494,7 @@ exports['Browser Crash Handling / when the tab closes in chrome / fails'] = `
   Running:  chrome_tab_close.cy.js                                                          (1 of 2)
 
 
-We detected that the Chrome browser process closed unexpectedly.
+We detected that the Chrome tab running Cypress tests closed unexpectedly.
 
 We have failed the current spec and aborted the run.
 

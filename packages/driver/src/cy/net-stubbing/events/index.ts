@@ -56,14 +56,14 @@ export function registerEvents (Cypress: Cypress.Cypress, cy: Cypress.cy) {
   }
 
   function sendStaticResponse (requestId: string, staticResponse: StaticResponse) {
-    emitNetEvent('send:static:response', {
+    // emitNetEvent reports errors through cy.fail, and only rejects if cy.fail rethrows
+    void emitNetEvent('send:static:response', {
       requestId,
       staticResponse: getBackendStaticResponse(staticResponse),
     })
   }
 
   function failCurrentTest (err: Error) {
-    // @ts-ignore
     cy.fail(err, { async: true })
   }
 
@@ -93,7 +93,7 @@ export function registerEvents (Cypress: Cypress.Cypress, cy: Cypress.cy) {
       if (!route) {
         if (frame.subscription.await) {
           // route not found, just resolve so the request can continue
-          emitResolved(frame.data)
+          void emitResolved(frame.data)
         }
 
         return

@@ -4,7 +4,6 @@ import type { Configuration } from 'webpack'
 
 const CleanWebpackPlugin = getCleanWebpackPlugin()
 
-// @ts-ignore
 const config: Configuration = {
   ...getCommonConfig(),
   entry: {
@@ -17,10 +16,8 @@ const config: Configuration = {
   },
 }
 
-// @ts-ignore
 config.plugins = [
-  // @ts-ignore
-  ...config.plugins,
+  ...(config.plugins ?? []),
   new HtmlWebpackPlugin({
     template: path.resolve(__dirname, 'static/index.html'),
     inject: false,
@@ -32,10 +29,6 @@ config.resolve = {
   ...config.resolve,
   alias: {
     'lodash': require.resolve('lodash'),
-    'mobx': require.resolve('mobx'),
-    'mobx-react': require.resolve('mobx-react'),
-    'react': require.resolve('react'),
-    'react-dom': require.resolve('react-dom'),
   },
 }
 

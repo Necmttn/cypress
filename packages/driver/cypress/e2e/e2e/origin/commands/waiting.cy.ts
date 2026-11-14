@@ -1,3 +1,4 @@
+/* eslint-disable cypress/no-unnecessary-waiting -- these specs test cy.wait itself, including waiting a fixed time */
 import { findCrossOriginLogs } from '../../../../support/utils'
 
 declare global {
@@ -142,7 +143,8 @@ context('cy.origin waiting', { browser: '!webkit' }, () => {
       })
     })
 
-    it('can turn off logging when protocol is disabled', { protocolEnabled: false }, function () {
+    it('can turn off logging when protocol is disabled', function () {
+      cy.state('isProtocolEnabled', false)
       cy.on('_log:added', (attrs, log) => {
         logs.set(attrs.id, log)
       })
@@ -162,7 +164,8 @@ context('cy.origin waiting', { browser: '!webkit' }, () => {
       })
     })
 
-    it('can send hidden log when protocol is enabled', { protocolEnabled: true }, function () {
+    it('can send hidden log when protocol is enabled', function () {
+      cy.state('isProtocolEnabled', true)
       cy.on('_log:added', (attrs, log) => {
         logs.set(attrs.id, log)
       })
@@ -279,6 +282,7 @@ context('cy.origin waiting', { browser: '!webkit' }, () => {
         cy.intercept('/foo', {}).as('foo')
 
         cy.origin('http://www.foobar.com:3500', () => {
+          // @ts-expect-error intentionally omitting '@' to test runtime error message
           cy.wait('foo')
         })
       })
@@ -326,7 +330,7 @@ context('cy.origin waiting', { browser: '!webkit' }, () => {
         })
 
         cy.origin('http://www.foobar.com:3500', () => {
-          // @ts-ignore
+          // @ts-expect-error - deliberately passes a second alias as the options argument
           cy.wait('@foo', '@bar')
         })
       })

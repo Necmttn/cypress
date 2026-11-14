@@ -1,7 +1,6 @@
-import { defaultMessages } from '@cy/i18n'
 import InstallDependencies from './InstallDependencies.vue'
 import { InstallDependenciesFragmentDoc } from '../generated/graphql-test'
-import * as wizardDeps from '@packages/scaffold-config/src/dependencies'
+import { WIZARD_DEPENDENCY_REACT, WIZARD_DEPENDENCY_REACT_DOM, WIZARD_DEPENDENCY_TYPESCRIPT } from '@packages/scaffold-config/browser/dependencies'
 
 describe('<InstallDependencies />', () => {
   beforeEach(function () {
@@ -15,9 +14,13 @@ describe('<InstallDependencies />', () => {
       },
     })
 
-    cy.contains('a', 'react-scripts')
+    cy.contains('a', 'react')
     .should('be.visible')
-    .and('have.attr', 'href', 'https://www.npmjs.com/package/react-scripts')
+    .and('have.attr', 'href', 'https://www.npmjs.com/package/react')
+
+    cy.contains('a', 'react-dom')
+    .should('be.visible')
+    .and('have.attr', 'href', 'https://www.npmjs.com/package/react-dom')
 
     cy.contains('a', 'typescript')
     .should('be.visible')
@@ -33,10 +36,10 @@ describe('<InstallDependencies />', () => {
       },
     })
 
-    cy.contains('button', defaultMessages.clipboard.copy).should('be.visible')
-    cy.contains('button', defaultMessages.setupPage.step.back).should('be.visible')
+    cy.contains('button', 'Copy').should('be.visible')
+    cy.contains('button', 'Back').should('be.visible')
 
-    cy.contains('button', defaultMessages.setupPage.step.skip).should('be.visible')
+    cy.contains('button', 'Skip').should('be.visible')
   })
 
   it('triggers back button callback', function () {
@@ -48,8 +51,8 @@ describe('<InstallDependencies />', () => {
       },
     })
 
-    cy.findByRole('button', {
-      name: defaultMessages.setupPage.step.back,
+    cy.getByRole('button', {
+      name: 'Back',
     })
     .should('be.visible')
     .click()
@@ -65,17 +68,24 @@ describe('<InstallDependencies />', () => {
         gqlVal.wizard.packagesToInstall = [
           {
             __typename: 'WizardNpmPackage',
-            id: 'cra',
+            id: 'react',
             satisfied: true,
-            detectedVersion: '1.0.1',
-            ...wizardDeps.WIZARD_DEPENDENCY_REACT_SCRIPTS,
+            detectedVersion: '18.3.1',
+            ...WIZARD_DEPENDENCY_REACT,
+          },
+          {
+            __typename: 'WizardNpmPackage',
+            id: 'react-dom',
+            satisfied: true,
+            detectedVersion: '18.3.1',
+            ...WIZARD_DEPENDENCY_REACT_DOM,
           },
           {
             __typename: 'WizardNpmPackage',
             id: 'typescript',
             satisfied: true,
             detectedVersion: '2.0.1',
-            ...wizardDeps.WIZARD_DEPENDENCY_TYPESCRIPT,
+            ...WIZARD_DEPENDENCY_TYPESCRIPT,
           },
         ]
 

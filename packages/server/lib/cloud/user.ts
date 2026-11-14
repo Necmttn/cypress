@@ -1,20 +1,23 @@
-const api = require('./api')
-const cache = require('../cache')
+import api from './api'
+import { cache } from '../cache'
 
 import type { CachedUser } from '@packages/types'
-import type Bluebird from 'bluebird'
 
-export = {
-  get (): Bluebird<CachedUser> {
+const cloudUser = {
+  get (): Promise<CachedUser> {
     return cache.getUser()
   },
 
-  set (user: CachedUser): Bluebird<CachedUser> {
+  set (user: CachedUser): Promise<void> {
     return cache.setUser(user)
   },
 
-  getBaseLoginUrl (): string {
-    return api.getAuthUrls().get('dashboardAuthUrl')
+  getBaseLoginUrl (): Promise<string> {
+    return api.getAuthUrls().then((urls) => urls.dashboardAuthUrl)
+  },
+
+  getBaseSignupUrl (): Promise<string> {
+    return api.getAuthUrls().then((urls) => urls.dashboardSignupUrl)
   },
 
   logOut () {
@@ -25,7 +28,11 @@ export = {
         if (authToken) {
           return api.postLogout(authToken)
         }
+
+        return undefined
       })
     })
   },
 }
+
+export default cloudUser

@@ -22,11 +22,8 @@ export const urqlCacheKeys: Partial<UrqlCacheKeys> = {
   keys: {
     DevState: (data) => data.__typename,
     Wizard: (data) => data.__typename,
-    Migration: (data) => data.__typename,
     CloudRunCommitInfo: () => null,
     GitInfo: () => null,
-    MigrationFile: () => null,
-    MigrationFilePart: () => null,
     CodeFrame: () => null,
     ProjectPreferences: (data) => data.__typename,
     VersionData: () => null,
@@ -45,6 +42,11 @@ export const urqlCacheKeys: Partial<UrqlCacheKeys> = {
     GenerateSpecResponse: (data) => data.__typename,
     CloudFeatureNotEnabled: () => null,
     UsageLimitExceeded: () => null,
+    // Embed on parent CloudAppMessage; ids are not globally unique entity keys.
+    CloudAppMessageDismissal: () => null,
+    CloudAppMessageAnalytics: () => null,
+    CloudAppMessageCta: () => null,
+    CloudAppMessageUtm: () => null,
   },
   resolvers: {
     CloudProject: {

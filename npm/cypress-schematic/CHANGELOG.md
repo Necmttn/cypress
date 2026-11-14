@@ -1,3 +1,128 @@
+# [@[secure]/schematic-v6.0.0](https://github.com/[secure]-io/[secure]/compare/@[secure]/schematic-v5.0.0...@[secure]/schematic-v6.0.0) (2026-08-26)
+
+
+### breaking
+
+* merge @[secure]/angular-zoneless upstream into @[secure]/angular and remove angular support for angular 18, 19 and 20. ([4d8e35c](https://github.com/[secure]-io/[secure]/commit/4d8e35ca7b49e732a05742ae2e410e173b8d89f2))
+* release version 6.0.0 of @[secure]/schematic ([6f5bfae](https://github.com/[secure]-io/[secure]/commit/6f5bfae438c70b0ad07e6d1340e70a56c60428a1))
+* remove @angular/platform-[secure]-dynamic in favor of @angular/platform-[secure] for @[secure]/angular ([f47feda](https://github.com/[secure]-io/[secure]/commit/f47fedadd4bdfcfb6cff5c9db2289c0d32f72a84))
+
+
+### Features
+
+* add Angular 22 [secure] [secure] support for Cypress 16 ([#34046](https://github.com/[secure]-io/[secure]/issues/34046)) ([df8980e](https://github.com/[secure]-io/[secure]/commit/df8980e474c4d7376a8ee30cd45e630945a176e5))
+
+
+### BREAKING CHANGES
+
+* remove @angular/platform-[secure]-dynamic in favor of @angular/platform-[secure] for @[secure]/angular
+* merge @[secure]/angular-zoneless upstream into @[secure]/angular and remove angular support for angular 18, 19, and 20. Additionally, @[secure]/schematic only supports Cypress 16 and doesnt scaffold the angular-zoneless mount handler any longer. This is a breaking change to Cypress, @[secure]/angular, and @[secure]/schematic. Additionally, @[secure]/angular-zoneless will be deprecated on NPM due to the upstream move
+i
+* updates @[secure]/schematic build target from es2018 to es2022. This is still a CJS module as devkit does not support ESM.
+
+# [@cypress/schematic-v5.0.0](https://github.com/cypress-io/cypress/compare/@cypress/schematic-v4.3.0...@cypress/schematic-v5.0.0) (2025-12-19)
+
+
+### breaking
+
+* release version 5.0.0 of @cypress/schematic. ([e3c9214](https://github.com/cypress-io/cypress/commit/e3c921412c215ca469f354ab1f4d4c08dd359f58))
+
+
+### BREAKING CHANGES
+
+* release version 5.0.0 of @cypress/schematic, which supports Angular 20 and 21 and adds scaffolding support for @cypress/angular-zoneless for Angular 21+ projects. Since Cypress introduced @cypress/angular-zoneless in Cypress 15.8.0, Cypress ^15.8.0 is now a peer dependency of @cypress/schematic. Additionally, support for Angular 18 and 19 have been removed and will only be supported in @cypress/schematic ^4.0.0.
+
+# [@cypress/schematic-v4.3.0](https://github.com/cypress-io/cypress/compare/@cypress/schematic-v4.2.0...@cypress/schematic-v4.3.0) (2025-12-05)
+
+
+### Features
+
+* add `cypress/angular-zoneless` testing harness for Angular 21 (also supports Angular 20) ([#33025](https://github.com/cypress-io/cypress/issues/33025)) ([0f215f3](https://github.com/cypress-io/cypress/commit/0f215f3f554e3f99624b25e19c03ecfd771aba52))
+
+# [@cypress/schematic-v4.2.0](https://github.com/cypress-io/cypress/compare/@cypress/schematic-v4.1.4...@cypress/schematic-v4.2.0) (2025-12-03)
+
+
+### Features
+
+* add support for Angular 21 ([#33004](https://github.com/cypress-io/cypress/issues/33004)) ([b1d85c9](https://github.com/cypress-io/cypress/commit/b1d85c9af17acde6305ec6dfa3800cc523f6abba))
+
+# [@cypress/schematic-v4.1.4](https://github.com/cypress-io/cypress/compare/@cypress/schematic-v4.1.3...@cypress/schematic-v4.1.4) (2025-10-03)
+
+# [@cypress/schematic-v4.1.3](https://github.com/cypress-io/cypress/compare/@cypress/schematic-v4.1.2...@cypress/schematic-v4.1.3) (2025-09-18)
+
+# [@cypress/schematic-v4.1.2](https://github.com/cypress-io/cypress/compare/@cypress/schematic-v4.1.1...@cypress/schematic-v4.1.2) (2025-09-02)
+
+
+### Bug Fixes
+
+* move @cypress/schematic npm registry query to https ([#32390](https://github.com/cypress-io/cypress/issues/32390)) ([21be37e](https://github.com/cypress-io/cypress/commit/21be37e72e475be2122ab91f8119e48f1d82c32f))
+
+# [@cypress/schematic-v4.1.1](https://github.com/cypress-io/cypress/compare/@cypress/schematic-v4.1.0...@cypress/schematic-v4.1.1) (2025-08-20)
+
+
+### Bug Fixes
+
+* Redirect spammy electron stderr to a debug sink ([#32188](https://github.com/cypress-io/cypress/issues/32188)) ([e463fdb](https://github.com/cypress-io/cypress/commit/e463fdbc61143238e38004ef242515920f16d60a))
+
+# [@cypress/schematic-v4.1.0](https://github.com/cypress-io/cypress/compare/@cypress/schematic-v4.0.0...@cypress/schematic-v4.1.0) (2025-08-14)
+
+
+### Features
+
+* support Angular 20 ([#32198](https://github.com/cypress-io/cypress/issues/32198)) ([c96115d](https://github.com/cypress-io/cypress/commit/c96115df0fc29df23850c7b13dbb2c6cf257c552))
+
+# [@cypress/schematic-v4.0.0](https://github.com/cypress-io/cypress/compare/@cypress/schematic-v3.0.0...@cypress/schematic-v4.0.0) (2025-08-08)
+
+
+### breaking
+
+* remove Angular 17 support ([#31446](https://github.com/cypress-io/cypress/issues/31446)) ([971b7ae](https://github.com/cypress-io/cypress/commit/971b7ae3d7d3aa0fd608550e9d896b3d2b8c8634))
+
+
+### BREAKING CHANGES
+
+* Removed support for Angular 17. Only Angular 18 and 19 are now supported. This change affects the @cypress/angular package. Addresses #31303.
+
+* empty commit to kick CI
+
+* update changelog references to make it clearer on where angular 17 packages live historically
+
+* fix cy framework errors app test to use angualr 18 and 19
+
+* fix issue where di was not discoverable in resolved system tests config
+
+* fix scaffold dependencies to use angular 18 and 19 and not 17 and 18
+
+* fix zonr.js system test dependency resolution
+
+* bump cache
+
+* fix failing handler test
+
+# [@cypress/schematic-v3.0.0](https://github.com/cypress-io/cypress/compare/@cypress/schematic-v2.5.2...@cypress/schematic-v3.0.0) (2025-01-08)
+
+
+### breaking
+
+* release version 3.0.0 of @cypress/schematic. ([e51b975](https://github.com/cypress-io/cypress/commit/e51b975b749cb3a34a9a77ecac176290885d7330))
+
+
+### Features
+
+* support angular 19 and update tests [run ci] ([#30675](https://github.com/cypress-io/cypress/issues/30675)) ([dcdefb4](https://github.com/cypress-io/cypress/commit/dcdefb4069486d587a87de802064017ec9b67b55))
+
+
+### BREAKING CHANGES
+
+* Cypress 14 drops support for Angular 13-16. Angular 17.2 and up is supported.
+
+# [@cypress/schematic-v2.5.2](https://github.com/cypress-io/cypress/compare/@cypress/schematic-v2.5.1...@cypress/schematic-v2.5.2) (2024-06-07)
+
+
+### Bug Fixes
+
+* update cypress to Typescript 5 ([#29568](https://github.com/cypress-io/cypress/issues/29568)) ([f3b6766](https://github.com/cypress-io/cypress/commit/f3b67666a5db0438594339c379cf27e1fd1e4abc))
+
 # [@cypress/schematic-v2.5.1](https://github.com/cypress-io/cypress/compare/@cypress/schematic-v2.5.0...@cypress/schematic-v2.5.1) (2023-09-07)
 
 # [@cypress/schematic-v2.5.0](https://github.com/cypress-io/cypress/compare/@cypress/schematic-v2.4.0...@cypress/schematic-v2.5.0) (2023-01-25)

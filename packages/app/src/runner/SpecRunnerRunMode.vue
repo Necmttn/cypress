@@ -21,9 +21,10 @@
       @resize-end="handleResizeEnd"
       @panel-width-updated="handlePanelWidthUpdated"
     >
-      <template #panel2>
+      <template #panel2="{ isDragging }">
         <HideDuringScreenshot
           class="h-full"
+          :class="{ 'pointer-events-none': isDragging }"
         >
           <div
             v-if="!hideCommandLog"
@@ -39,7 +40,6 @@
             v-if="!hideRunnerUi"
             :event-manager="eventManager"
             :get-aut-iframe="getAutIframeModel"
-            class="bg-white"
           />
         </HideDuringScreenshot>
         <RemoveClassesDuringScreenshotting
@@ -131,5 +131,5 @@ onBeforeUnmount(() => {
 </route>
 
 <style scoped lang="scss">
-@import "./spec-runner-scoped.scss";
+@use "./spec-runner-scoped.scss";
 </style>

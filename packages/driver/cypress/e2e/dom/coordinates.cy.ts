@@ -3,8 +3,6 @@ import $elements from '../../../src/dom/elements'
 
 const { $ } = Cypress
 
-export {}
-
 describe('src/dom/coordinates', () => {
   beforeEach(function () {
     cy.visit('/fixtures/generic.html').then(() => {
@@ -280,7 +278,7 @@ this is some long text with a single <span id="multiple" style="color:darkblue">
       const $el = cy.$$('#multiple')
       const el = $el[0]
 
-      cy.stub(el, 'getClientRects', () => {
+      cy.stub(el, 'getClientRects').callsFake(() => {
         return [
           {
             top: 100,

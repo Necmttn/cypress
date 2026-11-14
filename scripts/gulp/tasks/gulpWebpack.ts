@@ -1,5 +1,4 @@
 import chalk from 'chalk'
-import pDefer from 'p-defer'
 import { monorepoPaths } from '../monorepoPaths'
 import { universalSpawn } from '../utils/childProcessUtils'
 import { addChildProcess } from './gulpRegistry'
@@ -11,6 +10,7 @@ export function webpackReporter () {
     cwd: monorepoPaths.pkgReporter,
     prefix: 'webpack:reporter',
     args: ['-w'],
+    enableLiveReload: true,
   })
 }
 
@@ -19,6 +19,7 @@ export function webpackRunner () {
     cwd: monorepoPaths.pkgRunner,
     prefix: 'webpack:runner',
     args: ['-w'],
+    enableLiveReload: true,
   })
 }
 
@@ -27,25 +28,22 @@ type RunWebpackCfg = {
   prefix: string
   args?: string[]
   env?: Env
-  devServer?: boolean
+  enableLiveReload?: boolean
 }
 
 export async function runWebpack (cfg: RunWebpackCfg) {
-  const { cwd, args = [], env = process.env, devServer = false, prefix } = cfg
-  const dfd = pDefer()
-  const spawned = universalSpawn(
-    devServer
-      ? 'webpack-dev-server'
-      : 'webpack',
+  const { cwd, args = [], env = process.env, prefix, enableLiveReload = false } = cfg
+  const dfd = Promise.withResolvers()
+  const spawned = universalSpawn('webpack',
     args,
     {
       cwd,
       env: {
         ...(env || process.env),
         FORCE_COLOR: '1',
+        ENABLE_LIVE_RELOAD: enableLiveReload ? '1' : undefined,
       },
-    },
-  )
+    })
 
   addChildProcess(spawned)
 

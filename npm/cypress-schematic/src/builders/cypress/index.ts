@@ -1,6 +1,8 @@
-import {
+import type {
   BuilderContext,
   BuilderOutput,
+} from '@angular-devkit/architect'
+import {
   createBuilder,
   scheduleTargetAndForget,
   targetFromTargetString,
@@ -9,12 +11,13 @@ import { asWindowsPath, normalize } from '@angular-devkit/core'
 import * as os from 'os'
 import { dirname, join } from 'path'
 import { open, run } from 'cypress'
-import { from, noop, Observable, of } from 'rxjs'
+import type { Observable } from 'rxjs'
+import { from, noop, of } from 'rxjs'
 import { catchError, concatMap, first, map, switchMap, tap } from 'rxjs/operators'
-import { CypressBuilderOptions } from './cypressBuilderOptions'
+import type { CypressBuilderOptions } from './cypressBuilderOptions'
 
 type CypressOptions = Partial<CypressCommandLine.CypressRunOptions> &
-Partial<CypressCommandLine.CypressOpenOptions>;
+Partial<CypressCommandLine.CypressOpenOptions>
 
 type CypressStartDevServerProps = {
   devServerTarget: string
@@ -82,7 +85,7 @@ function initCypress (userOptions: CypressBuilderOptions): Observable<BuilderOut
   const options: CypressOptions = {
     ...defaultOptions,
     ...userOptions,
-    //@ts-ignore
+    // @ts-expect-error - `dev` is an internal option not declared in `CypressOptions`
     dev: process.env.CYPRESS_ENV === 'test',
   }
 

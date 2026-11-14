@@ -1,13 +1,14 @@
 import _ from 'lodash'
-import { observable } from 'mobx'
+import { observable, makeObservable } from 'mobx'
 
 interface DefaultAppState {
   isPaused: boolean
   isRunning: boolean
-  isPreferencesMenuOpen: boolean
   nextCommandName: string | null | undefined
   pinnedSnapshotId: number | string | null
   studioActive: boolean
+  studioSingleTestActive: boolean
+  hasBeenPaused: boolean
 }
 
 // these are used for the `reset` method
@@ -15,26 +16,50 @@ interface DefaultAppState {
 const defaults: DefaultAppState = {
   isPaused: false,
   isRunning: false,
-  isPreferencesMenuOpen: false,
   nextCommandName: null,
   pinnedSnapshotId: null,
   studioActive: false,
+  studioSingleTestActive: false,
+  hasBeenPaused: false,
 }
 
 class AppState {
-  @observable autoScrollingUserPref = true
-  @observable autoScrollingEnabled = true
-  @observable isSpecsListOpen = false
-  @observable isPaused = defaults.isPaused
-  @observable isRunning = defaults.isRunning
-  @observable isPreferencesMenuOpen = defaults.isPreferencesMenuOpen
-  @observable nextCommandName = defaults.nextCommandName
-  @observable pinnedSnapshotId = defaults.pinnedSnapshotId
-  @observable studioActive = defaults.studioActive
-
-  isStopped = false;
-  _resetAutoScrollingEnabledTo = true;
+  autoScrollingUserPref = true
+  autoScrollingEnabled = true
+  isSpecsListOpen = false
+  isPaused = defaults.isPaused
+  isRunning = defaults.isRunning
+  nextCommandName = defaults.nextCommandName
+  pinnedSnapshotId = defaults.pinnedSnapshotId
+  studioActive = defaults.studioActive
+  studioSingleTestActive = defaults.studioSingleTestActive
+  showFetchRequests = true
+  // Gates the cy.prompt Feedback / Get Code buttons; read-only hosts disable it.
+  // Omitted from `defaults` so it survives `reset()`.
+  cyPromptActionsEnabled = true
+  isStopped = false
+  hasBeenPaused = defaults.hasBeenPaused
+  _resetAutoScrollingEnabledTo = true
+  codeEditorLineWrap = false;
   [key: string]: any
+
+  constructor () {
+    makeObservable(this, {
+      autoScrollingUserPref: observable,
+      autoScrollingEnabled: observable,
+      isSpecsListOpen: observable,
+      isPaused: observable,
+      isRunning: observable,
+      nextCommandName: observable,
+      pinnedSnapshotId: observable,
+      studioActive: observable,
+      studioSingleTestActive: observable,
+      showFetchRequests: observable,
+      cyPromptActionsEnabled: observable,
+      hasBeenPaused: observable,
+      codeEditorLineWrap: observable,
+    })
+  }
 
   startRunning () {
     this.isRunning = true
@@ -44,6 +69,7 @@ class AppState {
   pause (nextCommandName?: string) {
     this.isPaused = true
     this.nextCommandName = nextCommandName
+    this.hasBeenPaused = true
   }
 
   resume () {
@@ -82,10 +108,6 @@ class AppState {
     this.isSpecsListOpen = !this.isSpecsListOpen
   }
 
-  togglePreferencesMenu () {
-    this.isPreferencesMenuOpen = !this.isPreferencesMenuOpen
-  }
-
   setSpecsList (status: boolean) {
     this.isSpecsListOpen = status
   }
@@ -112,6 +134,30 @@ class AppState {
 
   setStudioActive (studioActive: boolean) {
     this.studioActive = studioActive
+  }
+
+  setStudioSingleTestActive (studioSingleTestActive: boolean) {
+    this.studioSingleTestActive = studioSingleTestActive
+  }
+
+  toggleShowFetchRequests () {
+    this.showFetchRequests = !this.showFetchRequests
+  }
+
+  toggleCodeEditorLineWrap () {
+    this.codeEditorLineWrap = !this.codeEditorLineWrap
+  }
+
+  setCodeEditorLineWrap (codeEditorLineWrap: boolean) {
+    this.codeEditorLineWrap = codeEditorLineWrap
+  }
+
+  setShowFetchRequests (showFetchRequests: boolean) {
+    this.showFetchRequests = showFetchRequests
+  }
+
+  setCyPromptActionsEnabled (cyPromptActionsEnabled: boolean) {
+    this.cyPromptActionsEnabled = cyPromptActionsEnabled
   }
 
   reset () {

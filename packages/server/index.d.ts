@@ -17,21 +17,17 @@
 export namespace CyServer {
   // TODO: pull this from main types
   export interface Config {
-    blockHosts: string | string[]
+    blockHosts: string | string[] | null
     clientRoute: string
     experimentalCspAllowList: boolean | Cypress.experimentalCspAllowedDirectives[]
-    experimentalSourceRewriting: boolean
+    injectDocumentDomain: boolean
+    forceHttp1: boolean
     modifyObstructiveCode: boolean
     experimentalModifyObstructiveThirdPartyCode: boolean
-    experimentalSkipDomainInjection: string[] | null
     /**
      * URL to Cypress's runner.
      */
     responseTimeout: number
-  }
-
-  export interface Socket {
-    toDriver: (eventName: string, ...args: any) => void
   }
 }
 

@@ -1,4 +1,4 @@
-import type { NexusGenArgTypes } from '@packages/graphql/src/gen/nxs.gen'
+import type { NexusGenArgTypes } from '@packages/data-context/src/gen/nxs.gen'
 import type { TypedDocumentNode } from '@urql/core'
 import type { GraphQLResolveInfo, OperationTypeNode } from 'graphql'
 import type { SetOptional } from 'type-fest'
@@ -36,7 +36,7 @@ export function resetTestNodeIdx () {
   nodeIdx = {}
 }
 
-export function testNodeId <T extends TypesWithId> (type: T, title?: string) {
+export function testNodeId<T extends TypesWithId> (type: T, title?: string) {
   nodeIdx[type] = (nodeIdx[type] ?? 0) + 1
 
   const id = title ? `${type}:${nodeIdx[type]}:${title}` : `${type}:${nodeIdx[type]}`

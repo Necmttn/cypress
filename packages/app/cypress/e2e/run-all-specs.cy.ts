@@ -3,12 +3,12 @@ import { getPathForPlatform } from '../../src/paths'
 
 describe('run-all-specs', () => {
   const ALL_SPECS = {
-    spec1: { relative: getPathForPlatform('cypress/e2e/folder-a/spec-a.cy.js'), name: 'runs folder-a/spec-a' },
-    spec2: { relative: getPathForPlatform('cypress/e2e/folder-a/spec-b.cy.js'), name: 'runs folder-a/spec-b' },
-    spec3: { relative: getPathForPlatform('cypress/e2e/folder-b/spec-a.cy.js'), name: 'runs folder-b/spec-a' },
-    spec4: { relative: getPathForPlatform('cypress/e2e/folder-b/spec-b.cy.js'), name: 'runs folder-b/spec-b' },
-    spec5: { relative: getPathForPlatform('folder-c/spec-a.cy.js'), name: 'runs folder-c/spec-a' },
-    spec6: { relative: getPathForPlatform('folder-c/spec-b.cy.js'), name: 'runs folder-c/spec-b' },
+    spec1: { relative: getPathForPlatform('cypress/e2e/folder-a/spec-a.cy.ts'), name: 'runs folder-a/spec-a' },
+    spec2: { relative: getPathForPlatform('cypress/e2e/folder-a/spec-b.cy.ts'), name: 'runs folder-a/spec-b' },
+    spec3: { relative: getPathForPlatform('cypress/e2e/folder-b/spec-a.cy.ts'), name: 'runs folder-b/spec-a' },
+    spec4: { relative: getPathForPlatform('cypress/e2e/folder-b/spec-b.cy.ts'), name: 'runs folder-b/spec-b' },
+    spec5: { relative: getPathForPlatform('folder-c/spec-a.cy.ts'), name: 'runs folder-c/spec-a' },
+    spec6: { relative: getPathForPlatform('folder-c/spec-b.cy.ts'), name: 'runs folder-c/spec-b' },
   }
 
   const clickRunAllSpecs = (directory: string) => {
@@ -18,9 +18,7 @@ describe('run-all-specs', () => {
       return cy.findByTestId('run-all-specs-for-all').click()
     }
 
-    const command = cy.get('[data-cy=spec-item-directory]').contains(platformDir)
-
-    return command.realHover().then(() => {
+    return cy.get('[data-cy=spec-item-directory]').contains(platformDir).realHover().then(() => {
       cy.get(`[data-cy="run-all-specs-for-${platformDir.replace('\\', '\\\\')}"]`).click({ force: true })
     })
   }
@@ -30,6 +28,7 @@ describe('run-all-specs', () => {
     cy.openProject('run-all-specs')
     cy.startAppServer()
     cy.visitApp()
+    cy.specsPageIsVisible()
 
     // Spawns new browser so we need to stub this
     cy.withCtx((ctx, { sinon }) => {
@@ -51,7 +50,7 @@ describe('run-all-specs', () => {
     }, { specs: subDirectorySpecs, RUN_ALL_SPECS_KEY })
 
     for (const spec of subDirectorySpecs) {
-      cy.get('.runnable-title').contains(spec.name)
+      cy.reporter().find('.runnable-title').contains(spec.name)
     }
 
     // Verify "Run All Specs" with filter
@@ -71,7 +70,7 @@ describe('run-all-specs', () => {
     }, { specs: filteredSpecs })
 
     for (const spec of filteredSpecs) {
-      cy.get('.runnable-title').contains(spec.name)
+      cy.reporter().find('.runnable-title').contains(spec.name)
     }
 
     // Verify "Run All Specs" with filter + folder
@@ -91,7 +90,7 @@ describe('run-all-specs', () => {
     }, { specs: filteredWithSubDirectorySpecs })
 
     for (const spec of filteredWithSubDirectorySpecs) {
-      cy.get('.runnable-title').contains(spec.name)
+      cy.reporter().find('.runnable-title').contains(spec.name)
     }
 
     // Verify "Run All Specs" live-reload
@@ -108,7 +107,7 @@ describe('run-all-specs', () => {
     cy.waitForSpecToFinish({ passCount: 6 })
 
     for (const spec of Object.values(ALL_SPECS)) {
-      cy.get('.runnable-title').contains(spec.name)
+      cy.reporter().find('.runnable-title').contains(spec.name)
     }
 
     cy.withCtx(async (ctx, { spec }) => {

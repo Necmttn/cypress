@@ -4,34 +4,28 @@ Clear, consistent, errors are one of the important parts of the Cypress experien
 
 ### @packages/errors
 
-All error related logic for the server should be added to `@packages/errors`. This logic has been separated out from the `@packages/server` to enable strict type checking & use in other packages we have added in the `10.0-release` branch.
+All error related logic for the server should be added to `@packages/errors`.
 
 ### Errors Development Workflow
 
-Adding and editing errors is best done with the help of the Error Comparison tool.
+Adding and editing errors is best done with the help of an ANSI Comparison tool. Cursor/VSCode offer the [vscode-ansi](https://marketplace.cursorapi.com/items/?itemName=iliazeus.vscode-ansi) comparison tool.
 
-Start off by launching the Error Comparison tool from `packages/errors` via `yarn comparison`. This will launch a mini-webapp at http://localhost:5555.
-
-The Error Comparison app has three pages: Ansi Compare, Ansi Base List, and Markdown.
-
-1. Ansi Compare - Used to compare and accept changes made during development
-2. Ansi Base List - Used to preview errors as they will be rendered to users in the Terminal.
-3. Markdown - Used to preview errors as they will be rendered to users within the App, Launchpad, and Reporter.
+Errors can be compared directly in your code error. Comparing old vs new errors can be done via comparing the git diff or the snapshot diff.
 
 #### Editing or Adding New Errors and Updating Snapshots
 
-<img src="./error-handling-accept-snapshot.png" width="1200" />
+<img src="./error-handling-snapshot-compare.png" width="1200"/>
 
 1. Add (or update) errors in `packages/errors/src/errors.ts`
-2. Add test cases to `visualSnapshotErrors_spec.ts`
-3. Run `yarn test` in the `packages/errors` directory
-4. Run `yarn comparison` in the `packages/errors` directory
-5. Open http://localhost:5555/
-6. Search for the error you're working on by the error key. (e.g. `AUTOMATION_SERVER_DISCONNECTED`)
-7. Click "Looks Good" if it looks good.
-8. To make edits, re-run the `yarn test` command and do a full refresh of the webapp.
-9. Run `yarn test` after updating the snapshot to validate the changes were applied.
-10. Commit the files changed in `__snapshot-html__`
+2. Add test cases to `visualSnapshotErrors.spec.ts`.
+3. Run `yarn test` in the `packages/errors` directory.
+4. See the `.ansi` file generated/edited for your added test case. The file should be named by the error key. (e.g. `AUTOMATION_SERVER_DISCONNECTED`).
+5. click the "Open Preview to the Side" icon in the top right portion of your code editor.
+6. Verify the changes expected.
+7. To make edits, re-run the `yarn test -u` command. `-u` will update the test snapshots.
+8. Run `yarn test` after updating the snapshot to validate the changes were applied.
+9. Commit the files changed in `./test/__snapshots__`.
+10. If you added or removed an error key, regenerate and commit `packages/data-context/schemas/schema.graphql` in the same PR (`yarn workspace @packages/data-context build`).
 
 ### Technical Overview
 
@@ -78,15 +72,15 @@ In this case, `arg1` will be highlighted in yellow when printed to the terminal.
 
 
 ```ts
-PLUGINS_FILE_ERROR: (arg1: string, arg2: Error) => {
+FAKE_ERROR: (arg1: string, arg2: Error) => {
   return errTemplate`\
-      The plugins file is missing or invalid.
+      The fake file is missing or invalid.
 
-      Your \`pluginsFile\` is set to ${arg1}, but either the file is missing, it contains a syntax error, or threw an error when required. The \`pluginsFile\` must be a \`.js\`, \`.ts\`, or \`.coffee\` file.
+      Your \`fakeFile\` is set to ${arg1}, but either the file is missing, it contains a syntax error, or threw an error when required. The \`fakeFile\` must be a \`.js\` or \`.ts\` file.
 
-      Or you might have renamed the extension of your \`pluginsFile\`. If that's the case, restart the test runner.
+      Or you might have renamed the extension of your \`fakeFile\`. If that's the case, restart the test runner.
 
-      Please fix this, or set \`pluginsFile\` to \`false\` if a plugins file is not necessary for your project.
+      Please fix this, or set \`fakeFile\` to \`false\` if a plugins file is not necessary for your project.
 
       ${details(arg2)}
     `

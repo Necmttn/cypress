@@ -10,7 +10,7 @@ import type {
 } from '../generated/test-graphql-types.gen'
 import { resetTestNodeIdx } from './clientTestUtils'
 import { stubBrowsers } from './stubgql-Browser'
-import * as cloudTypes from '@packages/graphql/test/stubCloudTypes'
+import * as cloudTypes from '@packages/data-context/test/graphql/stubCloudTypes'
 import { createTestCurrentProject, createTestGlobalProject, stubGlobalProject } from './stubgql-Project'
 import { allBundlers } from './stubgql-Wizard'
 
@@ -31,7 +31,6 @@ export interface ClientTestContext {
     allBundlers: WizardBundler[]
     warnings: []
   }
-  migration: {}
   user: AuthenticatedUserShape | null
   cloudTypes: typeof cloudTypes
   __mockPartial: any
@@ -85,7 +84,9 @@ export function makeClientTestContext (): ClientTestContext {
       preferences: {
         __typename: 'LocalSettingsPreferences',
         autoScrollingEnabled: true,
+        codeEditorLineWrap: false,
         isSideNavigationOpen: false,
+        showFetchRequests: true,
         desktopNotificationsEnabled: false,
         dismissNotificationBannerUntil: null,
       },
@@ -104,7 +105,6 @@ export function makeClientTestContext (): ClientTestContext {
         },
       ],
     },
-    migration: {},
     __mockPartial: {},
   }
 }

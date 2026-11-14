@@ -43,8 +43,6 @@ export type Browser = {
   binary: string | string[]
   /** optional warning that will be shown in the GUI */
   warning?: string
-  /** if set, the majorVersion must be >= this to be run in Cypress */
-  minSupportedVersion?: number
   /** if set, is called to determine if found browser is supported by Cypress */
   validator?: BrowserValidator
 }
@@ -60,6 +58,17 @@ export type FoundBrowser = Omit<Browser, 'versionRegex' | 'binary' | 'validator'
   custom?: boolean
   unsupportedVersion?: boolean
   disabled?: boolean
+}
+
+/**
+ * Whether the given browser is deprecated as a test browser and slated for
+ * removal in a future major version of Cypress. Centralized here so the
+ * GraphQL resolver (App) and run mode agree on what counts as deprecated —
+ * when the next browser is deprecated (or Electron's removal lands), this is
+ * the single place to update.
+ */
+export const isDeprecatedBrowser = (browser: Pick<FoundBrowser, 'name'>): boolean => {
+  return browser.name === 'electron'
 }
 
 /**

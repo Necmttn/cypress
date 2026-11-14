@@ -5,7 +5,7 @@ const chdir = require('chdir-promise')
 const join = require('path').join
 const fromFolder = join.bind(null, __dirname)
 const snapshot = require('snap-shot-it')
-const la = require('lazy-ass')
+const { lazyAss: la } = require('lazy-ass')
 const is = require('check-more-types')
 const debug = require('debug')('test')
 const R = require('ramda')
@@ -118,6 +118,27 @@ describe('env variables', () => {
           bar: 'baz',
         },
         another: 42,
+      },
+    })
+  })
+})
+
+describe('expose variables', () => {
+  const projectFolder = fromFolder('expose')
+
+  beforeEach(() => {
+    chdir.to(projectFolder)
+  })
+
+  afterEach(chdir.back)
+
+  it('passes expose configuration in the object', () => {
+    return cypress.run({
+      spec: 'cypress/e2e/expose-spec.cy.js',
+      expose: {
+        CY_EXPOSE_FOO: 'foo',
+        CY_EXPOSE_BAR: 'bar',
+        CY_EXPOSE_ONE: 1,
       },
     })
   })

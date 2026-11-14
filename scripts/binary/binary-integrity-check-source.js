@@ -1,3 +1,4 @@
+/* global PATH_SEP -- defined by the V8 snapshot that this file is embedded in */
 const OrigError = Error
 const originalCaptureStackTrace = Error.captureStackTrace
 const originalToString = Function.prototype.toString
@@ -24,7 +25,16 @@ const stackIntegrityCheck = function stackIntegrityCheck (options) {
   const tempError = new OrigError
 
   originalCaptureStackTrace(tempError, arguments.callee)
-  const stack = originalFilter.call(tempError.stack, (frame) => !originalStartsWith.call(frame.getFileName(), 'node:internal') && !originalStartsWith.call(frame.getFileName(), 'node:electron'))
+  const stack = originalFilter.call(tempError.stack, (frame) => {
+    const fileName = frame.getFileName()
+
+    // Drop all built-in Node stack frames (node:internal, node:electron, node:diagnostics_channel, etc.)
+    if (typeof fileName !== 'string') {
+      return true
+    }
+
+    return !originalStartsWith.call(fileName, 'node:')
+  })
 
   OrigError.prepareStackTrace = originalPrepareStackTrace
   OrigError.stackTraceLimit = originalStackTraceLimit
@@ -94,7 +104,7 @@ function validateElectron (electron) {
 
 function validateFs (fs) {
   // Hard coded function as this is electron code and there's not an easy way to get the function string at package time. If this fails on an updated version of electron, we'll need to update this.
-  if (originalToString.call(fs.readFileSync) !== `function(e,s){const r=splitPath(e);if(!r.isAsar)return F.apply(this,arguments);const{asarPath:n,filePath:a}=r,o=getOrCreateArchive(n);if(!o)throw createError("INVALID_ARCHIVE",{asarPath:n});const c=o.getFileInfo(a);if(!c)throw createError("NOT_FOUND",{asarPath:n,filePath:a});if(0===c.size)return s?"":i.Buffer.alloc(0);if(c.unpacked){const e=o.copyFileOut(a);return t.readFileSync(e,s)}if(s){if("string"==typeof s)s={encoding:s};else if("object"!=typeof s)throw new TypeError("Bad arguments")}else s={encoding:null};const{encoding:f}=s,l=i.Buffer.alloc(c.size),u=o.getFdAndValidateIntegrityLater();if(!(u>=0))throw createError("NOT_FOUND",{asarPath:n,filePath:a});return logASARAccess(n,a,c.offset),t.readSync(u,l,0,c.size,c.offset),validateBufferIntegrity(l,c.integrity),f?l.toString(f):l}`) {
+  if (originalToString.call(fs.readFileSync) !== `function(t,e){const r=splitPath(t);return r.isAsar?readFileFromArchiveSync(r,e):T.apply(this,arguments)}`) {
     console.error(`Integrity check failed for toString.call(fs.readFileSync)`)
     throw new Error(integrityErrorMessage)
   }
@@ -126,7 +136,7 @@ function validateFile ({ filePath, crypto, fs, expectedHash, errorMessage }) {
   }
 }
 
-// eslint-disable-next-line no-unused-vars
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- binary-sources.js embeds this file as text and calls integrityCheck from there
 function integrityCheck (options) {
   const require = options.require
   const electron = require('electron')
@@ -155,32 +165,30 @@ function integrityCheck (options) {
       },
       {
         functionName: 'snapshotRequire',
-        fileName: 'evalmachine.<anonymous>',
+        fileName: [appPath, 'packages', 'server', 'index.jsc'].join(PATH_SEP),
       },
       {
         functionName: 'runWithSnapshot',
-        fileName: 'evalmachine.<anonymous>',
+        fileName: [appPath, 'packages', 'server', 'index.jsc'].join(PATH_SEP),
       },
       {
         functionName: 'hookRequire',
-        fileName: 'evalmachine.<anonymous>',
+        fileName: [appPath, 'packages', 'server', 'index.jsc'].join(PATH_SEP),
       },
       {
         functionName: 'startCypress',
-        fileName: 'evalmachine.<anonymous>',
+        fileName: [appPath, 'packages', 'server', 'index.jsc'].join(PATH_SEP),
       },
       {
-        fileName: 'evalmachine.<anonymous>',
+        fileName: [appPath, 'packages', 'server', 'index.jsc'].join(PATH_SEP),
       },
       {
         functionName: 'v',
-        // eslint-disable-next-line no-undef
         fileName: [appPath, 'index.js'].join(PATH_SEP),
         line: 1,
         column: 2573,
       },
       {
-        // eslint-disable-next-line no-undef
         fileName: [appPath, 'index.js'].join(PATH_SEP),
         line: 1,
         column: 2764,
@@ -190,7 +198,6 @@ function integrityCheck (options) {
 
   // 3. Validate the three pieces of the entry point: the main index file, the bundled jsc file, and the bytenode node module
   validateFile({
-    // eslint-disable-next-line no-undef
     filePath: [appPath, 'index.js'].join(PATH_SEP),
     crypto,
     fs,
@@ -199,7 +206,6 @@ function integrityCheck (options) {
   })
 
   validateFile({
-    // eslint-disable-next-line no-undef
     filePath: [appPath, 'packages', 'server', 'index.jsc'].join(PATH_SEP),
     crypto,
     fs,

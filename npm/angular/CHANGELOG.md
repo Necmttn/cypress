@@ -1,3 +1,100 @@
+# [@[secure]/angular-v5.0.0](https://github.com/[secure]-io/[secure]/compare/@[secure]/angular-v4.1.0...@[secure]/angular-v5.0.0) (2026-08-26)
+
+
+### breaking
+
+* merge @[secure]/angular-zoneless upstream into @[secure]/angular and remove angular support for angular 18, 19 and 20. ([4d8e35c](https://github.com/[secure]-io/[secure]/commit/4d8e35ca7b49e732a05742ae2e410e173b8d89f2))
+* release 5.0.0 of @[secure]/angular ([69b1587](https://github.com/[secure]-io/[secure]/commit/69b158762292f29979285d7c90025298807651a1))
+* remove @angular/platform-[secure]-dynamic in favor of @angular/platform-[secure] for @[secure]/angular ([f47feda](https://github.com/[secure]-io/[secure]/commit/f47fedadd4bdfcfb6cff5c9db2289c0d32f72a84))
+
+
+### BREAKING CHANGES
+
+* remove @angular/platform-[secure]-dynamic in favor of @angular/platform-[secure] for @[secure]/angular
+* merge @[secure]/angular-zoneless upstream into @[secure]/angular and remove angular support for angular 18, 19, and 20. Additionally, @[secure]/schematic only supports Cypress 16 and doesnt scaffold the angular-zoneless mount handler any longer. This is a breaking change to Cypress, @[secure]/angular, and @[secure]/schematic. Additionally, @[secure]/angular-zoneless will be deprecated on NPM due to the upstream move
+i
+* updates build targets of @[secure]/angular from es2020 to es2022. Though breaking, this should be minimally disruptive.
+
+# [@cypress/angular-v4.1.0](https://github.com/cypress-io/cypress/compare/@cypress/angular-v4.0.0...@cypress/angular-v4.1.0) (2025-12-05)
+
+
+### Features
+
+* add `cypress/angular-zoneless` testing harness for Angular 21 (also supports Angular 20) ([#33025](https://github.com/cypress-io/cypress/issues/33025)) ([0f215f3](https://github.com/cypress-io/cypress/commit/0f215f3f554e3f99624b25e19c03ecfd771aba52))
+
+# [@cypress/angular-v4.0.0](https://github.com/cypress-io/cypress/compare/@cypress/angular-v3.0.1...@cypress/angular-v4.0.0) (2025-08-08)
+
+
+### breaking
+
+* release version 4.0.0 of @cypress/angular. ([59637ad](https://github.com/cypress-io/cypress/commit/59637adc019ecda790a399ea2da6812fa53381b4))
+* remove Angular 17 support ([#31446](https://github.com/cypress-io/cypress/issues/31446)) ([971b7ae](https://github.com/cypress-io/cypress/commit/971b7ae3d7d3aa0fd608550e9d896b3d2b8c8634))
+
+
+### Bug Fixes
+
+* make sure legacy output spies work as intended ([#32158](https://github.com/cypress-io/cypress/issues/32158)) ([99055ec](https://github.com/cypress-io/cypress/commit/99055ec6ace3a932c57924dd8a064d2aa34d2d92))
+
+
+### BREAKING CHANGES
+
+* Cypress 15 drops support for Angular 17. Angular 18 and up is supported.
+* Removed support for Angular 17. Only Angular 18 and 19 are now supported. This change affects the @cypress/angular package. Addresses #31303.
+
+* empty commit to kick CI
+
+* update changelog references to make it clearer on where angular 17 packages live historically
+
+* fix cy framework errors app test to use angualr 18 and 19
+
+* fix issue where di was not discoverable in resolved system tests config
+
+* fix scaffold dependencies to use angular 18 and 19 and not 17 and 18
+
+* fix zonr.js system test dependency resolution
+
+* bump cache
+
+* fix failing handler test
+
+# [@cypress/angular-v3.0.1](https://github.com/cypress-io/cypress/compare/@cypress/angular-v3.0.0...@cypress/angular-v3.0.1) (2025-07-24)
+
+
+### Bug Fixes
+
+* ensure cy.mount is reference safe ([#31238](https://github.com/cypress-io/cypress/issues/31238),[#31983](https://github.com/cypress-io/cypress/issues/31983)) ([#31993](https://github.com/cypress-io/cypress/issues/31993)) ([886878b](https://github.com/cypress-io/cypress/commit/886878b8b5353469abc2eaaf742c04b42d21cf54))
+
+# [@cypress/angular-v3.0.0](https://github.com/cypress-io/cypress/compare/@cypress/angular-v2.1.0...@cypress/angular-v3.0.0) (2025-01-08)
+
+
+### breaking
+
+* release version 3.0.0 of @cypress/angular. ([8dc8c12](https://github.com/cypress-io/cypress/commit/8dc8c12d855ce0370d65e74afc3889413b4cfbb4))
+
+
+### Features
+
+* support angular 19 and update tests [run ci] ([#30675](https://github.com/cypress-io/cypress/issues/30675)) ([dcdefb4](https://github.com/cypress-io/cypress/commit/dcdefb4069486d587a87de802064017ec9b67b55))
+
+
+### BREAKING CHANGES
+
+* Cypress 14 drops support for Angular 13-16. Angular 17.2 and up is supported.
+
+# [@cypress/angular-v2.1.0](https://github.com/cypress-io/cypress/compare/@cypress/angular-v2.0.4...@cypress/angular-v2.1.0) (2024-07-02)
+
+
+### Features
+
+* add Angular Signals CT Harness for Angular 17.2 and up for users to be able to use Angular Signals within their component tests ([#29621](https://github.com/cypress-io/cypress/issues/29621)) ([f2554f1](https://github.com/cypress-io/cypress/commit/f2554f12d6d1f438db898fbbc10a100ebff733ce))
+
+# [@cypress/angular-v2.0.4](https://github.com/cypress-io/cypress/compare/@cypress/angular-v2.0.3...@cypress/angular-v2.0.4) (2024-06-07)
+
+
+### Bug Fixes
+
+* update cypress to Typescript 5 ([#29568](https://github.com/cypress-io/cypress/issues/29568)) ([f3b6766](https://github.com/cypress-io/cypress/commit/f3b67666a5db0438594339c379cf27e1fd1e4abc))
+
 # [@cypress/angular-v2.0.3](https://github.com/cypress-io/cypress/compare/@cypress/angular-v2.0.2...@cypress/angular-v2.0.3) (2023-03-14)
 
 

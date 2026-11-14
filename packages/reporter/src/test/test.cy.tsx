@@ -1,5 +1,7 @@
 import React from 'react'
 import Test from './test'
+import type TestModel from './test-model'
+import type { AppState } from '../lib/app-state'
 
 describe('test/test.tsx', () => {
   it('should mount', () => {
@@ -9,6 +11,9 @@ describe('test/test.tsx', () => {
       state: 'passed',
       title: 'foobar',
       attempts: [],
+      setIsOpen: (isOpen) => model.isOpen = isOpen,
+      onOpenStateChangeRequested: (isOpen) => model.setIsOpen(isOpen),
+      callbackAfterUpdate: () => undefined,
     }
 
     const appState = {
@@ -17,8 +22,8 @@ describe('test/test.tsx', () => {
 
     cy.mount(<div className="runnable suite">
       <Test
-        model={model}
-        appState={appState}
+        model={model as unknown as TestModel}
+        appState={appState as unknown as AppState}
         studioEnabled={false}
       />
     </div>)
@@ -37,6 +42,9 @@ describe('test/test.tsx', () => {
       state: 'passed',
       title: 'foobar',
       attempts: [],
+      setIsOpen: (isOpen) => model.isOpen = isOpen,
+      onOpenStateChangeRequested: (isOpen) => model.setIsOpen(isOpen),
+      callbackAfterUpdate: () => undefined,
     }
 
     const appState = {
@@ -45,8 +53,8 @@ describe('test/test.tsx', () => {
 
     cy.mount(<div className="runnable suite">
       <Test
-        model={model}
-        appState={appState}
+        model={model as unknown as TestModel}
+        appState={appState as unknown as AppState}
         studioEnabled
       />
     </div>)

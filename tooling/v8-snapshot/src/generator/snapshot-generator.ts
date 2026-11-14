@@ -3,7 +3,8 @@ import debug from 'debug'
 import fs from 'fs'
 import { dirname, join, basename } from 'path'
 import { minify } from 'terser'
-import { createSnapshotScript, SnapshotScript } from './create-snapshot-script'
+import type { SnapshotScript } from './create-snapshot-script'
+import { createSnapshotScript } from './create-snapshot-script'
 import { SnapshotVerifier } from './snapshot-verifier'
 import { determineDeferred } from '../doctor/determine-deferred'
 import {
@@ -15,7 +16,8 @@ import {
   getBundlerPath,
   resolveElectronVersion,
 } from '../utils'
-import { createExportScript, ExportScript } from './create-snapshot-bundle'
+import type { ExportScript } from './create-snapshot-bundle'
+import { createExportScript } from './create-snapshot-bundle'
 import { Flag, GeneratorFlags } from './snapshot-generator-flags'
 import { syncAndRun } from '@tooling/electron-mksnapshot'
 import tempDir from 'temp-dir'
@@ -31,7 +33,7 @@ const logError = debug('cypress:snapgen:error')
  *
  * @property nodeModulesOnly if `true` only node modules will be included in the snapshot and app modules are omitted
  *
- * @property forceNoRewrite relative paths to modules that we know will cause
+ * @property forceNorewrite relative paths to modules that we know will cause
  * problems when rewritten and we manually want to exclude them from snapshot
  * bundler rewrites
  *
@@ -68,6 +70,9 @@ const logError = debug('cypress:snapgen:error')
  * @property nodeEnv the string to provide to `process.env.NODE_ENV` during
  * snapshot creation
  *
+ * @property cypressInternalEnv the string to provide to `process.env.CYPRESS_INTERNAL_ENV` during
+ * snapshot creation
+ *
  * @property minify if `true` the snapshot script will be minified
  *
  * @property supportTypeScript if `true` then TypeScript should be supported
@@ -79,13 +84,16 @@ export type GenerationOpts = {
   cacheDir: string
   snapshotBinDir: string
   nodeModulesOnly: boolean
-  forceNoRewrite?: string[]
+  forceNorewrite?: string[]
   resolverMap?: Record<string, string>
   flags: Flag
   nodeEnv: string
+  cypressInternalEnv: string
   minify: boolean
   supportTypeScript: boolean
   integrityCheckSource: string | undefined
+  useExistingSnapshotScript?: boolean
+  updateSnapshotScriptContents?: (contents: string) => string
 }
 
 function getDefaultGenerationOpts (projectBaseDir: string): GenerationOpts {
@@ -95,9 +103,12 @@ function getDefaultGenerationOpts (projectBaseDir: string): GenerationOpts {
     nodeModulesOnly: true,
     flags: Flag.Script | Flag.MakeSnapshot | Flag.ReuseDoctorArtifacts,
     nodeEnv: 'development',
+    cypressInternalEnv: 'development',
     minify: false,
     supportTypeScript: false,
     integrityCheckSource: undefined,
+    useExistingSnapshotScript: false,
+    updateSnapshotScriptContents: undefined,
   }
 }
 
@@ -128,10 +139,12 @@ export class SnapshotGenerator {
   private readonly electronVersion: string
   /** See {@link GenerationOpts} nodeModulesOnly */
   private readonly nodeModulesOnly: boolean
-  /** See {@link GenerationOpts} forceNoRewrite */
-  private readonly forceNoRewrite: Set<string>
+  /** See {@link GenerationOpts} forceNorewrite */
+  private readonly forceNorewrite: Set<string>
   /** See {@link GenerationOpts} nodeEnv */
   private readonly nodeEnv: string
+  /** See {@link GenerationOpts} cypressInternalEnv */
+  private readonly cypressInternalEnv: string
   /** See {@link GenerationOpts} minify */
   private readonly minify: boolean
   /** See {@link GenerationOpts} integrityCheckSource */
@@ -153,6 +166,14 @@ export class SnapshotGenerator {
    * Path where v8context bin is stored, derived from {@link GenerationOpts} snapshotBinDir
    */
   private v8ContextFile?: string
+  /**
+   * Whether to use an existing snapshot script instead of creating a new one.
+   */
+  useExistingSnapshotScript?: boolean
+  /**
+   * Function to update the contents of an existing snapshot script.
+   */
+  updateSnapshotScriptContents?: ((contents: string) => string)
 
   /**
    * Generated snapshot script, needs to be set before calling `makeSnapshot`.
@@ -181,11 +202,14 @@ export class SnapshotGenerator {
     const {
       cacheDir,
       nodeModulesOnly,
-      forceNoRewrite,
+      forceNorewrite,
       flags: mode,
       nodeEnv,
+      cypressInternalEnv,
       minify,
       integrityCheckSource,
+      useExistingSnapshotScript,
+      updateSnapshotScriptContents,
     }: GenerationOpts = Object.assign(
       getDefaultGenerationOpts(projectBaseDir),
       opts,
@@ -204,12 +228,15 @@ export class SnapshotGenerator {
     this.electronVersion = resolveElectronVersion(projectBaseDir)
 
     this.nodeModulesOnly = nodeModulesOnly
-    this.forceNoRewrite = new Set(forceNoRewrite)
+    this.forceNorewrite = new Set(forceNorewrite)
     this.nodeEnv = nodeEnv
+    this.cypressInternalEnv = cypressInternalEnv
     this._flags = new GeneratorFlags(mode)
     this.bundlerPath = getBundlerPath()
     this.minify = minify
     this.integrityCheckSource = integrityCheckSource
+    this.useExistingSnapshotScript = useExistingSnapshotScript
+    this.updateSnapshotScriptContents = updateSnapshotScriptContents
 
     const auxiliaryDataKeys = Object.keys(this.auxiliaryData || {})
 
@@ -218,7 +245,7 @@ export class SnapshotGenerator {
       cacheDir,
       snapshotScriptPath: this.snapshotScriptPath,
       nodeModulesOnly: this.nodeModulesOnly,
-      forceNoRewrite: this.forceNoRewrite.size,
+      forceNorewrite: this.forceNorewrite.size,
       auxiliaryData: auxiliaryDataKeys,
     })
   }
@@ -235,6 +262,19 @@ export class SnapshotGenerator {
    * Creates the snapshot script for the provided configuration
    */
   async createScript () {
+    if (this.useExistingSnapshotScript) {
+      let contents = await fs.promises.readFile(this.snapshotScriptPath, 'utf8')
+
+      if (this.updateSnapshotScriptContents) {
+        contents = this.updateSnapshotScriptContents(contents)
+      }
+
+      this.snapshotScript = Buffer.from(contents)
+      await fs.promises.writeFile(this.snapshotScriptPath, this.snapshotScript)
+
+      return
+    }
+
     let deferred
     let norewrite
 
@@ -249,8 +289,9 @@ export class SnapshotGenerator {
         this.cacheDir,
         {
           nodeModulesOnly: this.nodeModulesOnly,
-          forceNoRewrite: this.forceNoRewrite,
+          forceNorewrite: this.forceNorewrite,
           nodeEnv: this.nodeEnv,
+          cypressInternalEnv: this.cypressInternalEnv,
           integrityCheckSource: this.integrityCheckSource,
         },
       ))
@@ -278,6 +319,7 @@ export class SnapshotGenerator {
         baseSourcemapExternalPath: this.snapshotScriptPath.replace('snapshot.js', 'base.snapshot.js.map'),
         processedSourcemapExternalPath: this.snapshotScriptPath.replace('snapshot.js', 'processed.snapshot.js.map'),
         nodeEnv: this.nodeEnv,
+        cypressInternalEnv: this.cypressInternalEnv,
         supportTypeScript: this.nodeModulesOnly,
         integrityCheckSource: this.integrityCheckSource,
       })
@@ -287,8 +329,8 @@ export class SnapshotGenerator {
     }
     logDebug(
       Object.assign({}, result, {
-        snapshotScript: `len: ${result.snapshotScript.length}`,
-        bundle: `len: ${result.bundle.length}`,
+        snapshotScript: `len: ${Buffer.byteLength(result.snapshotScript)} bytes`,
+        bundle: `len: ${Buffer.byteLength(result.bundle)} bytes`,
         meta: '<hidden>',
       }),
     )
@@ -316,6 +358,8 @@ export class SnapshotGenerator {
     logInfo(`Writing snapshot script to ${this.snapshotScriptPath}`)
 
     if (this.minify) {
+      logInfo('Minifying snapshot script')
+
       const minified = await minify(this.snapshotScript!.toString(), {
         sourceMap: false,
       })
@@ -329,6 +373,8 @@ export class SnapshotGenerator {
     }
 
     // 4. Write the snapshot script to the configured file
+    logInfo(`Writing snapshot script to ${this.snapshotScriptPath}`)
+
     return fs.promises.writeFile(this.snapshotScriptPath, this.snapshotScript)
   }
 
@@ -353,8 +399,9 @@ export class SnapshotGenerator {
         this.cacheDir,
         {
           nodeModulesOnly: this.nodeModulesOnly,
-          forceNoRewrite: this.forceNoRewrite,
+          forceNorewrite: this.forceNorewrite,
           nodeEnv: this.nodeEnv,
+          cypressInternalEnv: this.cypressInternalEnv,
           integrityCheckSource: this.integrityCheckSource,
         },
       ))
@@ -380,6 +427,7 @@ export class SnapshotGenerator {
         resolverMap: this.resolverMap,
         auxiliaryData: this.auxiliaryData,
         nodeEnv: this.nodeEnv,
+        cypressInternalEnv: this.cypressInternalEnv,
         supportTypeScript: this.nodeModulesOnly,
         integrityCheckSource: this.integrityCheckSource,
       })
@@ -433,7 +481,9 @@ export class SnapshotGenerator {
 
     // 2. Run the `mksnapshot` binary providing it the path to our snapshot
     //    script
-    const args = [this.snapshotScriptPath, '--output_dir', this.snapshotBinDir]
+    // --no-use-ic flag is a workaround
+    // see https://issues.chromium.org/issues/345280736#comment12
+    const args = [this.snapshotScriptPath, '--output_dir', this.snapshotBinDir, '--no-use-ic']
 
     try {
       const { snapshotBlobFile, v8ContextFile } = await syncAndRun(
@@ -459,10 +509,6 @@ export class SnapshotGenerator {
 
       return { v8ContextFile: this.v8ContextFile, snapshotBinDir: this.snapshotBinDir }
     } catch (err: any) {
-      if (err.stderr != null) {
-        logError(err.stderr.toString())
-      }
-
       if (err.stdout != null) {
         logDebug(err.stdout.toString())
       }
@@ -470,7 +516,12 @@ export class SnapshotGenerator {
       // If things went wrong print instructions on how to execute the
       // `mksnapshot` command directly to trouble shoot
       runInstructions()
-      throw new Error('Failed `mksnapshot` command')
+
+      // mksnapshot's stderr explains why it failed, so surface it on the thrown error.
+      const stderr = err.stderr?.toString().trim()
+      const detail = stderr || err.toString()
+
+      throw new Error(`Failed \`mksnapshot\` command\n${detail}`, { cause: err })
     }
   }
 

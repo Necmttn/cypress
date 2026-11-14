@@ -1,4 +1,4 @@
-import { CloudRunStubs } from '@packages/graphql/test/stubCloudTypes'
+import { CloudRunStubs } from '@packages/data-context/test/graphql/stubCloudTypes'
 import { RunCardFragmentDoc } from '../generated/graphql-test'
 import RunCard from './RunCard.vue'
 import _ from 'lodash'
@@ -84,8 +84,6 @@ describe('<RunCard />', { viewportHeight: 400 }, () => {
           .and('contain', 'tag1')
           .and('contain', 'tag2')
         }
-
-        cy.percySnapshot()
       })
     })
   })

@@ -1,9 +1,3 @@
-export interface StudioRecorderState {
-  suiteId?: string
-  testId?: string
-  url?: string
-}
-
 export interface ReporterRunState {
   autoScrollingEnabled?: boolean
   scrollTop?: number
@@ -21,4 +15,7 @@ export interface ReporterStartInfo extends StatsStoreStartInfo {
   autoScrollingEnabled: boolean
   scrollTop: number
   studioActive: boolean
+  studioSingleTestActive: boolean
+  showFetchRequests: boolean
+  codeEditorLineWrap: boolean
 }

@@ -1,5 +1,5 @@
 import Collapsible from './Collapsible.vue'
-import faker from 'faker'
+import { faker } from '@faker-js/faker'
 
 faker.seed(1)
 
@@ -66,7 +66,14 @@ describe('<Collapsible />', { viewportHeight: 450, viewportWidth: 350 }, () => {
     </Collapsible>))
     .get(targetSelector).click()
     .get(overflowedContentSelector)
-    .should('not.be.visible')
+    // The modern visibility algorithm no longer reports scroll-clipped
+    // elements as hidden, so assert geometrically that the overflowed
+    // content sits below the scroll container's visible area.
+    .then(($el) => {
+      const container = $el[0].closest('.overflow-auto') as HTMLElement
+
+      expect($el[0].getBoundingClientRect().top).to.be.greaterThan(container.getBoundingClientRect().bottom)
+    })
     .parent()
     .scrollTo('bottom')
     .get(overflowedContentSelector)

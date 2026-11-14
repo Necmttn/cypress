@@ -11,6 +11,7 @@ describe('plugin events', () => {
       cy.openProject('plugin-run-events')
       cy.startAppServer('e2e')
       cy.visitApp()
+      cy.specsPageIsVisible()
 
       cy.get('[data-cy-row="run_events_spec_1.cy.js"]').eq(1).click()
       cy.waitForSpecToFinish({
@@ -36,6 +37,7 @@ describe('plugin events', () => {
       cy.openProject('plugin-run-events')
       cy.startAppServer('e2e')
       cy.visitApp()
+      cy.specsPageIsVisible()
 
       cy.get('[data-cy-row="run_events_spec_1.cy.js"]').eq(1).click()
       cy.waitForSpecToFinish({
@@ -55,6 +57,7 @@ describe('plugin events', () => {
         })
       })
 
+      cy.reporter().find('[data-cy="runnable-header"]').should('be.visible')
       cy.get('body').type('f')
       cy.get('div[title="run_events_spec_2.cy.js"]').click()
       cy.waitForSpecToFinish({

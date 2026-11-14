@@ -2,22 +2,36 @@
   "name": "@packages/resolve-dist",
   "version": "0.0.0-development",
   "private": true,
-  "main": "index.js",
+  "license": "MIT",
+  "main": "cjs/index.js",
+  "module": "esm/index.js",
+  "types": "./cjs/index.d.ts",
+  "files": [
+    "cjs/*",
+    "esm/*"
+  ],
   "scripts": {
-    "check-ts": "tsc --noEmit",
-    "build-prod": "tsc --project .",
-    "clean": "rimraf 'lib/**/*.js'",
+    "build": "yarn build:cjs && yarn build:esm",
+    "build:cjs": "rimraf cjs && tsc -p tsconfig.cjs.json",
+    "build:esm": "rimraf esm && tsc -p tsconfig.esm.json",
+    "build-prod": "yarn build",
+    "check-ts": "tsc -p tsconfig.cjs.json --noEmit",
+    "clean": "rimraf cjs esm",
     "clean-deps": "rimraf node_modules",
-    "lint": "eslint --ext .js,.jsx,.ts,.tsx,.json, ."
+    "lint": "eslint"
+  },
+  "lint-staged": {
+    "**/*.{js,jsx,ts,tsx,json}": "eslint --fix"
   },
   "dependencies": {
     "fs-extra": "9.1.0"
   },
   "devDependencies": {
-    "@packages/ts": "0.0.0-development"
+    "@packages/eslint-config": "0.0.0-development",
+    "eslint": "^10.14.0",
+    "jiti": "^2.4.2",
+    "rimraf": "^6.1.1",
+    "typescript": "~5.4.5"
   },
-  "files": [
-    "lib"
-  ],
-  "types": "./lib/index.ts"
+  "nx": {}
 }

@@ -6,7 +6,7 @@ const hasUserFacingChange = (type) => Object.keys(userFacingChanges).includes(ty
 
 /**
  * Formats the resolved message that is appended to the changelog entry to indicate what
- * issues where addressed by a given change. If no issues are addressed, it references the
+ * issues were addressed by a given change. If no issues are addressed, it references the
  * pull request which made the change.
  */
 function _getResolvedMessage (semanticType, prNumber, associatedIssues = []) {
@@ -55,7 +55,7 @@ function _printChangeLogExample (semanticType, prNumber, associatedIssues = []) 
 }
 
 /**
- * Ensures the changelog entry was added to the correct changelog section given it's semantic commit type
+ * Ensures the changelog entry was added to the correct changelog section given its semantic commit type
  * and that it includes the correct reference(s) to the issue(s) or pull request the commit addressed.
  */
 function _validateEntry (changelog, { commitMessage, prNumber, semanticType, associatedIssues }) {
@@ -64,7 +64,7 @@ function _validateEntry (changelog, { commitMessage, prNumber, semanticType, ass
   }
 
   const expectedSection = userFacingChanges[semanticType].section
-  let missingExpectedSection = !changelog[expectedSection]
+  const missingExpectedSection = !changelog[expectedSection]
   let sectionEntryFoundIn = ''
 
   const resolveData = _getResolvedMessage(semanticType, prNumber, associatedIssues)
@@ -76,14 +76,11 @@ function _validateEntry (changelog, { commitMessage, prNumber, semanticType, ass
       return false
     }
 
+    // An entry is identified by the issue/PR links it cites. The resolve phrase
+    // ("Fixes", "Addressed in", ...) varies across existing entries, so it is
+    // advisory only and used just to render the expected-format example.
     const hasMatchingEntry = sectionDetails.some((detail) => {
-      const index = detail.lastIndexOf(resolveData.message)
-
-      if (index === undefined) return false // missing message
-
-      const resolveString = detail.substring(index)
-
-      return resolveData.links.every((link) => resolveString.includes(link))
+      return resolveData.links.every((link) => detail.includes(link))
     })
 
     if (hasMatchingEntry) {
@@ -122,14 +119,14 @@ const _handleErrors = (errors) => {
 }
 
 /**
- * Determines if the Cypress changelog has the correct next version and changelog entires given the provided
+ * Determines if the Cypress changelog has the correct next version and changelog entries given the provided
  * list of commits.
  *
  * Can be skipped by setting the SKIP_RELEASE_CHANGELOG_VALIDATION_FOR_BRANCHES
  * environment variable in CircleCI to a branch or comma-separated list of
  * branches
  */
-async function validateChangelog ({ changedFiles, nextVersion, pendingRelease, commits }) {
+async function validateChangelog ({ changedFiles, nextVersion, commits, changelogContent }) {
   if (process.env.SKIP_RELEASE_CHANGELOG_VALIDATION_FOR_BRANCHES) {
     const branches = process.env.SKIP_RELEASE_CHANGELOG_VALIDATION_FOR_BRANCHES.split(',')
 
@@ -140,10 +137,26 @@ async function validateChangelog ({ changedFiles, nextVersion, pendingRelease, c
     }
   }
 
-  const hasUserFacingCommits = commits.some(({ semanticType }) => hasUserFacingChange(semanticType))
+  // Build a set of PR numbers that were reverted within this release window so
+  // they can be excluded from changelog validation — a reverted commit should
+  // not appear in the changelog since the change never shipped to users.
+  const revertedPRNumbers = new Set()
+
+  commits.forEach(({ commitMessage }) => {
+    // Revert messages look like: revert: "fix: something (#33512)" (#33611)
+    const match = commitMessage && commitMessage.match(/revert.*\(#(\d+)\)"/i)
+
+    if (match) {
+      revertedPRNumbers.add(String(match[1]))
+    }
+  })
+
+  const nonRevertedCommits = commits.filter(({ prNumber }) => !revertedPRNumbers.has(String(prNumber)))
+
+  const hasUserFacingCommits = nonRevertedCommits.some(({ semanticType }) => hasUserFacingChange(semanticType))
 
   if (!hasUserFacingCommits) {
-    console.log('Does not contain any user-facing changes that impacts the next Cypress release.')
+    console.log('Does not contain any user-facing changes that impact the next Cypress release.')
 
     return []
   }
@@ -153,10 +166,10 @@ async function validateChangelog ({ changedFiles, nextVersion, pendingRelease, c
     return /^(cli|packages)/.test(filename) && filename !== 'cli/CHANGELOG.md'
   })
 
-  let errors = []
+  const errors = []
 
   if (binaryFiles.length === 0) {
-    console.log('Does not contain changes that impacts the next Cypress release.')
+    console.log('Does not contain changes that impact the next Cypress release.')
 
     return []
   }
@@ -164,20 +177,20 @@ async function validateChangelog ({ changedFiles, nextVersion, pendingRelease, c
   if (!hasChangeLogUpdate) {
     errors.push(`A changelog entry was not found in cli/CHANGELOG.md.`)
 
-    if (commits.length === 1) {
-      errors.push(`Please add a changelog entry that describes the changes. Include this entry under the section:\n\n${_printChangeLogExample(commits[0].semanticType, commits[0].prNumber, commits[0].associatedIssues)}`)
+    if (nonRevertedCommits.length === 1) {
+      errors.push(`Please add a changelog entry that describes the changes. Include this entry under the section:\n\n${_printChangeLogExample(nonRevertedCommits[0].semanticType, nonRevertedCommits[0].prNumber, nonRevertedCommits[0].associatedIssues)}`)
 
       return _handleErrors(errors)
     }
   }
 
-  const changelog = await parseChangelog(pendingRelease)
+  const changelog = await parseChangelog({ changelogContent })
 
   if (nextVersion && !changelog.version === `## ${nextVersion}`) {
     errors.push(`The changelog version does not contain the next Cypress version of ${nextVersion}. If the changelog version is correct, please correct the pull request title to correctly reflect the change being made.`)
   }
 
-  commits.forEach(({ commitMessage, semanticType, prNumber, associatedIssues }) => {
+  nonRevertedCommits.forEach(({ commitMessage, semanticType, prNumber, associatedIssues }) => {
     if (!Object.keys(userFacingChanges).includes(semanticType)) {
       return
     }

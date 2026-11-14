@@ -58,7 +58,7 @@ const eventCleanseMap = {
   start: () => 'match.date',
   end: () => 'match.date',
   timings: (arg: MochaLifecycleData): SanitizedMochaLifecycleData => {
-    let sanitizedLifecycleData: SanitizedMochaLifecycleData = {
+    const sanitizedLifecycleData: SanitizedMochaLifecycleData = {
       lifecycle: 'match.number',
     }
 
@@ -110,13 +110,14 @@ const keysToEliminate = ['codeFrame', '_testConfig'] as const
 function removeUnusedKeysForTestSnapshot<T> (obj: T): T {
   // with experimental retries, mocha can fire a 'retry' event with an undefined error
   // this is expected
-  if (obj === undefined) return obj
+  if (obj === undefined || obj === null) return obj
 
   for (const key of keysToEliminate) {
     delete obj[key]
   }
 
   for (const [key, value] of Object.entries(obj)) {
+    // @ts-expect-error - obj is a generic T, which TypeScript will not let `in` take as its right operand
     if (key in obj) {
       const transform = eventCleanseMap[key]?.(value)
 
@@ -174,16 +175,17 @@ export function runCypressInCypressMochaEventsTest (snapToCompare: string, done:
     }).then((snapshot) => {
       cy.task('readMochaEventSnapshot', { filename }).then((existingSnapshots: any) => {
         existingSnapshots ||= {}
-
-        if (Cypress.env('SNAPSHOT_UPDATE') === 1) {
-          // overwrite the existing snapshot and write it to disk
-          existingSnapshots[snapToCompare] = snapshot
-          cy.task('writeMochaEventSnapshot', { filename, snapshots: existingSnapshots }).then(() => {
+        cy.env(['SNAPSHOT_UPDATE']).then(({ SNAPSHOT_UPDATE }) => {
+          if (SNAPSHOT_UPDATE === 1) {
+            // overwrite the existing snapshot and write it to disk
+            existingSnapshots[snapToCompare] = snapshot
+            cy.task('writeMochaEventSnapshot', { filename, snapshots: existingSnapshots }).then(() => {
+              bus.emit('assert:cypress:in:cypress', existingSnapshots, snapshot)
+            })
+          } else {
             bus.emit('assert:cypress:in:cypress', existingSnapshots, snapshot)
-          })
-        } else {
-          bus.emit('assert:cypress:in:cypress', existingSnapshots, snapshot)
-        }
+          }
+        })
       })
     })
   }

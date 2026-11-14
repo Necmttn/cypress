@@ -1,11 +1,9 @@
-import { defaultMessages } from '@cy/i18n'
 import { h } from 'vue'
 
 // Subject Under Test
 import Select from './Select.vue'
+// tslint:disable-next-line: no-implicit-dependencies - unsure how to handle these module imports
 import IconHeart from '~icons/mdi/heart'
-
-const selectText = defaultMessages.components.select
 
 // Selectors
 const optionsSelector = '[role=option]'
@@ -29,15 +27,17 @@ const defaultOptions = [
 
 const mountSelect = (props: any = {}) => {
   // v-model setup
-  let value = defaultOptions[0]
+  const value = defaultOptions[0]
 
   // The width and padding need to be here so that
   // a click on the body dismisses the options
   return cy.mount(() => (
     <div class="p-12 w-[300px]">
+      <label id="mock-label">Mock Label</label>
       <Select
         options={defaultOptions}
         modelValue={value}
+        labelId="mock-label"
         {...props}
         v-slots={props.vSlots}
       />
@@ -139,7 +139,7 @@ describe('<Select />', () => {
     it('default placeholder when theres no value selected', () => {
       mountSelect({ modelValue: undefined })
       .get(inputSelector)
-      .should('contain.text', selectText.placeholder)
+      .should('contain.text', 'Choose an option...')
     })
 
     it('custom placeholder when theres no value selected', () => {
@@ -165,7 +165,9 @@ describe('<Select />', () => {
             'onUpdate:modelValue': (value: any) => this.model = value,
             options: defaultOptions,
             placeholder: 'A placeholder',
-          })
+            label: 'Pick a color',
+            labelId: 'label',
+          } as any)
         },
       }).then(() => {
         cy.get(inputSelector)

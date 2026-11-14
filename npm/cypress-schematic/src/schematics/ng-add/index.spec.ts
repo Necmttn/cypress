@@ -1,9 +1,8 @@
-/// <reference path="../../../../../cli/types/mocha/index.d.ts" />
-
-import { SchematicTestRunner, UnitTestTree } from '@angular-devkit/schematics/testing'
+import { describe, beforeEach, it, expect } from 'vitest'
+import type { UnitTestTree } from '@angular-devkit/schematics/testing'
+import { SchematicTestRunner } from '@angular-devkit/schematics/testing'
 import { join } from 'path'
-import { expect } from 'chai'
-import { JsonObject } from '@angular-devkit/core'
+import type { JsonObject } from '@angular-devkit/core'
 
 describe('@cypress/schematic: ng-add', () => {
   const schematicRunner = new SchematicTestRunner(
@@ -33,12 +32,12 @@ describe('@cypress/schematic: ng-add', () => {
   }
 
   beforeEach(async () => {
-    appTree = await schematicRunner.runExternalSchematicAsync('@schematics/angular', 'workspace', workspaceOptions).toPromise()
-    appTree = await schematicRunner.runExternalSchematicAsync('@schematics/angular', 'application', appOptions, appTree).toPromise()
+    appTree = await schematicRunner.runExternalSchematic('@schematics/angular', 'workspace', workspaceOptions)
+    appTree = await schematicRunner.runExternalSchematic('@schematics/angular', 'application', appOptions, appTree)
   })
 
   it('should create cypress files for e2e testing by default', async () => {
-    await schematicRunner.runSchematicAsync('ng-add', {}, appTree).toPromise().then((tree: UnitTestTree) => {
+    await schematicRunner.runSchematic('ng-add', {}, appTree).then((tree: UnitTestTree) => {
       const files = tree.files
 
       expect(files).to.contain('/projects/sandbox/cypress/e2e/spec.cy.ts')
@@ -51,7 +50,7 @@ describe('@cypress/schematic: ng-add', () => {
   })
 
   it('should create cypress files for component testing', async () => {
-    await schematicRunner.runSchematicAsync('ng-add', { 'component': true }, appTree).toPromise().then((tree: UnitTestTree) => {
+    await schematicRunner.runSchematic('ng-add', { 'component': true }, appTree).then((tree: UnitTestTree) => {
       const files = tree.files
 
       expect(files).to.contain('/projects/sandbox/cypress/support/component.ts')
@@ -66,7 +65,7 @@ describe('@cypress/schematic: ng-add', () => {
   })
 
   it('should add @cypress/schematic to the schemaCollections array', async () => {
-    const tree = await schematicRunner.runSchematicAsync('ng-add', { 'component': true }, appTree).toPromise()
+    const tree = await schematicRunner.runSchematic('ng-add', { 'component': true }, appTree)
     const angularJson = readAngularJson(tree)
     const cliOptions = angularJson.cli as JsonObject
 
@@ -86,7 +85,7 @@ describe('@cypress/schematic: ng-add', () => {
       },
     }))
 
-    const tree = await schematicRunner.runSchematicAsync('ng-add', { 'component': true }, appTree).toPromise()
+    const tree = await schematicRunner.runSchematic('ng-add', { 'component': true }, appTree)
 
     angularJson = readAngularJson(tree)
     const cliOptions = angularJson.cli as JsonObject

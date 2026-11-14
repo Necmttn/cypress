@@ -1,12 +1,10 @@
-import { LoginModalFragmentDoc } from '../../generated/graphql-test'
+import { Auth_LoginDocument, LoginModalFragmentDoc } from '../../generated/graphql-test'
 import LoginModal from './LoginModal.vue'
-import { defaultMessages } from '@cy/i18n'
+// tslint:disable-next-line: no-implicit-dependencies - unsure how to handle these
 import Tooltip from '../../components/Tooltip.vue'
 import { ref } from 'vue'
-import { CloudUserStubs } from '@packages/graphql/test/stubCloudTypes'
+import { CloudUserStubs } from '@packages/data-context/test/graphql/stubCloudTypes'
 import { useUserProjectStatusStore } from '../../store'
-
-const text = defaultMessages.topNav
 
 const cloudViewer = {
   id: '1',
@@ -61,20 +59,88 @@ const mountSuccess = (viewer: TestCloudViewer = cloudViewer) => {
 describe('<LoginModal />', { viewportWidth: 1000, viewportHeight: 750 }, () => {
   describe('progress communication', () => {
     it('renders and reaches "opening browser" status', () => {
+      cy.stubMutationResolver(Auth_LoginDocument, (defineResult) => defineResult({} as any))
+
       cy.mountFragment(LoginModalFragmentDoc, {
         render: (gqlVal) => <div class="border-current border h-[700px] resize overflow-auto"><LoginModal gql={gqlVal} utmMedium="testing" /></div>,
       })
 
-      cy.contains('h2', text.login.titleInitial).should('be.visible')
-      cy.contains('a', text.login.cloud).should('be.visible').should('have.attr', 'href', 'https://on.cypress.io/dashboard-introduction')
+      cy.contains('h2', 'Continue in your browser').should('be.visible')
+      cy.contains('a', 'Cypress Cloud').should('be.visible').should('have.attr', 'href', 'https://on.cypress.io/dashboard-introduction?utm_medium=testing&utm_campaign=Cypress+Cloud&utm_source=Binary%3A+Launchpad')
 
-      // begin the login process
-      cy.findByRole('button', { name: text.login.actionLogin }).click()
-
-      // ensure we reach "browser is opening" status on the CTA
-      cy.findByRole('button', { name: text.login.actionOpening })
+      cy.getByRole('button', { name: 'Opening browser' })
       .should('be.visible')
       .and('be.disabled')
+    })
+
+    it('automatically starts login mutation when autoStartAuth is true', () => {
+      const loginSpy = cy.spy().as('loginSpy')
+
+      cy.stubMutationResolver(Auth_LoginDocument, (defineResult) => {
+        loginSpy()
+
+        return defineResult({} as any)
+      })
+
+      cy.mountFragment(LoginModalFragmentDoc, {
+        render: (gqlVal) => (
+          <div class="border-current border h-[700px] resize overflow-auto">
+            <LoginModal
+              gql={gqlVal}
+              utmMedium="testing"
+              autoStartAuth={true}
+            />
+          </div>
+        ),
+      })
+
+      // Mutation fires on mount — no button click required
+      cy.get('@loginSpy').should('have.been.called')
+
+      cy.getByRole('button', { name: 'Opening browser' })
+      .should('be.visible')
+      .and('be.disabled')
+    })
+
+    it('does not start login mutation when browser is already open', () => {
+      const loginSpy = cy.spy().as('loginSpy')
+
+      cy.stubMutationResolver(Auth_LoginDocument, (defineResult) => {
+        loginSpy()
+
+        return defineResult({} as any)
+      })
+
+      cy.mountFragment(LoginModalFragmentDoc, {
+        render: (gqlVal) => {
+          gqlVal.authState.browserOpened = true
+
+          return (
+            <div class="border-current border h-[700px] resize overflow-auto">
+              <LoginModal
+                gql={gqlVal}
+                utmMedium="testing"
+                autoStartAuth={true}
+              />
+            </div>
+          )
+        },
+      })
+
+      cy.get('@loginSpy').should('not.have.been.called')
+
+      cy.getByRole('button', { name: 'Waiting for browser...' })
+      .should('be.visible')
+      .and('be.disabled')
+    })
+
+    it('renders signup copy for signup auth flow', () => {
+      cy.mountFragment(LoginModalFragmentDoc, {
+        render: (gqlVal) => <div class="border-current border h-[700px] resize overflow-auto"><LoginModal gql={gqlVal} authFlow="signup" utmMedium="testing" autoStartAuth={false} /></div>,
+      })
+
+      cy.contains('h2', 'Continue in your browser').should('be.visible')
+      cy.getByRole('button', { name: 'Sign up' }).should('be.visible')
     })
 
     it('shows correct "waiting for login" status', () => {
@@ -82,22 +148,22 @@ describe('<LoginModal />', { viewportWidth: 1000, viewportHeight: 750 }, () => {
         render: (gqlVal) => {
           gqlVal.authState.browserOpened = true
 
-          return <div class="border-current border h-[700px] resize overflow-auto"><LoginModal gql={gqlVal} utmMedium="testing" /></div>
+          return <div class="border-current border h-[700px] resize overflow-auto"><LoginModal gql={gqlVal} utmMedium="testing" autoStartAuth={false} /></div>
         },
       })
 
       // The LoginModal immediately shows the "Waiting..." button
       // if the browser already opened
-      cy.findByRole('button', { name: text.login.actionWaiting })
+      cy.getByRole('button', { name: 'Waiting for browser...' })
       .should('be.visible')
       .and('be.disabled')
     })
 
     it('shows successful login status', () => {
       mountSuccess()
-      cy.contains('h2', text.login.titleSuccess).should('be.visible')
-      cy.contains(text.login.bodySuccess.replace('{0}', cloudViewer.fullName)).should('be.visible')
-      cy.contains('a', cloudViewer.fullName).should('have.attr', 'href', 'https://on.cypress.io/dashboard/profile')
+      cy.contains('h2', 'Login successful').should('be.visible')
+      cy.contains(`You are now logged in as ${cloudViewer.fullName}.`).should('be.visible')
+      cy.contains('a', cloudViewer.fullName).should('have.attr', 'href', 'https://on.cypress.io/dashboard/profile?utm_medium=testing&utm_campaign=Profile&utm_source=Binary%3A+Launchpad')
     })
   })
 
@@ -117,11 +183,11 @@ describe('<LoginModal />', { viewportWidth: 1000, viewportHeight: 750 }, () => {
           </div>),
       })
 
-      cy.contains('button', text.login.actionTryAgain).should('not.be.visible')
-      cy.contains('button', text.login.actionCancel).should('not.be.visible')
-      cy.contains(text.login.titleBrowserError).should('be.visible')
-      cy.contains(text.login.bodyBrowserError).should('be.visible')
-      cy.contains(text.login.bodyBrowserErrorDetails).should('be.visible')
+      cy.contains('button', 'Try again').should('not.be.visible')
+      cy.contains('button', 'Cancel').should('not.be.visible')
+      cy.contains('Browser error').should('be.visible')
+      cy.contains('The browser could not be opened.').should('be.visible')
+      cy.contains('Cypress was unable to open your installed browser. To continue logging in, please paste this URL into your web browser:').should('be.visible')
       cy.contains(authUrl).should('be.visible')
       cy.contains('button', 'Copy').should('be.visible')
     })
@@ -141,29 +207,29 @@ describe('<LoginModal />', { viewportWidth: 1000, viewportHeight: 750 }, () => {
         },
       })
 
-      cy.contains(text.login.titleFailed).should('be.visible')
-      cy.contains(text.login.bodyError).should('be.visible')
+      cy.contains('Login failed').should('be.visible')
+      cy.contains('An error occurred while attempting to log in:').should('be.visible')
       cy.contains(errorText).should('be.visible')
 
       // we test the qql mutation behavior of these buttons from e2e tests
-      cy.contains('button', text.login.actionTryAgain).should('be.visible')
+      cy.contains('button', 'Try again').should('be.visible')
 
       // but we can test that cancelling closes the modal here:
-      cy.contains('button', text.login.actionCancel).click()
+      cy.contains('button', 'Cancel').click()
       cy.get('@cancelSpy').should('have.been.called')
     })
   })
 
   it('shows successful login status with email if name not provided', () => {
     mountSuccess(cloudViewerNoName)
-    cy.contains('h2', text.login.titleSuccess).should('be.visible')
-    cy.contains(text.login.bodySuccess.replace('{0}', cloudViewerNoName.email)).should('be.visible')
-    cy.contains('a', cloudViewerNoName.email).should('have.attr', 'href', 'https://on.cypress.io/dashboard/profile')
+    cy.contains('h2', 'Login successful').should('be.visible')
+    cy.contains(`You are now logged in as ${cloudViewerNoName.email}.`).should('be.visible')
+    cy.contains('a', cloudViewerNoName.email).should('have.attr', 'href', 'https://on.cypress.io/dashboard/profile?utm_medium=testing&utm_campaign=Profile&utm_source=Binary%3A+Launchpad')
   })
 
   it('emits an event to close the modal when "Continue" button is clicked', () => {
     mountSuccess()
-    cy.findByRole('button', { name: text.login.actionContinue }).click().then(() => {
+    cy.getByRole('button', { name: 'Continue' }).click().then(() => {
       cy.wrap(Cypress.vueWrapper.findComponent(LoginModal).emitted('close'))
       .should('have.length', 1)
     })
@@ -176,38 +242,38 @@ describe('<LoginModal />', { viewportWidth: 1000, viewportHeight: 750 }, () => {
 
     it('renders correct components if there is no internet connection', () => {
       cy.mountFragment(LoginModalFragmentDoc, {
-        render: (gqlVal) => <div class="border-current border h-[700px] resize overflow-auto"><LoginModal gql={gqlVal} utmMedium="testing"/></div>,
+        render: (gqlVal) => <div class="border-current border h-[700px] resize overflow-auto"><LoginModal gql={gqlVal} utmMedium="testing" autoStartAuth={false} /></div>,
       })
 
       cy.goOffline()
 
       cy.contains('You have no internet connection')
-      cy.findByRole('button', { name: text.login.actionLogin })
+      cy.getByRole('button', { name: 'Log in' })
       .should('be.visible')
       .and('be.disabled')
     })
 
     it('shows login action when the internet is back', () => {
       cy.mountFragment(LoginModalFragmentDoc, {
-        render: (gqlVal) => <div class="border-current border h-[700px] resize overflow-auto"><LoginModal gql={gqlVal} utmMedium="testing"/></div>,
+        render: (gqlVal) => <div class="border-current border h-[700px] resize overflow-auto"><LoginModal gql={gqlVal} utmMedium="testing" autoStartAuth={false} /></div>,
       })
 
       cy.goOffline()
 
       cy.contains('You have no internet connection')
-      cy.findByRole('button', { name: text.login.actionLogin })
+      cy.getByRole('button', { name: 'Log in' })
       .should('be.visible')
       .and('be.disabled')
 
       cy.goOnline()
 
-      cy.contains('h2', text.login.titleInitial).should('be.visible')
+      cy.contains('h2', 'Continue in your browser').should('be.visible')
 
       // begin the login process
-      cy.findByRole('button', { name: text.login.actionLogin }).click()
+      cy.getByRole('button', { name: 'Log in' }).click()
 
       // ensure we reach "browser is opening" status on the CTA
-      cy.findByRole('button', { name: text.login.actionOpening })
+      cy.getByRole('button', { name: 'Opening browser' })
       .should('be.visible')
       .and('be.disabled')
     })
@@ -227,7 +293,7 @@ describe('<LoginModal />', { viewportWidth: 1000, viewportHeight: 750 }, () => {
         return (
           <div>
             <Tooltip v-slots={tooltipSlots} isInteractive />
-            {isOpen.value && <LoginModal gql={gqlVal} utmMedium="testing" />}
+            {isOpen.value && <LoginModal gql={gqlVal} utmMedium="testing" autoStartAuth={false} />}
           </div>
         )
       },

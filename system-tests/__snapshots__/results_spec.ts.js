@@ -16,27 +16,28 @@ exports['module api and after:run results'] = `
     "blockHosts": null,
     "chromeWebSecurity": true,
     "clientCertificates": [],
+    "defaultBrowser": null,
     "defaultCommandTimeout": 4000,
     "downloadsFolder": "/path/to/downloadsFolder",
     "env": {},
-    "execTimeout": 60000,
+    "expose": {},
     "experimentalCspAllowList": false,
-    "experimentalFetchPolyfill": false,
     "experimentalInteractiveRunEvents": false,
     "experimentalRunAllSpecs": false,
-    "experimentalMemoryManagement": false,
     "experimentalModifyObstructiveThirdPartyCode": false,
-    "experimentalSkipDomainInjection": null,
+    "injectDocumentDomain": false,
     "experimentalOriginDependencies": false,
-    "experimentalSourceRewriting": false,
     "experimentalSingleTabRunMode": false,
-    "experimentalStudio": false,
     "experimentalWebKitSupport": false,
+    "visibilityStrategy": "modern",
     "fileServerFolder": "/path/to/fileServerFolder",
     "fixturesFolder": "/path/to/fixturesFolder",
+    "forceHttp1": false,
     "excludeSpecPattern": "*.hot-update.js",
     "includeShadowDom": false,
-    "keystrokeDelay": 0,
+    "justInTimeCompile": true,
+    "keystrokeDelay": null,
+    "manageBrowserMemory": true,
     "modifyObstructiveCode": true,
     "numTestsKeptInMemory": 0,
     "platform": "linux",
@@ -44,6 +45,7 @@ exports['module api and after:run results'] = `
     "port": 100,
     "projectId": null,
     "redirectionLimit": 20,
+    "removeSRIAttributes": false,
     "reporter": "spec",
     "reporterOptions": null,
     "requestTimeout": 5000,
@@ -57,6 +59,7 @@ exports['module api and after:run results'] = `
     "taskTimeout": 60000,
     "testIsolation": true,
     "trashAssetsBeforeRuns": true,
+    "trustedCertificates": [],
     "userAgent": null,
     "video": false,
     "videoCompression": false,
@@ -79,7 +82,7 @@ exports['module api and after:run results'] = `
     ],
     "cypressBinaryRoot": "/path/to/cypressBinaryRoot",
     "hosts": null,
-    "isInteractive": true,
+    "isInteractive": false,
     "version": "X.Y.Z",
     "testingType": "e2e",
     "browser": null,
@@ -196,7 +199,7 @@ exports['module api and after:run results'] = `
               "state": "failed"
             }
           ],
-          "displayError": ""AssertionError: Timed out retrying after 10ms: expected true to be false\\n     <stack lines>"
+          "displayError": "AssertionError: Timed out retrying after 10ms: expected true to be false <stack lines>",
           "duration": 100,
           "state": "failed",
           "title": [
@@ -292,7 +295,7 @@ exports['module api and after:run results'] = `
               "state": "failed"
             }
           ],
-          "displayError": ""AssertionError: Timed out retrying after 10ms: expected true to be false\\n     <stack lines>"
+          "displayError": "AssertionError: Timed out retrying after 10ms: expected true to be false <stack lines>",
           "duration": 100,
           "state": "failed",
           "title": [
@@ -320,7 +323,7 @@ exports['module api and after:run results'] = `
               "state": "failed"
             }
           ],
-          "displayError": ""Error: failure in beforeEach\\n\\nBecause this error occurred during a \`before each\` hook we are skipping the remaining tests in the current suite: \`has skipped tests\`\\n     <stack lines>"
+          "displayError": "Error: failure in beforeEach\\n\\nBecause this error occurred during a \`before each\` hook we are skipping the remaining tests in the current suite: \`has skipped tests\` <stack lines>",
           "duration": 100,
           "state": "failed",
           "title": [
@@ -453,7 +456,7 @@ exports['after:spec results'] = `
             "state": "failed"
           }
         ],
-        "displayError": ""AssertionError: Timed out retrying after 10ms: expected true to be false\\n     <stack lines>"
+        "displayError": "AssertionError: Timed out retrying after 10ms: expected true to be false <stack lines>",
         "duration": 100,
         "state": "failed",
         "title": [
@@ -481,7 +484,7 @@ exports['after:spec results'] = `
             "state": "failed"
           }
         ],
-        "displayError": ""Error: failure in beforeEach\\n\\nBecause this error occurred during a \`before each\` hook we are skipping the remaining tests in the current suite: \`has skipped tests\`\\n     <stack lines>"
+        "displayError": "Error: failure in beforeEach\\n\\nBecause this error occurred during a \`before each\` hook we are skipping the remaining tests in the current suite: \`has skipped tests\` <stack lines>",
         "duration": 100,
         "state": "failed",
         "title": [

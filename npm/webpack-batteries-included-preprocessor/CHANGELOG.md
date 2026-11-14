@@ -1,3 +1,154 @@
+# [@[secure]/webpack-batteries-included-preprocessor-v5.0.0](https://github.com/[secure]-io/[secure]/compare/@[secure]/webpack-batteries-included-preprocessor-v4.2.0...@[secure]/webpack-batteries-included-preprocessor-v5.0.0) (2026-08-26)
+
+
+### breaking
+
+* remove built-in CoffeeScript support ([#33654](https://github.com/[secure]-io/[secure]/issues/33654)) ([0b7017d](https://github.com/[secure]-io/[secure]/commit/0b7017d15ed1647b82a092fd69fba56dba42db08))
+
+
+### BREAKING CHANGES
+
+* - **Cypress (semver: major, e.g. 16.0.0):** `cy.fixture()` no longer treats `.coffee` as executable CoffeeScript; those files are handled like other non-specialized extensions (e.g. raw UTF-8) unless you use encoding options.
+- **Cypress (semver: major):** The default `@[secure]/webpack-batteries-included-preprocessor` no longer registers `coffee-loader` or ships `coffeescript`. `.coffee` specs/support files will not compile unless users add their own webpack config via `@[secure]/webpack-preprocessor`.
+- **`@[secure]/webpack-batteries-included-preprocessor` (semver: minor → treat as breaking for consumers, e.g. 4.2.0):** Removed `coffee-loader` and `coffeescript` dependencies and the `/\.coffee$/` rule from default webpack options.
+
+Migration:
+- Use JavaScript or TypeScript for specs, support files, and object fixtures (`.json` / `.js`).
+- For CoffeeScript specs, use `@[secure]/webpack-preprocessor` with a custom webpack config that includes `coffee-loader` and `coffeescript`.
+
+Also:
+- Rename system-tests fixture `coffee-react-interop` → `react-webpack-interop` and update `es_modules_spec` / `typescript_spec_support_spec`.
+- Update errors copy, CLI types examples, app settings tests, driver stack/location tests, v8 snapshot cache workflow Node version, and related docs/changelogs.
+
+* fix failing test
+
+* remove date in CLI
+
+* fix changelog entry
+
+* remove screenshots from some system-test snapshots
+
+* fix snapshot
+
+* remove coffeescript import
+
+* remove webpack-batteries..changelog
+
+* remove migration specific comment
+
+* remove debugger
+
+* revert to pending test
+
+* remove other callbacks
+
+# [@cypress/webpack-batteries-included-preprocessor-v4.2.0](https://github.com/cypress-io/cypress/compare/@cypress/webpack-batteries-included-preprocessor-v4.1.1...@cypress/webpack-batteries-included-preprocessor-v4.2.0) (2026-07-15)
+
+
+### Features
+
+* support TypeScript 7 for spec preprocessing ([#34277](https://github.com/cypress-io/cypress/issues/34277)) ([4904db4](https://github.com/cypress-io/cypress/commit/4904db4de535d26c8c9e21d561aa0b65a5628a7a))
+
+# [@cypress/webpack-batteries-included-preprocessor-v4.1.1](https://github.com/cypress-io/cypress/compare/@cypress/webpack-batteries-included-preprocessor-v4.1.0...@cypress/webpack-batteries-included-preprocessor-v4.1.1) (2026-05-09)
+
+
+### Bug Fixes
+
+* **deps:** support tsconfig paths without baseUrl (TS6+) in webpack-batteries-included-preprocessor ([#33747](https://github.com/cypress-io/cypress/issues/33747)) ([d96f158](https://github.com/cypress-io/cypress/commit/d96f158f14b87731ec79084c85bcebf0542203f0))
+
+# [@cypress/webpack-batteries-included-preprocessor-v4.1.0](https://github.com/cypress-io/cypress/compare/@cypress/webpack-batteries-included-preprocessor-v4.0.4...@cypress/webpack-batteries-included-preprocessor-v4.1.0) (2026-04-13)
+
+
+### Features
+
+* TypeScript 6 compatibility for webpack preprocessor and CT wizard ([#33575](https://github.com/cypress-io/cypress/issues/33575)) ([8eaedab](https://github.com/cypress-io/cypress/commit/8eaedab0d8679a0ae595dc7711b1be2cc784f707))
+
+# [@cypress/webpack-batteries-included-preprocessor-v4.0.4](https://github.com/cypress-io/cypress/compare/@cypress/webpack-batteries-included-preprocessor-v4.0.3...@cypress/webpack-batteries-included-preprocessor-v4.0.4) (2025-11-13)
+
+# [@cypress/webpack-batteries-included-preprocessor-v4.0.3](https://github.com/cypress-io/cypress/compare/@cypress/webpack-batteries-included-preprocessor-v4.0.2...@cypress/webpack-batteries-included-preprocessor-v4.0.3) (2025-11-07)
+
+# [@cypress/webpack-batteries-included-preprocessor-v4.0.2](https://github.com/cypress-io/cypress/compare/@cypress/webpack-batteries-included-preprocessor-v4.0.1...@cypress/webpack-batteries-included-preprocessor-v4.0.2) (2025-08-27)
+
+
+### Bug Fixes
+
+* correctly discover TypeScript compiler in `@cypress/webpack-batteries-included-preprocessor` ([#32339](https://github.com/cypress-io/cypress/issues/32339)) ([05c1828](https://github.com/cypress-io/cypress/commit/05c1828b2e81eabd61644e6e05ef8c59ccfe7717))
+
+# [@cypress/webpack-batteries-included-preprocessor-v4.0.1](https://github.com/cypress-io/cypress/compare/@cypress/webpack-batteries-included-preprocessor-v4.0.0...@cypress/webpack-batteries-included-preprocessor-v4.0.1) (2025-08-19)
+
+
+### Bug Fixes
+
+* ts-loader detection (false positive) ([#32266](https://github.com/cypress-io/cypress/issues/32266)) ([f7c9847](https://github.com/cypress-io/cypress/commit/f7c98473f53ecfd944a1aace10ea888a62a01e8f))
+
+# [@cypress/webpack-batteries-included-preprocessor-v4.0.0](https://github.com/cypress-io/cypress/compare/@cypress/webpack-batteries-included-preprocessor-v3.1.2...@cypress/webpack-batteries-included-preprocessor-v4.0.0) (2025-08-08)
+
+
+### breaking
+
+* release version 4.0.0 of @cypress/webpack-batteries-included-preprocessor. ([a08bb7b](https://github.com/cypress-io/cypress/commit/a08bb7b33c2cfc6e4a1304ed17c110f35823387e))
+
+
+### Features
+
+* allow for @cypress/webpack-batteries-included-preprocessor to fully resolve the user tsconfig compiler options ([#31590](https://github.com/cypress-io/cypress/issues/31590)) ([f369f50](https://github.com/cypress-io/cypress/commit/f369f50045685648b94d05ab6426099ee80d1245))
+
+
+### BREAKING CHANGES
+
+* release a major version of @cypress/webpack-batteries-included-preprocessor as webpack 4 is no longer supported and built-ins are removed
+
+# [@cypress/webpack-batteries-included-preprocessor-v3.1.2](https://github.com/cypress-io/cypress/compare/@cypress/webpack-batteries-included-preprocessor-v3.1.1...@cypress/webpack-batteries-included-preprocessor-v3.1.2) (2025-07-24)
+
+
+### Bug Fixes
+
+* Add extensionAlias for ESM TS to webpack-batteries-included ([#31994](https://github.com/cypress-io/cypress/issues/31994)) ([cabdae7](https://github.com/cypress-io/cypress/commit/cabdae708d43464f4f7e86e6f400823dcc95abe6)), closes [#26827](https://github.com/cypress-io/cypress/issues/26827) [#28805](https://github.com/cypress-io/cypress/issues/28805)
+
+# [@cypress/webpack-batteries-included-preprocessor-v3.1.1](https://github.com/cypress-io/cypress/compare/@cypress/webpack-batteries-included-preprocessor-v3.1.0...@cypress/webpack-batteries-included-preprocessor-v3.1.1) (2025-07-01)
+
+# [@cypress/webpack-batteries-included-preprocessor-v3.1.0](https://github.com/cypress-io/cypress/compare/@cypress/webpack-batteries-included-preprocessor-v3.0.7...@cypress/webpack-batteries-included-preprocessor-v3.1.0) (2025-05-13)
+
+
+### Features
+
+* ship webpack-bundle-analyzer with`@cypress/webpack-dev-server` and `@cypress/webpack-batteries-included-preprocessor` ([#31588](https://github.com/cypress-io/cypress/issues/31588)) ([46f2867](https://github.com/cypress-io/cypress/commit/46f2867b9dafbf991bf7154cb181eb07d9c6ad20))
+
+# [@cypress/webpack-batteries-included-preprocessor-v3.0.7](https://github.com/cypress-io/cypress/compare/@cypress/webpack-batteries-included-preprocessor-v3.0.6...@cypress/webpack-batteries-included-preprocessor-v3.0.7) (2025-03-26)
+
+
+### Bug Fixes
+
+* allow version 10 of the babel-loader peer dependency ([#31218](https://github.com/cypress-io/cypress/issues/31218)) ([33cf18e](https://github.com/cypress-io/cypress/commit/33cf18e409a25573566b033f50b03d824e32cef1))
+
+# [@cypress/webpack-batteries-included-preprocessor-v3.0.6](https://github.com/cypress-io/cypress/compare/@cypress/webpack-batteries-included-preprocessor-v3.0.5...@cypress/webpack-batteries-included-preprocessor-v3.0.6) (2025-03-25)
+
+
+### Bug Fixes
+
+* change default options for sourceMaps inside WBIP ([#31270](https://github.com/cypress-io/cypress/issues/31270)) ([7bdf1e9](https://github.com/cypress-io/cypress/commit/7bdf1e98707329157c7149b5b26fcb5bf799b8bc))
+
+# [@cypress/webpack-batteries-included-preprocessor-v3.0.5](https://github.com/cypress-io/cypress/compare/@cypress/webpack-batteries-included-preprocessor-v3.0.4...@cypress/webpack-batteries-included-preprocessor-v3.0.5) (2024-08-14)
+
+
+### Bug Fixes
+
+* Upgrade elliptic to address security vulnerability ([#30037](https://github.com/cypress-io/cypress/issues/30037)) ([07bc653](https://github.com/cypress-io/cypress/commit/07bc6534d7e0af90f66cf87b25754936afea4b8b))
+
+# [@cypress/webpack-batteries-included-preprocessor-v3.0.4](https://github.com/cypress-io/cypress/compare/@cypress/webpack-batteries-included-preprocessor-v3.0.3...@cypress/webpack-batteries-included-preprocessor-v3.0.4) (2024-07-30)
+
+
+### Bug Fixes
+
+* allow yarn 4 berry to work with cypress webpack preprocessor ([#29901](https://github.com/cypress-io/cypress/issues/29901)) ([1521399](https://github.com/cypress-io/cypress/commit/1521399bc8375da30370d33ec17317975bb6b63a))
+
+# [@cypress/webpack-batteries-included-preprocessor-v3.0.3](https://github.com/cypress-io/cypress/compare/@cypress/webpack-batteries-included-preprocessor-v3.0.2...@cypress/webpack-batteries-included-preprocessor-v3.0.3) (2024-06-07)
+
+
+### Bug Fixes
+
+* update cypress to Typescript 5 ([#29568](https://github.com/cypress-io/cypress/issues/29568)) ([f3b6766](https://github.com/cypress-io/cypress/commit/f3b67666a5db0438594339c379cf27e1fd1e4abc))
+
 # [@cypress/webpack-batteries-included-preprocessor-v3.0.2](https://github.com/cypress-io/cypress/compare/@cypress/webpack-batteries-included-preprocessor-v3.0.1...@cypress/webpack-batteries-included-preprocessor-v3.0.2) (2023-08-31)
 
 

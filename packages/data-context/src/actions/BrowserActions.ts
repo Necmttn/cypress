@@ -32,12 +32,21 @@ export class BrowserActions {
       d.activeBrowser = browser
     })
 
+    if (this.ctx.isRunMode) {
+      return
+    }
+
     this.ctx._apis.projectApi.insertProjectPreferencesToCache(this.ctx.lifecycleManager.projectTitle, {
       lastBrowser: {
         name: browser.name,
         channel: browser.channel,
       },
     })
+  }
+
+  setCliBrowser (browser: string) {
+    this.ctx.updateModeOptionsBrowser(browser)
+    this.ctx.coreData.cliBrowser = browser
   }
 
   async focusActiveBrowserWindow () {

@@ -1,3 +1,8 @@
+// Tailwind CSS
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 // this file is used when developing the reporter in isolation via cypress tests
 // if you update this file, also update main-runner.scss
 @import 'lib/variables';
@@ -7,6 +12,7 @@
 @import 'lib/switch';
 @import 'lib/tag';
 @import 'lib/tooltip';
+@import 'lib/selfHealedBadge';
 @import '@reach/dialog/styles.css';
 // import all other scss files in src except if they are in lib
 // or their file name is `selector-playground` or `main`

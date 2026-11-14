@@ -1,30 +1,29 @@
-import { FoundBrowser, Editor, AllowedState, AllModeOptions, TestingType, BrowserStatus, PACKAGE_MANAGERS, AuthStateName, MIGRATION_STEPS, MigrationStep, BannerState } from '@packages/types'
-import { WizardBundler, CT_FRAMEWORKS, resolveComponentFrameworkDefinition, ErroredFramework } from '@packages/scaffold-config'
-import type { NexusGenObjects } from '@packages/graphql/src/gen/nxs.gen'
+import type { FoundBrowser, Editor, AllowedState, AllModeOptions, TestingType, BrowserStatus, PACKAGE_MANAGERS, AuthStateName, StudioLifecycleManagerShape, CyPromptLifecycleManagerShape, Maybe } from '@packages/types'
+import { CT_FRAMEWORKS, resolveComponentFrameworkDefinition } from '@packages/scaffold-config'
+import type { WizardBundler, ErroredFramework } from '@packages/scaffold-config'
+import type { NexusGenObjects } from '../gen/nxs.gen'
+// tslint:disable-next-line no-implicit-dependencies - electron dep needs to be defined
 import type { App, BrowserWindow } from 'electron'
-import type { ChildProcess } from 'child_process'
-import type { SocketIONamespace, SocketIOServer } from '@packages/socket'
+import type { SocketIONamespace, SocketIOServer, CDPSocketServer } from '@packages/socket'
 import type { Server } from 'http'
 import type { ErrorWrapperSource } from '@packages/errors'
-import type { EventCollectorSource, GitDataSource, LegacyCypressConfigJson } from '../sources'
+import type { EventCollectorSource, GitDataSource } from '../sources'
 import { machineId as getMachineId } from 'node-machine-id'
-import type { CDPSocketServer } from '@packages/socket/lib/cdp-socket'
-
-export type Maybe<T> = T | null | undefined
 
 export interface AuthenticatedUserShape {
   id?: string //Cloud user id
   name?: string
   email?: string
   authToken?: string
+  projectSlug?: string
 }
 
 export interface ProjectShape {
   projectRoot: string
-  savedState?: () => Promise<Maybe<SavedStateShape>>
+  savedState?: () => Promise<AllowedState>
 }
 
-export interface ServersDataShape {
+interface ServersDataShape {
   appServer?: Maybe<Server>
   appServerPort?: Maybe<number>
   appSocketServer?: Maybe<SocketIOServer>
@@ -34,43 +33,24 @@ export interface ServersDataShape {
   gqlServer?: Maybe<Server>
   gqlServerPort?: Maybe<number>
   gqlSocketServer?: Maybe<SocketIONamespace>
+  /**
+   * graphql-ws `useServer` dispose — must run before `gqlServer.destroy()` so
+   * protocol clients close before the HTTP server tears down sockets.
+   */
+  gqlGraphqlWsDispose?: Maybe<() => Promise<void>>
 }
 
 export interface DevStateShape {
   refreshState: null | string
 }
 
-export interface LocalSettingsDataShape {
+interface LocalSettingsDataShape {
   refreshing: Promise<Editor[]> | null
   availableEditors: Editor[]
   preferences: AllowedState
 }
 
-export interface SavedStateShape {
-  firstOpened?: number | null
-  lastOpened?: number | null
-  promptsShown?: object | null
-  banners?: BannerState | null
-  lastProjectId?: string | null
-  specFilter?: string | null
-}
-
-export interface ConfigChildProcessShape {
-  /**
-   * Child process executing the config & sourcing plugin events
-   */
-  process: ChildProcess
-  /**
-   * Keeps track of which plugins we have executed in the current config process
-   */
-  executedPlugins: null | 'e2e' | 'ct'
-  /**
-   * Config from the initial module.exports
-   */
-  resolvedBaseConfig: Promise<Cypress.ConfigOptions>
-}
-
-export interface AppDataShape {
+interface AppDataShape {
   isGlobalMode: boolean
   browsers: ReadonlyArray<FoundBrowser> | null
   projects: ProjectShape[]
@@ -90,28 +70,7 @@ export interface WizardDataShape {
   erroredFrameworks: ErroredFramework[]
 }
 
-export interface MigrationDataShape {
-  // TODO: have the model of migration here
-  step: MigrationStep
-  videoEmbedHtml: string | null
-  legacyConfigForMigration?: LegacyCypressConfigJson | null
-  filteredSteps: MigrationStep[]
-  flags: {
-    hasCustomIntegrationFolder: boolean
-    hasCustomIntegrationTestFiles: boolean
-
-    hasCustomComponentFolder: boolean
-    hasCustomComponentTestFiles: boolean
-
-    hasCustomSupportFile: boolean
-    hasComponentTesting: boolean
-    hasE2ESpec: boolean
-    hasPluginsFile: boolean
-    shouldAddCustomE2ESpecPattern: boolean
-  }
-}
-
-export interface ElectronShape {
+interface ElectronShape {
   app: App | null
   browserWindow: BrowserWindow | null
 }
@@ -122,7 +81,7 @@ export interface AuthStateShape {
   browserOpened: boolean
 }
 
-export interface ForceReconfigureProjectDataShape {
+interface ForceReconfigureProjectDataShape {
   e2e?: boolean | null
   component?: boolean | null
 }
@@ -138,6 +97,11 @@ interface CloudDataShape {
     id?: string
     name?: string
   }
+}
+
+interface RecordingInfo {
+  runId?: string
+  instanceId?: string
 }
 
 export interface CoreDataShape {
@@ -158,7 +122,6 @@ export interface CoreDataShape {
   currentTestingType: TestingType | null
   diagnostics: Diagnostics
   wizard: WizardDataShape
-  migration: MigrationDataShape
   user: AuthenticatedUserShape | null
   electron: ElectronShape
   authState: AuthStateShape
@@ -171,6 +134,11 @@ export interface CoreDataShape {
   } | null
   cloudProject: CloudDataShape
   eventCollectorSource: EventCollectorSource | null
+  didBrowserPreviouslyHaveUnexpectedExit: boolean
+  studioLifecycleManager?: StudioLifecycleManagerShape
+  cyPromptLifecycleManager?: CyPromptLifecycleManagerShape
+  currentRecordingInfo: RecordingInfo
+  autoProvisionedProjectId: string | null
 }
 
 /**
@@ -220,23 +188,6 @@ export function makeCoreData (modeOptions: Partial<AllModeOptions> = {}): CoreDa
       frameworks: CT_FRAMEWORKS.map((framework) => resolveComponentFrameworkDefinition(framework)),
       erroredFrameworks: [],
     },
-    migration: {
-      step: 'renameAuto',
-      videoEmbedHtml: null,
-      legacyConfigForMigration: null,
-      filteredSteps: [...MIGRATION_STEPS],
-      flags: {
-        hasCustomIntegrationFolder: false,
-        hasCustomIntegrationTestFiles: false,
-        hasCustomComponentFolder: false,
-        hasCustomComponentTestFiles: false,
-        hasCustomSupportFile: false,
-        hasComponentTesting: true,
-        hasE2ESpec: true,
-        hasPluginsFile: true,
-        shouldAddCustomE2ESpecPattern: false,
-      },
-    },
     activeBrowser: null,
     user: null,
     electron: {
@@ -251,6 +202,10 @@ export function makeCoreData (modeOptions: Partial<AllModeOptions> = {}): CoreDa
       testsForRunResults: {},
     },
     eventCollectorSource: null,
+    didBrowserPreviouslyHaveUnexpectedExit: false,
+    studioLifecycleManager: undefined,
+    currentRecordingInfo: {},
+    autoProvisionedProjectId: null,
   }
 
   async function machineId (): Promise<string | null> {

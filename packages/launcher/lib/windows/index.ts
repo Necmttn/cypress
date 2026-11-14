@@ -1,4 +1,4 @@
-import * as fse from 'fs-extra'
+import fs from 'fs-extra'
 import winVersionInfo from 'win-version-info'
 import os from 'os'
 import { join, normalize, win32 } from 'path'
@@ -13,22 +13,25 @@ const debugVerbose = Debug('cypress-verbose:launcher:windows')
 
 function formFullAppPath (name: string) {
   return [
-    `C:/Program Files (x86)/Google/Chrome/Application/${name}.exe`,
     `C:/Program Files/Google/Chrome/Application/${name}.exe`,
+    `C:/Program Files (x86)/Google/Chrome/Application/${name}.exe`,
   ].map(normalize)
 }
 
 function formChromeBetaAppPath () {
   return [
-    'C:/Program Files (x86)/Google/Chrome Beta/Application/chrome.exe',
     'C:/Program Files/Google/Chrome Beta/Application/chrome.exe',
+    'C:/Program Files (x86)/Google/Chrome Beta/Application/chrome.exe',
   ].map(normalize)
 }
 
 function formChromiumAppPath () {
-  const exe = 'C:/Program Files (x86)/Google/chrome-win32/chrome.exe'
-
-  return [normalize(exe)]
+  return [
+    'C:/Program Files/Google/chrome-win/chrome.exe',
+    'C:/Program Files/Google/Chromium/chrome.exe',
+    'C:/Program Files (x86)/Google/chrome-win32/chrome.exe',
+    'C:/Program Files (x86)/Google/Chromium/chrome.exe',
+  ].map(normalize)
 }
 
 function formChromeCanaryAppPath () {
@@ -44,6 +47,13 @@ function formChromeCanaryAppPath () {
   )
 
   return [normalize(exe)]
+}
+
+function formChromeForTestingAppPath () {
+  return [
+    'C:/Program Files/Google/Chrome for Testing/chrome.exe',
+    'C:/Program Files (x86)/Google/Chrome for Testing/chrome.exe',
+  ].map(normalize)
 }
 
 function getFirefoxPaths (editionFolder) {
@@ -91,6 +101,9 @@ const formPaths: WindowsBrowserPaths = {
     beta: formChromeBetaAppPath,
     canary: formChromeCanaryAppPath,
   },
+  'chrome-for-testing': {
+    stable: formChromeForTestingAppPath,
+  },
   chromium: {
     stable: formChromiumAppPath,
   },
@@ -106,10 +119,10 @@ const formPaths: WindowsBrowserPaths = {
     beta: () => {
       return [normalize('C:/Program Files (x86)/Microsoft/Edge Beta/Application/msedge.exe')]
     },
+    canary: formEdgeCanaryAppPath,
     dev: () => {
       return [normalize('C:/Program Files (x86)/Microsoft/Edge Dev/Application/msedge.exe')]
     },
-    canary: formEdgeCanaryAppPath,
   },
 }
 
@@ -129,9 +142,9 @@ function getWindowsBrowser (browser: Browser): Promise<FoundBrowser> {
       throw notInstalledErr(browser.name)
     }
 
-    let path = doubleEscape(exePath)
+    const path = doubleEscape(exePath)
 
-    return fse.pathExists(path)
+    return fs.pathExists(path)
     .then((exists) => {
       debugVerbose('found %s ? %o', path, { exists })
 
@@ -139,9 +152,7 @@ function getWindowsBrowser (browser: Browser): Promise<FoundBrowser> {
         return tryNextExePath()
       }
 
-      // Use module.exports.getVersionString here, rather than our local reference
-      // to that variable so that the tests can easily mock it
-      return module.exports.getVersionString(path).then((version) => {
+      return getVersionString(path).then((version) => {
         debug('got version string for %s: %o', browser.name, { exePath, version })
 
         return {
@@ -193,13 +204,13 @@ export function getVersionNumber (version: string) {
 export function getPathData (pathStr: string): PathData {
   const test = new RegExp(/^.+\.exe:(.+)$/)
   const res = test.exec(pathStr)
-  let browserKey = ''
   let path = pathStr
 
   if (res) {
     const pathParts = path.split(':')
 
-    browserKey = pathParts.pop() || ''
+    const browserKey = pathParts.pop() || ''
+
     path = doubleEscape(pathParts.join(':'))
 
     return { path, browserKey }

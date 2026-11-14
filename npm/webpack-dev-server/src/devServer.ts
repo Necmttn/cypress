@@ -1,17 +1,13 @@
 /// <reference types="cypress" />
 
-import type WebpackDevServer from 'webpack-dev-server'
+import type WebpackDevServer5 from 'webpack-dev-server'
 import type { Compiler, Configuration } from 'webpack'
 
 import { createWebpackDevServer } from './createWebpackDevServer'
-import type { AddressInfo } from 'net'
 import debugLib from 'debug'
-import type { Server } from 'http'
-import { vueCliHandler } from './helpers/vueCliHandler'
-import { nuxtHandler } from './helpers/nuxtHandler'
-import { createReactAppHandler } from './helpers/createReactAppHandler'
 import { nextHandler } from './helpers/nextHandler'
-import { sourceDefaultWebpackDependencies, SourceRelativeWebpackResult } from './helpers/sourceRelativeWebpackModules'
+import type { SourceRelativeWebpackResult } from './helpers/sourceRelativeWebpackModules'
+import { sourceDefaultWebpackDependencies } from './helpers/sourceRelativeWebpackModules'
 import { angularHandler } from './helpers/angularHandler'
 
 const debug = debugLib('cypress:webpack-dev-server:devServer')
@@ -43,12 +39,8 @@ export type WebpackDevServerConfig = {
  * @internal
  */
 type DevServerCreateResult = {
-  version: 3
-  server: Server
-  compiler: Compiler
-} | {
-  version: 4
-  server: WebpackDevServer
+  version: 5
+  server: WebpackDevServer5
   compiler: Compiler
 }
 
@@ -60,57 +52,27 @@ type DevServerCreateResult = {
  *
  * @param config
  */
-export function devServer (devServerConfig: WebpackDevServerConfig): Promise<Cypress.ResolvedDevServerConfig> {
-  return new Promise(async (resolve, reject) => {
-    const result = await devServer.create(devServerConfig) as DevServerCreateResult
+export async function devServer (devServerConfig: WebpackDevServerConfig): Promise<Cypress.ResolvedDevServerConfig> {
+  const result = await devServer.create(devServerConfig) as DevServerCreateResult
 
-    // @ts-expect-error
-    const { port } = result.server?.options
+  await result.server.start()
 
-    if (result.version === 3) {
-      const srv = result.server.listen(port || 0, '127.0.0.1', () => {
-        const port = (srv.address() as AddressInfo).port
+  if (!result.server.options.port) {
+    throw new Error(`Expected port ${result.server.options.port} to be a number`)
+  }
 
-        debug('Component testing webpack server 3 started on port %s', port)
+  debug(`Component testing webpack server ${result.version} started on port %s`, result.server.options.port)
 
-        resolve({
-          port,
-          // Close is for unit testing only. We kill this child process which will handle the closing of the server
-          close: (done) => {
-            srv.close((err) => {
-              if (err) {
-                debug('closing dev server, with error', err)
-              }
-
-              debug('closed dev server')
-              done?.(err)
-            })
-          },
-        })
+  return {
+    port: result.server.options.port as number,
+    // Close is for unit testing only. We kill this child process which will handle the closing of the server
+    close: async (done) => {
+      debug('closing dev server')
+      result.server.stop().then(() => done?.()).catch(done).finally(() => {
+        debug('closed dev server')
       })
-
-      return
-    }
-
-    result.server.start().then(() => {
-      if (!result.server.options.port) {
-        return reject(new Error(`Expected port ${result.server.options.port} to be a number`))
-      }
-
-      debug('Component testing webpack server 4 started on port %s', result.server.options.port)
-
-      resolve({
-        port: result.server.options.port as number,
-        // Close is for unit testing only. We kill this child process which will handle the closing of the server
-        close: async (done) => {
-          debug('closing dev server')
-          result.server.stop().then(() => done?.()).catch(done).finally(() => {
-            debug('closed dev server')
-          })
-        },
-      })
-    }).catch(reject)
-  })
+    },
+  }
 }
 
 export type PresetHandlerResult = { frameworkConfig: Configuration, sourceWebpackModulesResult: SourceRelativeWebpackResult }
@@ -123,7 +85,7 @@ const thirdPartyDefinitionPrefixes = {
   globalPrefix: 'cypress-ct-',
 }
 
-export function isThirdPartyDefinition (framework: string) {
+function isThirdPartyDefinition (framework: string) {
   return framework.startsWith(thirdPartyDefinitionPrefixes.globalPrefix) ||
     thirdPartyDefinitionPrefixes.namespacedPrefixRe.test(framework)
 }
@@ -137,14 +99,6 @@ async function getPreset (devServerConfig: WebpackDevServerConfig): Promise<Opti
   }
 
   switch (devServerConfig.framework) {
-    case 'create-react-app':
-      return createReactAppHandler(devServerConfig)
-    case 'nuxt':
-      return await nuxtHandler(devServerConfig)
-
-    case 'vue-cli':
-      return await vueCliHandler(devServerConfig)
-
     case 'next':
       return await nextHandler(devServerConfig)
 
@@ -158,7 +112,7 @@ async function getPreset (devServerConfig: WebpackDevServerConfig): Promise<Opti
       return defaultWebpackModules()
 
     default:
-      throw new Error(`Unexpected framework ${(devServerConfig as any).framework}, please visit https://on.cypress.io/component-framework-configuration to see a list of supported frameworks`)
+      throw new Error(`Unexpected framework ${(devServerConfig as any).framework}, please visit https://on.cypress.io/frameworks to see a list of supported frameworks`)
   }
 }
 
@@ -186,4 +140,5 @@ devServer.create = async function (devServerConfig: WebpackDevServerConfig) {
   return result
 }
 
+/** @alias */
 export default devServer

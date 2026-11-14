@@ -4,7 +4,8 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { RunAllSpecsDataDocument, RunAllSpecsDocument } from '../generated/graphql'
-import { getSeparator, SpecTreeNode, UseCollapsibleTreeNode } from '../specs/tree/useCollapsibleTree'
+import { getSeparator } from '../specs/tree/useCollapsibleTree'
+import type { SpecTreeNode, UseCollapsibleTreeNode } from '../specs/tree/useCollapsibleTree'
 import { isRunMode } from '@packages/frontend-shared/src/utils/isRunMode'
 
 type ResolvedConfig = Array<{ value: any, from: string, field: string }>
@@ -43,7 +44,7 @@ export const useRunAllSpecsStore = defineStore('runAllSpecs', () => {
 
     // Won't execute unless we are testing since the browser gets killed. In testing,
     // we can stub `launchProject` to verify the functionality is working
-    router.push({ path: '/specs/runner', query: { file: RUN_ALL_SPECS_KEY } })
+    await router.push({ path: '/specs/runner', query: { file: RUN_ALL_SPECS_KEY } })
   }
 
   async function runAllSpecs () {
@@ -76,15 +77,13 @@ export const useRunAllSpecsStore = defineStore('runAllSpecs', () => {
     directoryChildrenRef.value = directoryChildren
   }
 
-  const query = useQuery({ query: RunAllSpecsDataDocument, pause: isRunMode || window.__CYPRESS_TESTING_TYPE__ === 'component' })
+  const query = useQuery({ query: RunAllSpecsDataDocument, pause: isRunMode })
 
   const isRunAllSpecsAllowed = computed(() => {
-    const isE2E = query.data.value?.currentProject?.currentTestingType === 'e2e'
-
     const config: ResolvedConfig = query.data.value?.currentProject?.config || []
     const hasExperiment = config.some(({ field, value }) => field === 'experimentalRunAllSpecs' && value === true)
 
-    return (isE2E && hasExperiment)
+    return hasExperiment
   })
 
   return {

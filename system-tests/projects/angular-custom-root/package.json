@@ -1,27 +1,29 @@
 {
-  "name": "angular",
+  "name": "angular-custom-root",
   "version": "0.0.0",
   "private": true,
   "scripts": {
+    "build": "ng build",
     "ng": "ng",
     "start": "ng serve",
-    "build": "ng build",
+    "test": "ng test",
     "watch": "ng build --watch --configuration development"
   },
   "dependencies": {
-    "@angular/common": "^15.0.3",
-    "@angular/compiler": "^15.0.3",
-    "@angular/core": "^15.0.3",
-    "@angular/platform-browser": "^15.0.3",
-    "@angular/platform-browser-dynamic": "^15.0.3",
-    "rxjs": "~7.5.0",
-    "tslib": "^2.3.0",
-    "zone.js": "~0.11.4"
+    "@angular/common": "^21.2.0",
+    "@angular/compiler": "^21.2.0",
+    "@angular/core": "^21.2.0",
+    "@angular/forms": "^21.2.0",
+    "@angular/platform-browser": "^21.2.0",
+    "@angular/router": "^21.2.0",
+    "rxjs": "~7.8.0",
+    "tslib": "^2.3.0"
   },
   "devDependencies": {
-    "@angular-devkit/build-angular": "^15.0.3",
-    "@angular/cli": "~15.0.3",
-    "@angular/compiler-cli": "^15.0.3",
-    "typescript": "~4.8.4"
+    "@angular-devkit/build-angular": "^21.2.7",
+    "@angular/build": "^21.2.7",
+    "@angular/cli": "^21.2.7",
+    "@angular/compiler-cli": "^21.2.0",
+    "typescript": "~5.9.2"
   }
 }

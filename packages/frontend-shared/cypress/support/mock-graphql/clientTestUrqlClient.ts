@@ -1,8 +1,9 @@
 import _ from 'lodash'
 import { pipe, map } from 'wonka'
-import { Client, subscriptionExchange, TypedDocumentNode, createClient, dedupExchange, errorExchange, ExecutionResult, gql } from '@urql/core'
+import { subscriptionExchange, createClient, dedupExchange, errorExchange, gql } from '@urql/core'
+import type { TypedDocumentNode, ExecutionResult, Client } from '@urql/core'
 import { executeExchange } from '@urql/exchange-execute'
-import { makeCacheExchange } from '@packages/frontend-shared/src/graphql/urqlClient'
+import { makeCacheExchange } from '../../../src/graphql/urqlClient'
 import { clientTestSchema } from './clientTestSchema'
 import type { ClientTestContext } from './clientTestContext'
 import type { GraphQLFieldResolver, GraphQLResolveInfo, GraphQLTypeResolver, FieldNode } from 'graphql'
@@ -27,7 +28,6 @@ export function testUrqlClient (context: ClientTestContext,
   return createClient({
     url: '/__cypress/graphql',
     exchanges: [
-
       dedupExchange,
       errorExchange({
         onError (error) {

@@ -5,7 +5,7 @@ describe('errorWarningChange subscription', () => {
   })
 
   function assertLoadingIntoErrorWorks (errorName: string) {
-    cy.contains('h3', errorName).should('be.visible')
+    cy.contains('h2', errorName, { timeout: 15000 }).should('be.visible')
     cy.contains('[role="alert"]', 'Loading').should('not.exist')
   }
 
@@ -13,6 +13,7 @@ describe('errorWarningChange subscription', () => {
     beforeEach(() => {
       cy.startAppServer()
       cy.visitApp()
+      cy.specsPageIsVisible()
     })
 
     describe('when the config file is saved with errors', () => {
@@ -42,12 +43,12 @@ module.exports = {
 }`)
         })
 
-        cy.contains(cy.i18n.launchpadErrors.generic.retryButton).click()
+        cy.contains('Try again').click()
         cy.contains('Error').should('not.exist')
       })
 
       it('shows expected error for malformed config file', () => {
-        cy.contains('h3', 'SyntaxError').should('not.exist')
+        cy.contains('h2', 'SyntaxError').should('not.exist')
         cy.withCtx(async (ctx) => {
           await ctx.actions.file.writeFileInProject('cypress.config.js',
 `   
@@ -61,7 +62,7 @@ module.exports = {
 
         assertLoadingIntoErrorWorks('SyntaxError')
         cy.contains('Your configFile is invalid').should('be.visible')
-        cy.contains('Unexpected token \',\'').should('be.visible')
+        cy.contains('Unexpected token \',\'').scrollIntoView().should('be.visible')
         cy.withCtx(async (ctx) => {
           await ctx.actions.file.writeFileInProject('cypress.config.js',
 `   
@@ -73,8 +74,8 @@ module.exports = {
 }`)
         })
 
-        cy.contains(cy.i18n.launchpadErrors.generic.retryButton).click()
-        cy.contains('h3', 'SyntaxError').should('not.exist')
+        cy.contains('Try again').click()
+        cy.contains('h2', 'SyntaxError').should('not.exist')
       })
     })
   })

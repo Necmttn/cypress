@@ -1,11 +1,10 @@
 import { useSnapshotStore } from './snapshot-store'
 import { useAutStore } from '../store'
 import type { EventManager } from './event-manager'
-import { defaultMessages } from '@cy/i18n'
-import { useStudioStore } from '../store/studio-store'
 
 export interface AutSnapshot {
-  id?: number
+  id?: string
+  testId?: string
   name?: string
   $el: any
   snapshot?: AutSnapshot
@@ -28,7 +27,7 @@ export interface AutSnapshot {
 export class IframeModel {
   isSnapshotPinned: boolean = false
   originalState?: AutSnapshot
-  detachedId?: number
+  detachedId?: string
   intervalId?: number
 
   constructor (
@@ -37,9 +36,6 @@ export class IframeModel {
     private highlightEl: ({ body }: any, opts: any) => void,
     private isAUTSameOrigin: () => boolean,
     private eventManager: EventManager,
-    private studio: {
-      selectorPlaygroundModel: any
-    },
   ) {
     this._reset()
   }
@@ -109,7 +105,6 @@ export class IframeModel {
   setSnapshots = (snapshotProps: AutSnapshot) => {
     const snapshotStore = useSnapshotStore()
     const autStore = useAutStore()
-    const studioStore = useStudioStore()
 
     if (snapshotStore.isSnapshotPinned) {
       return
@@ -117,10 +112,6 @@ export class IframeModel {
 
     if (autStore.isRunning) {
       return snapshotStore.setTestsRunningError()
-    }
-
-    if (studioStore.isOpen) {
-      return this._studioOpenError()
     }
 
     const { snapshots } = snapshotProps
@@ -163,7 +154,6 @@ export class IframeModel {
     this._showSnapshotVue(snapshots[0], snapshotProps)
   }
 
-  /// todo(lachlan): UNIFY-1318 - figure out shape of these two args
   _showSnapshotVue = (snapshot: any, snapshotProps: AutSnapshot) => {
     const snapshotStore = useSnapshotStore()
 
@@ -232,19 +222,19 @@ export class IframeModel {
 
     clearInterval(this.intervalId)
 
+    if (!this.originalState) {
+      this._storeOriginalState()
+    }
+
+    // Claim the pending restore of any preview this pin replaced, so its deferred
+    // `hide:snapshot` cannot put the live page back over the pin.
+    this.detachedId = snapshotProps.id
+
     this._restoreDom(snapshots[0], snapshotProps)
   }
 
   _unpinSnapshot = () => {
     useSnapshotStore().$reset()
-  }
-
-  _studioOpenError () {
-    const snapshotStore = useSnapshotStore()
-
-    snapshotStore.setMessage(
-      defaultMessages.runner.snapshot.studioActiveError,
-    )
   }
 
   _storeOriginalState () {
@@ -261,7 +251,7 @@ export class IframeModel {
       Cypress.primaryOriginCommunicator.toAllSpecBridges('generate:final:snapshot', autStore.url || '')
       Cypress.primaryOriginCommunicator.once('snapshot:final:generated', (finalSnapshot) => {
         // todo(lachlan): UNIFY-1318 - find correct default, if they are even needed, for required fields ($el, coords...)
-        // @ts-ignore
+        // @ts-expect-error - originalState is typed as a full AutSnapshot, but only these fields are known here
         this.originalState = {
           body: finalSnapshot.body,
           htmlAttrs: finalSnapshot.htmlAttrs,
@@ -285,7 +275,7 @@ export class IframeModel {
     const { body, htmlAttrs } = finalSnapshot
 
     // todo(lachlan): UNIFY-1318 - find correct default, if they are even needed, for required fields ($el, coords...)
-    // @ts-ignore
+    // @ts-expect-error - originalState is typed as a full AutSnapshot, but only these fields are known here
     this.originalState = {
       body,
       htmlAttrs,

@@ -1,7 +1,9 @@
 import { gql, useMutation } from '@urql/vue'
-import { Ref, computed, watch } from 'vue'
+import { computed, watch } from 'vue'
 import { useDebounce } from '@vueuse/core'
-import { CloudData_RefetchDocument, SpecsListFragment } from '../generated/graphql'
+import { CloudData_RefetchDocument } from '../generated/graphql'
+import type { SpecsListFragment } from '../generated/graphql'
+import type { Ref } from 'vue'
 
 gql`
 mutation CloudData_Refetch ($ids: [ID!]!) {
@@ -105,8 +107,8 @@ export function useCloudSpecData (
   */
   watch(
     [debouncedDisplayedSpecIds, isOffline, isProjectDisconnected, mostRecentUpdate],
-    () => {
-      fetchDisplayedCloudData()
+    async () => {
+      await fetchDisplayedCloudData()
     },
     { flush: 'post' },
   )

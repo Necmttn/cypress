@@ -1,31 +1,42 @@
 import _ from 'lodash'
 import la from 'lazy-ass'
 import Debug from 'debug'
-import Bluebird from 'bluebird'
 import assert from 'assert'
-
+import { EventEmitter } from 'events'
 import { ProjectBase } from './project-base'
 import browsers from './browsers'
 import * as errors from './errors'
 import preprocessor from './plugins/preprocessor'
 import runEvents from './plugins/run_events'
 import * as session from './session'
-import { cookieJar } from './util/cookies'
+import { cookieJar } from './automation/cookie/jar'
 import { getSpecUrl } from './project_utils'
-import type { BrowserLaunchOpts, OpenProjectLaunchOptions, InitializeProjectOptions, OpenProjectLaunchOpts, FoundBrowser } from '@packages/types'
-import { DataContext, getCtx } from '@packages/data-context'
+import type { BrowserLaunchOpts, OpenProjectLaunchOptions, InitializeProjectOptions, OpenProjectLaunchOpts, FoundBrowser, AutomationCommands } from '@packages/types'
+import type { DataContext } from '@packages/data-context'
+import { getCtx } from '@packages/data-context'
 import { autoBindDebug } from '@packages/data-context/src/util'
-import type { BrowserInstance } from './browsers/types'
+import type { BrowserInstance, Browser } from './browsers/types'
+import { isBrowserNetworkMode, ensureProxyServer } from './util/network-mode'
+import { GracefulExit, getPeerWaitTimeoutMs } from './util/graceful-exit'
+import { translateEgressPolicyToLaunchOpts } from './util/egress-policy'
+import { resolveTrustedCertificateFingerprints } from './util/spki'
+import { createMtlsBridge } from './mtls'
+import type { MtlsBridgeLaunchOpts } from './mtls'
+import * as appData from './util/app_data'
 
 const debug = Debug('cypress:server:open_project')
 
-export class OpenProject {
+export class OpenProject extends EventEmitter {
   private projectBase: ProjectBase | null = null
+  private _mtlsBridge?: MtlsBridgeLaunchOpts
+  private _mtlsBridgeReady?: Promise<MtlsBridgeLaunchOpts | undefined>
   relaunchBrowser: (() => Promise<BrowserInstance | null>) = () => {
     throw new Error('bad relaunch')
   }
 
   constructor () {
+    super()
+
     return autoBindDebug(this)
   }
 
@@ -55,7 +66,7 @@ export class OpenProject {
     return this.projectBase
   }
 
-  async launch (browser, spec: Cypress.Cypress['spec'], prevOptions?: OpenProjectLaunchOpts) {
+  async launch (browser: FoundBrowser & Partial<{ isHeaded: boolean, isHeadless: boolean }>, spec: Cypress.Cypress['spec'], prevOptions?: OpenProjectLaunchOpts) {
     this._ctx = getCtx()
 
     assert(this.projectBase, 'Cannot launch runner if projectBase is undefined!')
@@ -78,17 +89,53 @@ export class OpenProject {
     debug('open project url %s', url)
 
     const cfg = this.projectBase.getConfig()
+    // The one place we decide, for this launch, whether the browser intercepts
+    // its own traffic (Chrome, Chromium, and Edge) or everything is routed
+    // through the HTTP/1 MITM proxy (Firefox, WebKit, Electron, or forceHttp1).
+    // Everything downstream — the launch args below, the CDP wiring, and the
+    // server's request-time gates — reads this resolved value rather than
+    // re-deriving it from config, so the two can never disagree.
+    const useBrowserNetworkInterception = isBrowserNetworkMode(cfg, browser)
 
-    if (!cfg.proxyServer) throw new Error('Missing proxyServer in launch')
+    // The browser presents no client certificate of its own — CDP exposes no way to give it
+    // one — so configured origins are steered at a local bridge that performs the handshake
+    // from this process. Nothing starts when no certificate is configured.
+    //
+    // The bridge outlives this launch on purpose. Its ports reach the browser as
+    // `--host-resolver-rules`, which is read once at launch, and a later spec reuses that
+    // browser rather than relaunching it — so rebinding here would leave every spec after
+    // the first steered at a port that no longer exists. One bridge per project keeps the
+    // ports the browser was told about valid for as long as that browser runs.
+    // the in-flight promise is stored, not the resolved value: two overlapping launches
+    // would otherwise both pass the guard and bind a second full set of listeners, and the
+    // loser would be orphaned still bound, with the browser possibly steered at it
+    if (useBrowserNetworkInterception && cfg.clientCertificates?.length && !this._mtlsBridgeReady) {
+      const ready = createMtlsBridge({
+        clientCertificates: cfg.clientCertificates,
+        caFolder: appData.path('proxy'),
+      })
+
+      this._mtlsBridgeReady = ready
+
+      // A rejection must not be cached: a transient bind or CA failure would otherwise be
+      // replayed to every later launch, so the run could never recover without reopening
+      // the project. The await below still surfaces this attempt's failure to the caller.
+      ready.catch(() => {
+        if (this._mtlsBridgeReady === ready) {
+          this._mtlsBridgeReady = undefined
+        }
+      })
+    }
+
+    this._mtlsBridge = await this._mtlsBridgeReady
 
     const options: BrowserLaunchOpts = {
-      browser,
+      browser: browser as FoundBrowser & { isHeadless: boolean },
       url,
       // TODO: fix majorVersion discrepancy that causes this to be necessary
       browsers: cfg.browsers as FoundBrowser[],
       userAgent: cfg.userAgent,
       proxyUrl: cfg.proxyUrl,
-      proxyServer: cfg.proxyServer,
       socketIoRoute: cfg.socketIoRoute,
       chromeWebSecurity: cfg.chromeWebSecurity,
       isTextTerminal: !!cfg.isTextTerminal,
@@ -96,6 +143,34 @@ export class OpenProject {
       experimentalModifyObstructiveThirdPartyCode: cfg.experimentalModifyObstructiveThirdPartyCode,
       experimentalWebKitSupport: cfg.experimentalWebKitSupport,
       ...prevOptions || {},
+      useBrowserNetworkInterception,
+      // proxy launch opts must win over prevOptions: args may carry a normalized
+      // NO_PROXY that is wrong for the MITM path, and <-loopback> must never leak
+      // onto the browser (CDP) network path (#34351).
+      ...(useBrowserNetworkInterception ? {
+        proxyServer: undefined,
+        proxyBypassList: undefined,
+        // The browser (CDP) path makes origin fetches itself, so certs the user has marked
+        // trusted must be handed to the browser as SPKI fingerprints. A bad entry throws a
+        // Cypress error naming the offending `trustedCertificates` entry.
+        trustedCertificateFingerprints: resolveTrustedCertificateFingerprints(cfg.trustedCertificates ?? [], cfg.projectRoot),
+        mtlsHostResolverRules: this._mtlsBridge?.hostResolverRules,
+        ...translateEgressPolicyToLaunchOpts(cfg.hosts, this._mtlsBridge?.origins),
+        hosts: cfg.hosts,
+        shouldClearPersistedServiceWorkers: cfg.testIsolation !== false,
+        onPageCriClientReady: (client, isAUTFrame, onAUTFrameNavigated) => {
+          return this.projectBase!.server.createCdpFetchNetworkRuntime(client, isAUTFrame, onAUTFrameNavigated)
+        },
+        onExtraTargetCriClientReady: (client) => {
+          return this.projectBase!.server.attachCdpFetchExtraTarget(client)
+        },
+      } : {
+        proxyServer: ensureProxyServer(cfg),
+        // the AUT is served over loopback by our own proxy, so subtract Chromium's
+        // implicit rules to keep that traffic proxied
+        // https://github.com/cypress-io/cypress/issues/1872
+        proxyBypassList: '<-loopback>',
+      }),
     }
 
     // if we don't have the isHeaded property
@@ -107,7 +182,7 @@ export class OpenProject {
       browser.isHeadless = false
     }
 
-    this.projectBase.setCurrentSpecAndBrowser(spec, browser)
+    await this.projectBase.setCurrentSpecAndBrowser(spec, browser, useBrowserNetworkInterception)
 
     const automation = this.projectBase.getAutomation()
 
@@ -121,19 +196,21 @@ export class OpenProject {
 
     if (!am || !am.onBeforeRequest) {
       automation.use({
-        onBeforeRequest (message, data) {
+        onBeforeRequest<T extends keyof AutomationCommands> (message: T, data: AutomationCommands[T]['dataType']): Promise<AutomationCommands[T]['returnType']> {
           if (message === 'take:screenshot') {
             data.specName = spec.name
 
             return data
           }
+
+          return Promise.resolve()
         },
       })
     }
 
     const afterSpec = () => {
       if (!this.projectBase || cfg.isTextTerminal || !cfg.experimentalInteractiveRunEvents) {
-        return Bluebird.resolve()
+        return Promise.resolve()
       }
 
       return runEvents.execute('after:spec', spec)
@@ -171,7 +248,7 @@ export class OpenProject {
 
       // TODO: Stub this so we can detect it being called
       if (process.env.CYPRESS_INTERNAL_E2E_TESTING_SELF) {
-        return await browsers.connectToExisting(browser, options, automation, this._ctx?.coreData.servers.cdpSocketServer)
+        return await browsers.connectToExisting(browser as Browser, options, automation, this._ctx?.coreData.servers.cdpSocketServer)
       }
 
       // if we should launch a new tab and we are not running in electron (which does not support connecting to a new spec)
@@ -184,24 +261,24 @@ export class OpenProject {
         // If we do not launch the browser,
         // we tell it that we are ready
         // to receive the next spec
-        return await browsers.connectToNewSpec(browser, { onInitializeNewBrowserTab, ...options }, automation, this._ctx?.coreData.servers.cdpSocketServer)
+        return await browsers.connectToNewSpec(browser as Browser, { onInitializeNewBrowserTab, ...options }, automation, this._ctx?.coreData.servers.cdpSocketServer)
       }
 
       options.relaunchBrowser = this.relaunchBrowser
 
-      return await browsers.open(browser, options, automation, this._ctx!)
+      return await browsers.open(browser as Browser, options, automation, this._ctx!)
     }
 
     return this.relaunchBrowser()
   }
 
-  closeBrowser () {
-    return browsers.close()
+  closeBrowser (timeoutMs?: number) {
+    return browsers.close({ timeoutMs })
   }
 
-  async resetBrowserTabsForNextTest (shouldKeepTabOpen: boolean) {
+  async resetBrowserTabsForNextSpec (shouldKeepTabOpen: boolean) {
     try {
-      await this.projectBase?.resetBrowserTabsForNextTest(shouldKeepTabOpen)
+      await this.projectBase?.resetBrowserTabsForNextSpec(shouldKeepTabOpen)
     } catch (e) {
       // If the CRI client disconnected or crashed, we want to no-op here so that anything
       // depending on resetting the browser tabs can continue with further operations
@@ -213,14 +290,29 @@ export class OpenProject {
     return this.projectBase?.resetBrowserState()
   }
 
-  closeOpenProjectAndBrowsers () {
-    this.projectBase?.close().catch((e) => {
+  private async _closeMtlsBridge () {
+    await this._mtlsBridge?.close()
+    this._mtlsBridge = undefined
+    this._mtlsBridgeReady = undefined
+  }
+
+  async closeOpenProjectAndBrowsers () {
+    // Wait for the HTTP server to release its port before the next open
+    // (cy-in-cy reopens on hardcoded 4455; Windows is especially sensitive).
+    try {
+      await this.projectBase?.close()
+    } catch (e) {
       this._ctx?.logTraceError(e)
-    })
+    }
+
+    await this._closeMtlsBridge()
 
     this.resetOpenProject()
 
-    return this.closeBrowser()
+    // The browser is signalled either way; this only decides how long we wait for its process to be
+    // gone. A browser with several renderers takes seconds to reap on a loaded machine, and on the way
+    // out that wait sits inside the exit budget every teardown step shares, so bound it there.
+    return this.closeBrowser(GracefulExit.isShuttingDown ? getPeerWaitTimeoutMs() : undefined)
   }
 
   close () {
@@ -231,6 +323,10 @@ export class OpenProject {
 
   async connectProtocolToBrowser (options) {
     await browsers.connectProtocolToBrowser(options)
+  }
+
+  async connectCyPromptToBrowser (options) {
+    await browsers.connectCyPromptToBrowser(options)
   }
 
   changeUrlToSpec (spec: Cypress.Spec) {
@@ -286,6 +382,8 @@ export class OpenProject {
 
   async create (path: string, args: InitializeProjectOptions, options: OpenProjectLaunchOptions) {
     // ensure switching to a new project in cy-in-cy tests and from the launchpad starts with a clean slate
+    // — including any bridge, whose listeners stand for the previous project's origins
+    await this._closeMtlsBridge()
     this.reset()
     this._ctx = getCtx()
     debug('open_project create %s', path)
@@ -342,6 +440,8 @@ export class OpenProject {
         throw (err)
       }
     }
+
+    this.emit('ready')
 
     return this
   }

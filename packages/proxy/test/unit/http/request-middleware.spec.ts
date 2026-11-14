@@ -1,22 +1,54 @@
+import { describe, expect, beforeEach, it, vi } from 'vitest'
 import _ from 'lodash'
 import RequestMiddleware from '../../../lib/http/request-middleware'
-import { expect } from 'chai'
-import sinon from 'sinon'
 import { testMiddleware } from './helpers'
-import { CypressIncomingRequest, CypressOutgoingResponse } from '../../../lib'
-import { HttpBuffer, HttpBuffers } from '../../../lib/http/util/buffers'
-import { RemoteStates } from '@packages/server/lib/remote_states'
-import { CookieJar } from '@packages/server/lib/util/cookies'
-import { HttpMiddlewareThis } from '../../../lib/http'
+import type { CypressIncomingRequest, CypressOutgoingResponse } from '../../../lib'
+import type { HttpBuffer } from '../../../lib/http/util/buffers'
+import { HttpBuffers } from '../../../lib/http/util/buffers'
+import { RemoteStates, DocumentDomainInjection } from '@packages/network-tools'
+import { CookieJar } from '@packages/server/lib/automation/cookie/jar'
+import { NetworkInterceptionCore } from '@packages/network-interception'
+import type { HttpMiddlewareThis } from '../../../lib/http'
+import { resourceTypeAndCredentialManager } from '../../../lib/resourceTypeAndCredentialManager'
+
+vi.mock('../../../lib/resourceTypeAndCredentialManager', () => {
+  return {
+    resourceTypeAndCredentialManager: {
+      get: vi.fn(),
+      set: vi.fn(),
+      clear: vi.fn(),
+    },
+  }
+})
 
 describe('http/request-middleware', () => {
+  const serverPort = 3030
+  const fileServerPort = 3030
+
+  const remoteStateConfig = () => {
+    return { server: serverPort, fileServer: fileServerPort }
+  }
+
+  let remoteStates: RemoteStates
+  let documentDomainInjection
+
+  beforeEach(() => {
+    documentDomainInjection = DocumentDomainInjection.InjectionBehavior({ injectDocumentDomain: false, testingType: 'e2e' })
+    remoteStates = new RemoteStates(remoteStateConfig, documentDomainInjection)
+  })
+
+  afterEach(() => {
+    vi.resetAllMocks()
+  })
+
   it('exports the members in the correct order', () => {
-    expect(_.keys(RequestMiddleware)).to.have.ordered.members([
+    expect(_.keys(RequestMiddleware)).toEqual([
       'LogRequest',
       'ExtractCypressMetadataHeaders',
       'MaybeSimulateSecHeaders',
       'CorrelateBrowserPreRequest',
       'CalculateCredentialLevelIfApplicable',
+      'FormatCookiesIfApplicable',
       'MaybeAttachCrossOriginCookies',
       'MaybeEndRequestWithBufferedResponse',
       'SetMatchingRoutes',
@@ -26,7 +58,6 @@ describe('http/request-middleware', () => {
       'EndRequestsToBlockedHosts',
       'StripUnsupportedAcceptEncoding',
       'MaybeSetBasicAuthHeaders',
-      'SendRequestOutgoing',
     ])
   })
 
@@ -35,10 +66,9 @@ describe('http/request-middleware', () => {
 
     function prepareContext (headers = {}) {
       return {
-        getAUTUrl: sinon.stub().returns('http://localhost:8080'),
-        onlyRunMiddleware: sinon.stub(),
+        getAUTUrl: vi.fn().mockReturnValue('http://localhost:8080'),
         remoteStates: {
-          isPrimarySuperDomainOrigin: sinon.stub().returns(false),
+          isPrimarySuperDomainOrigin: vi.fn().mockReturnValue(false),
         },
         req: {
           headers,
@@ -50,40 +80,52 @@ describe('http/request-middleware', () => {
       }
     }
 
-    context('x-cypress-is-aut-frame', () => {
+    describe('x-cypress-is-aut-frame', () => {
       it('when it exists, removes header and sets in on the req', async () => {
         const ctx = prepareContext({
           'x-cypress-is-aut-frame': 'true',
         })
 
         await testMiddleware([ExtractCypressMetadataHeaders], ctx)
-        .then(() => {
-          expect(ctx.req.headers!['x-cypress-is-aut-frame']).not.to.exist
-          expect(ctx.req.isAUTFrame).to.be.true
-        })
+
+        expect(ctx.req.headers!['x-cypress-is-aut-frame']).toBeUndefined()
+        expect(ctx.req.isAUTFrame).toBe(true)
       })
 
       it('when it does not exist, sets in on the req', async () => {
         const ctx = prepareContext()
 
-        await testMiddleware([ExtractCypressMetadataHeaders], ctx).then(() => {
-          expect(ctx.req.headers!['x-cypress-is-aut-frame']).not.to.exist
-          expect(ctx.req.isAUTFrame).to.be.false
-        })
+        await testMiddleware([ExtractCypressMetadataHeaders], ctx)
+
+        expect(ctx.req.headers!['x-cypress-is-aut-frame']).toBeUndefined()
+        expect(ctx.req.isAUTFrame).toBe(false)
       })
     })
 
-    context('x-cypress-is-from-extra-target', () => {
+    describe('x-cypress-is-from-extra-target', () => {
       it('when it exists, sets in on the req and only runs necessary middleware', async () => {
         const ctx = prepareContext({
           'x-cypress-is-from-extra-target': 'true',
         })
+        let maybeSetBasicAuthHeadersRan = false
+        let skippedMiddlewareRan = false
 
-        await testMiddleware([ExtractCypressMetadataHeaders], ctx)
+        await testMiddleware({
+          ExtractCypressMetadataHeaders,
+          MaybeSetBasicAuthHeaders () {
+            maybeSetBasicAuthHeadersRan = true
+            this.next()
+          },
+          MaybeSimulateSecHeaders () {
+            skippedMiddlewareRan = true
+            this.next()
+          },
+        }, ctx)
 
-        expect(ctx.req.headers!['x-cypress-is-from-extra-target']).not.to.exist
-        expect(ctx.req.isFromExtraTarget).to.be.true
-        expect(ctx.onlyRunMiddleware).to.be.calledWith(['MaybeSetBasicAuthHeaders', 'SendRequestOutgoing'])
+        expect(ctx.req.headers!['x-cypress-is-from-extra-target']).toBeUndefined()
+        expect(ctx.req.isFromExtraTarget).toBe(true)
+        expect(maybeSetBasicAuthHeadersRan).toBe(true)
+        expect(skippedMiddlewareRan).toBe(false)
       })
 
       it('when it does not exist, removes header and sets in on the req', async () => {
@@ -91,8 +133,30 @@ describe('http/request-middleware', () => {
 
         await testMiddleware([ExtractCypressMetadataHeaders], ctx)
 
-        expect(ctx.req.headers!['x-cypress-is-from-extra-target']).not.to.exist
-        expect(ctx.req.isFromExtraTarget).to.be.false
+        expect(ctx.req.headers!['x-cypress-is-from-extra-target']).toBeUndefined()
+        expect(ctx.req.isFromExtraTarget).toBe(false)
+      })
+    })
+
+    describe('x-cypress-is-sync-request', () => {
+      it('when it exists, removes header and sets in on the req', async () => {
+        const ctx = prepareContext({
+          'x-cypress-is-sync-request': 'true',
+        })
+
+        await testMiddleware([ExtractCypressMetadataHeaders], ctx)
+
+        expect(ctx.req.headers!['x-cypress-is-sync-request']).toBeUndefined()
+        expect(ctx.req.isSyncRequest).toBe(true)
+      })
+
+      it('when it does not exist, sets in on the req', async () => {
+        const ctx = prepareContext()
+
+        await testMiddleware([ExtractCypressMetadataHeaders], ctx)
+
+        expect(ctx.req.headers!['x-cypress-is-sync-request']).toBeUndefined()
+        expect(ctx.req.isSyncRequest).toBe(false)
       })
     })
   })
@@ -102,7 +166,7 @@ describe('http/request-middleware', () => {
 
     it('does not set credentialLevel on the request if top does NOT need to be simulated', async () => {
       const ctx = {
-        getAUTUrl: sinon.stub().returns(undefined),
+        getAUTUrl: vi.fn().mockReturnValue(undefined),
         req: {
           resourceType: 'xhr',
         } as Partial<CypressIncomingRequest>,
@@ -113,16 +177,14 @@ describe('http/request-middleware', () => {
       }
 
       await testMiddleware([CalculateCredentialLevelIfApplicable], ctx)
-      .then(() => {
-        expect(ctx.req.credentialsLevel).not.to.exist
-      })
+      expect(ctx.req.credentialsLevel).toBeUndefined()
     })
 
     it('does not set credentialLevel on the request if resourceType has invalid value', async () => {
       const ctx = {
-        getAUTUrl: sinon.stub().returns('http://localhost:8080'),
+        getAUTUrl: vi.fn().mockReturnValue('http://localhost:8080'),
         remoteStates: {
-          isPrimarySuperDomainOrigin: sinon.stub().returns(false),
+          isPrimarySuperDomainOrigin: vi.fn().mockReturnValue(false),
         },
         req: {
           resourceType: 'document',
@@ -134,20 +196,17 @@ describe('http/request-middleware', () => {
       }
 
       await testMiddleware([CalculateCredentialLevelIfApplicable], ctx)
-      .then(() => {
-        expect(ctx.req.credentialsLevel).not.to.exist
-      })
+      expect(ctx.req.credentialsLevel).toBeUndefined()
     })
 
     // CDP can determine whether or not the request is xhr | fetch, but the extension or electron cannot
     it('provides resourceTypeAndCredentialManager with resourceType if able to determine from prerequest (xhr)', async () => {
+      vi.mocked(resourceTypeAndCredentialManager.get).mockReturnValue({ resourceType: 'xhr', credentialStatus: 'same-origin' })
+
       const ctx = {
-        getAUTUrl: sinon.stub().returns('http://localhost:8080'),
+        getAUTUrl: vi.fn().mockReturnValue('http://localhost:8080'),
         remoteStates: {
-          isPrimarySuperDomainOrigin: sinon.stub().returns(false),
-        },
-        resourceTypeAndCredentialManager: {
-          get: sinon.stub().returns({}),
+          isPrimarySuperDomainOrigin: vi.fn().mockReturnValue(false),
         },
         req: {
           resourceType: 'xhr',
@@ -160,20 +219,17 @@ describe('http/request-middleware', () => {
       }
 
       await testMiddleware([CalculateCredentialLevelIfApplicable], ctx)
-      .then(() => {
-        expect(ctx.resourceTypeAndCredentialManager.get).to.have.been.calledWith('http://localhost:8080', `xhr`)
-      })
+      expect(resourceTypeAndCredentialManager.get).toHaveBeenCalledWith('http://localhost:8080', `xhr`)
     })
 
     // CDP can determine whether or not the request is xhr | fetch, but the extension or electron cannot
     it('provides resourceTypeAndCredentialManager with resourceType if able to determine from prerequest (fetch)', async () => {
+      vi.mocked(resourceTypeAndCredentialManager.get).mockReturnValue({ resourceType: 'fetch', credentialStatus: 'same-origin' })
+
       const ctx = {
-        getAUTUrl: sinon.stub().returns('http://localhost:8080'),
+        getAUTUrl: vi.fn().mockReturnValue('http://localhost:8080'),
         remoteStates: {
-          isPrimarySuperDomainOrigin: sinon.stub().returns(false),
-        },
-        resourceTypeAndCredentialManager: {
-          get: sinon.stub().returns({}),
+          isPrimarySuperDomainOrigin: vi.fn().mockReturnValue(false),
         },
         req: {
           resourceType: 'fetch',
@@ -186,22 +242,19 @@ describe('http/request-middleware', () => {
       }
 
       await testMiddleware([CalculateCredentialLevelIfApplicable], ctx)
-      .then(() => {
-        expect(ctx.resourceTypeAndCredentialManager.get).to.have.been.calledWith('http://localhost:8080', `fetch`)
-      })
+      expect(resourceTypeAndCredentialManager.get).toHaveBeenCalledWith('http://localhost:8080', `fetch`)
     })
 
     it('sets the resourceType and credentialsLevel on the request from whatever is returned by resourceTypeAndCredentialManager if conditions apply, assuming resourceType does NOT exist on the request', async () => {
+      vi.mocked(resourceTypeAndCredentialManager.get).mockReturnValue({
+        resourceType: 'fetch',
+        credentialStatus: 'same-origin',
+      })
+
       const ctx = {
-        getAUTUrl: sinon.stub().returns('http://localhost:8080'),
+        getAUTUrl: vi.fn().mockReturnValue('http://localhost:8080'),
         remoteStates: {
-          isPrimarySuperDomainOrigin: sinon.stub().returns(false),
-        },
-        resourceTypeAndCredentialManager: {
-          get: sinon.stub().returns({
-            resourceType: 'fetch',
-            credentialStatus: 'same-origin',
-          }),
+          isPrimarySuperDomainOrigin: vi.fn().mockReturnValue(false),
         },
         req: {
           resourceType: undefined,
@@ -214,9 +267,71 @@ describe('http/request-middleware', () => {
       }
 
       await testMiddleware([CalculateCredentialLevelIfApplicable], ctx)
-      .then(() => {
-        expect(ctx.req.resourceType).to.equal('fetch')
-        expect(ctx.req.credentialsLevel).to.equal('same-origin')
+      expect(ctx.req.resourceType).toEqual('fetch')
+      expect(ctx.req.credentialsLevel).toEqual('same-origin')
+    })
+  })
+
+  describe('FormatCookiesIfApplicable', () => {
+    const { FormatCookiesIfApplicable } = RequestMiddleware
+
+    it('does nothing if "x-cypress-is-webdriver-bidi" header is not present', async () => {
+      const ctx = {
+        req: {
+          headers: {
+            cookie: 'foo=bar;bar=baz;qux=quux',
+          },
+        },
+        res: {
+          on: (event, listener) => {},
+          off: (event, listener) => {},
+        },
+      }
+
+      await testMiddleware([FormatCookiesIfApplicable], ctx)
+
+      expect(ctx.req.headers['cookie']).toEqual('foo=bar;bar=baz;qux=quux')
+    })
+
+    describe('header present', () => {
+      it('does nothing if cookie header is already formatted correctly', async () => {
+        const ctx = {
+          req: {
+            headers: {
+              'x-cypress-is-webdriver-bidi': true,
+              cookie: 'foo=bar; bar=baz; qux=quux',
+            },
+          },
+          res: {
+            on: (event, listener) => {},
+            off: (event, listener) => {},
+          },
+        }
+
+        await testMiddleware([FormatCookiesIfApplicable], ctx)
+
+        expect(ctx.req.headers['cookie']).toEqual('foo=bar; bar=baz; qux=quux')
+        expect(ctx.req.headers!['x-cypress-is-webdriver-bidi']).toBeUndefined()
+      })
+
+      it('delimits cookie headers by "; " if no space exists between cookie values', async () => {
+        const ctx = {
+          req: {
+            headers: {
+              'x-cypress-is-webdriver-bidi': true,
+              cookie: 'foo=bar;bar=baz;qux=quux',
+            },
+          },
+          res: {
+            on: (event, listener) => {},
+            off: (event, listener) => {},
+          },
+        }
+
+        await testMiddleware([FormatCookiesIfApplicable], ctx)
+
+        expect(ctx.req.headers['cookie']).toEqual('foo=bar; bar=baz; qux=quux')
+        expect(ctx.req.headers!['x-cypress-is-webdriver-bidi']).toBeUndefined()
       })
     })
   })
@@ -242,7 +357,7 @@ describe('http/request-middleware', () => {
 
       await testMiddleware([MaybeSimulateSecHeaders], ctx)
 
-      expect(ctx.req.headers['sec-fetch-dest']).to.equal('iframe')
+      expect(ctx.req.headers['sec-fetch-dest']).toEqual('iframe')
     })
 
     it('is a noop if the request is not the AUT Frame', async () => {
@@ -264,7 +379,7 @@ describe('http/request-middleware', () => {
 
       await testMiddleware([MaybeSimulateSecHeaders], ctx)
 
-      expect(ctx.req.headers['sec-fetch-dest']).to.equal('iframe')
+      expect(ctx.req.headers['sec-fetch-dest']).toEqual('iframe')
     })
 
     it('is a noop if the request is the AUT Frame, but the sec-fetch-dest isn\t an iframe', async () => {
@@ -286,7 +401,7 @@ describe('http/request-middleware', () => {
 
       await testMiddleware([MaybeSimulateSecHeaders], ctx)
 
-      expect(ctx.req.headers['sec-fetch-dest']).to.equal('video')
+      expect(ctx.req.headers['sec-fetch-dest']).toEqual('video')
     })
 
     it('rewrites the sec-fetch-dest header if the experimental modify third party code is enabled, the request came from the AUT frame, and is an iframe', async () => {
@@ -308,7 +423,7 @@ describe('http/request-middleware', () => {
 
       await testMiddleware([MaybeSimulateSecHeaders], ctx)
 
-      expect(ctx.req.headers['sec-fetch-dest']).to.equal('document')
+      expect(ctx.req.headers['sec-fetch-dest']).toEqual('document')
     })
   })
 
@@ -322,18 +437,18 @@ describe('http/request-middleware', () => {
 
       await testMiddleware([MaybeAttachCrossOriginCookies], ctx)
 
-      expect(ctx.req.headers['cookie']).to.equal('request=cookie')
+      expect(ctx.req.headers['cookie']).toEqual('request=cookie')
     })
 
     it('is a noop if does not need to simulate top', async () => {
       const ctx = await getContext()
 
       ctx.req.isAUTFrame = false
-      ctx.remoteStates.isPrimarySuperDomainOrigin.returns(true),
+      ctx.remoteStates.isPrimarySuperDomainOrigin.mockReturnValue(true)
 
       await testMiddleware([MaybeAttachCrossOriginCookies], ctx)
 
-      expect(ctx.req.headers['cookie']).to.equal('request=cookie')
+      expect(ctx.req.headers['cookie']).toEqual('request=cookie')
     })
 
     it('is a noop if cookies do NOT need to be attached to request', async () => {
@@ -344,7 +459,7 @@ describe('http/request-middleware', () => {
 
       await testMiddleware([MaybeAttachCrossOriginCookies], ctx)
 
-      expect(ctx.req.headers['cookie']).to.equal('request=cookie')
+      expect(ctx.req.headers['cookie']).toEqual('request=cookie')
     })
 
     it(`allows setting cookies on request if resource type cannot be determined, but comes from the AUT frame (likely in the case of documents or redirects)`, async function () {
@@ -355,7 +470,7 @@ describe('http/request-middleware', () => {
       ctx.req.isAUTFrame = true
       await testMiddleware([MaybeAttachCrossOriginCookies], ctx)
 
-      expect(ctx.req.headers['cookie']).to.equal('jar=cookie')
+      expect(ctx.req.headers['cookie']).toEqual('jar=cookie')
     })
 
     it(`otherwise, does not allow setting cookies if request type cannot be determined and is not from the AUT and is cross-origin`, async function () {
@@ -366,7 +481,7 @@ describe('http/request-middleware', () => {
       ctx.req.isAUTFrame = false
       await testMiddleware([MaybeAttachCrossOriginCookies], ctx)
 
-      expect(ctx.req.headers['cookie']).to.be.undefined
+      expect(ctx.req.headers['cookie']).toBeUndefined()
     })
 
     it('sets the cookie header to undefined if no cookies exist on the request, none in the jar, but cookies should be attached', async () => {
@@ -377,7 +492,7 @@ describe('http/request-middleware', () => {
 
       await testMiddleware([MaybeAttachCrossOriginCookies], ctx)
 
-      expect(ctx.req.headers['cookie']).to.equal(undefined)
+      expect(ctx.req.headers['cookie']).toBeUndefined()
     })
 
     it('prepends cookie jar cookies to request', async () => {
@@ -388,7 +503,7 @@ describe('http/request-middleware', () => {
 
       await testMiddleware([MaybeAttachCrossOriginCookies], ctx)
 
-      expect(ctx.req.headers['cookie']).to.equal('jar=cookie; request=cookie')
+      expect(ctx.req.headers['cookie']).toEqual('jar=cookie; request=cookie')
     })
 
     // @see https://github.com/cypress-io/cypress/issues/22751
@@ -397,7 +512,7 @@ describe('http/request-middleware', () => {
 
       await testMiddleware([MaybeAttachCrossOriginCookies], ctx)
 
-      expect(ctx.req.headers['cookie']).to.equal('jar=cookie; request=cookie')
+      expect(ctx.req.headers['cookie']).toEqual('jar=cookie; request=cookie')
     })
 
     describe('tough-cookie integration', () => {
@@ -443,7 +558,7 @@ describe('http/request-middleware', () => {
 
               await testMiddleware([MaybeAttachCrossOriginCookies], ctx)
 
-              expect(ctx.req.headers['cookie']).to.equal('jar=cookie1; jar=cookie2; request=cookie')
+              expect(ctx.req.headers['cookie']).toEqual('jar=cookie1; jar=cookie2; request=cookie')
             })
 
             it('matches hierarchy and gives order to the cookie that was created first', async () => {
@@ -457,7 +572,7 @@ describe('http/request-middleware', () => {
               TLDCookie?.creation?.setHours(TLDCookie?.creation?.getHours() - 1)
               await testMiddleware([MaybeAttachCrossOriginCookies], ctx)
 
-              expect(ctx.req.headers['cookie']).to.equal('jar=cookie2; jar=cookie1; request=cookie')
+              expect(ctx.req.headers['cookie']).toEqual('jar=cookie2; jar=cookie1; request=cookie')
             })
 
             it('matches hierarchy and gives order to the cookie with the most specific path, regardless of creation time', async () => {
@@ -471,7 +586,7 @@ describe('http/request-middleware', () => {
               TLDCookie?.creation?.setHours(TLDCookie?.creation?.getHours() - 1)
               await testMiddleware([MaybeAttachCrossOriginCookies], ctx)
 
-              expect(ctx.req.headers['cookie']).to.equal('jar=cookie1; jar=cookie2; request=cookie')
+              expect(ctx.req.headers['cookie']).toEqual('jar=cookie1; jar=cookie2; request=cookie')
             })
           })
         })
@@ -499,9 +614,21 @@ describe('http/request-middleware', () => {
           TLDCookie?.creation?.setHours(TLDCookie?.creation?.getHours() - 1)
           await testMiddleware([MaybeAttachCrossOriginCookies], ctx)
 
-          expect(ctx.req.headers['cookie']).to.equal('jar=cookie7; jar=cookie8; jar=cookie5; jar=cookie4; jar=cookie1; jar=cookie2; request=cookie')
+          expect(ctx.req.headers['cookie']).toEqual('jar=cookie7; jar=cookie8; jar=cookie5; jar=cookie4; jar=cookie1; jar=cookie2; request=cookie')
         })
       })
+    })
+
+    it('routes missing cookieState port failures to onError', async () => {
+      const ctx = await getContext()
+      const onError = vi.fn()
+
+      ctx.networkInterceptionCore = new NetworkInterceptionCore()
+
+      await testMiddleware([MaybeAttachCrossOriginCookies], ctx, onError)
+
+      expect(onError).toHaveBeenCalledOnce()
+      expect(onError.mock.calls[0][0].message).toMatch(/NetworkInterceptionCore\.cookieState is not configured/)
     })
 
     async function getContext (requestCookieStrings = ['request=cookie'], cookieJarStrings = ['jar=cookie'], autUrl = 'http://foobar.com', requestUrl = 'http://foobar.com') {
@@ -520,7 +647,7 @@ describe('http/request-middleware', () => {
         getAUTUrl: () => autUrl,
         getCookieJar: () => cookieJar,
         remoteStates: {
-          isPrimarySuperDomainOrigin: sinon.stub().returns(false),
+          isPrimarySuperDomainOrigin: vi.fn().mockReturnValue(false),
         },
         req: {
           proxiedUrl: requestUrl,
@@ -558,9 +685,7 @@ describe('http/request-middleware', () => {
       }
 
       await testMiddleware([MaybeEndRequestWithBufferedResponse], ctx)
-      .then(() => {
-        expect(ctx.res.wantsInjection).to.equal('full')
-      })
+      expect(ctx.res.wantsInjection).toEqual('full')
     })
 
     it('sets wantsInjection to fullCrossOrigin when a cross origin request is buffered', async () => {
@@ -581,9 +706,7 @@ describe('http/request-middleware', () => {
       }
 
       await testMiddleware([MaybeEndRequestWithBufferedResponse], ctx)
-      .then(() => {
-        expect(ctx.res.wantsInjection).to.equal('fullCrossOrigin')
-      })
+      expect(ctx.res.wantsInjection).toEqual('fullCrossOrigin')
     })
 
     it('wantsInjection is not set when the request is not buffered', async () => {
@@ -604,9 +727,59 @@ describe('http/request-middleware', () => {
       }
 
       await testMiddleware([MaybeEndRequestWithBufferedResponse], ctx)
-      .then(() => {
-        expect(ctx.res.wantsInjection).to.be.undefined
-      })
+      expect(ctx.res.wantsInjection).toBeUndefined()
+    })
+  })
+
+  describe('StripUnsupportedAcceptEncoding', () => {
+    const { StripUnsupportedAcceptEncoding } = RequestMiddleware
+
+    function prepareContext (headers = {}) {
+      return {
+        req: {
+          headers: { ...headers },
+        } as Partial<CypressIncomingRequest>,
+        res: {
+          on: (_event, _listener) => {},
+          off: (_event, _listener) => {},
+        } as Partial<CypressOutgoingResponse>,
+      }
+    }
+
+    it('strips to gzip,br preserving order when client sends gzip, deflate, br', async () => {
+      const ctx = prepareContext({ 'accept-encoding': 'gzip, deflate, br' })
+
+      await testMiddleware([StripUnsupportedAcceptEncoding], ctx)
+      expect(ctx.req.headers!['accept-encoding']).toBe('gzip,br')
+      expect(ctx.req.originalAcceptEncoding).toBe('gzip, deflate, br')
+    })
+
+    it('strips to br only when client sends only br', async () => {
+      const ctx = prepareContext({ 'accept-encoding': 'br' })
+
+      await testMiddleware([StripUnsupportedAcceptEncoding], ctx)
+      expect(ctx.req.headers!['accept-encoding']).toBe('br')
+    })
+
+    it('strips to gzip only when client sends only gzip', async () => {
+      const ctx = prepareContext({ 'accept-encoding': 'gzip' })
+
+      await testMiddleware([StripUnsupportedAcceptEncoding], ctx)
+      expect(ctx.req.headers!['accept-encoding']).toBe('gzip')
+    })
+
+    it('sets identity when client accepts neither gzip nor br', async () => {
+      const ctx = prepareContext({ 'accept-encoding': 'deflate, identity' })
+
+      await testMiddleware([StripUnsupportedAcceptEncoding], ctx)
+      expect(ctx.req.headers!['accept-encoding']).toBe('identity')
+    })
+
+    it('sets gzip,identity when no accept-encoding header (RFC 9110 accept everything)', async () => {
+      const ctx = prepareContext({})
+
+      await testMiddleware([StripUnsupportedAcceptEncoding], ctx)
+      expect(ctx.req.headers!['accept-encoding']).toBe('gzip,identity')
     })
   })
 
@@ -615,7 +788,6 @@ describe('http/request-middleware', () => {
 
     it('adds auth header from remote state', async () => {
       const headers = {}
-      const remoteStates = new RemoteStates(() => {})
 
       remoteStates.set('https://www.cypress.io/', { auth: { username: 'u', password: 'p' } })
 
@@ -632,16 +804,13 @@ describe('http/request-middleware', () => {
       }
 
       await testMiddleware([MaybeSetBasicAuthHeaders], ctx)
-      .then(() => {
-        const expectedAuthHeader = `Basic ${Buffer.from('u:p').toString('base64')}`
+      const expectedAuthHeader = `Basic ${Buffer.from('u:p').toString('base64')}`
 
-        expect(ctx.req.headers['authorization']).to.equal(expectedAuthHeader)
-      })
+      expect(ctx.req.headers['authorization']).toEqual(expectedAuthHeader)
     })
 
     it('does not add auth header if origins do not match', async () => {
       const headers = {}
-      const remoteStates = new RemoteStates(() => {})
 
       remoteStates.set('https://cypress.io/', { auth: { username: 'u', password: 'p' } }) // does not match due to subdomain
 
@@ -658,14 +827,11 @@ describe('http/request-middleware', () => {
       }
 
       await testMiddleware([MaybeSetBasicAuthHeaders], ctx)
-      .then(() => {
-        expect(ctx.req.headers['authorization']).to.be.undefined
-      })
+      expect(ctx.req.headers['authorization']).toBeUndefined()
     })
 
     it('does not add auth header if remote does not have auth', async () => {
       const headers = {}
-      const remoteStates = new RemoteStates(() => {})
 
       remoteStates.set('https://www.cypress.io/')
 
@@ -682,14 +848,11 @@ describe('http/request-middleware', () => {
       }
 
       await testMiddleware([MaybeSetBasicAuthHeaders], ctx)
-      .then(() => {
-        expect(ctx.req.headers['authorization']).to.be.undefined
-      })
+      expect(ctx.req.headers['authorization']).toBeUndefined()
     })
 
     it('does not add auth header if remote not found', async () => {
       const headers = {}
-      const remoteStates = new RemoteStates(() => {})
 
       remoteStates.set('http://localhost:3500', { auth: { username: 'u', password: 'p' } })
 
@@ -706,16 +869,13 @@ describe('http/request-middleware', () => {
       }
 
       await testMiddleware([MaybeSetBasicAuthHeaders], ctx)
-      .then(() => {
-        expect(ctx.req.headers['authorization']).to.be.undefined
-      })
+      expect(ctx.req.headers['authorization']).toBeUndefined()
     })
 
     it('does not update auth header from remote if request already has auth', async () => {
       const headers = {
         authorization: 'token',
       }
-      const remoteStates = new RemoteStates(() => {})
 
       remoteStates.set('https://www.cypress.io/', { auth: { username: 'u', password: 'p' } })
 
@@ -732,9 +892,7 @@ describe('http/request-middleware', () => {
       }
 
       await testMiddleware([MaybeSetBasicAuthHeaders], ctx)
-      .then(() => {
-        expect(ctx.req.headers['authorization']).to.equal('token')
-      })
+      expect(ctx.req.headers['authorization']).toEqual('token')
     })
   })
 
@@ -744,20 +902,18 @@ describe('http/request-middleware', () => {
     it('skips if shouldCorrelatePreRequests returns false', async () => {
       const ctx = {
         res: {
-          off: sinon.stub(),
+          off: vi.fn(),
         },
         shouldCorrelatePreRequests: () => false,
-        getPreRequest: sinon.stub(),
+        getPreRequest: vi.fn(),
       }
 
       await testMiddleware([CorrelateBrowserPreRequest], ctx)
-      .then(() => {
-        expect(ctx.getPreRequest).not.to.be.called
-      })
+      expect(ctx.getPreRequest).not.toHaveBeenCalled()
     })
 
     it('sets browserPreRequest on the request', async () => {
-      const browserPreRequest = sinon.stub()
+      const browserPreRequest = vi.fn()
 
       const ctx = {
         req: {
@@ -766,22 +922,20 @@ describe('http/request-middleware', () => {
           headers: [],
         },
         res: {
-          off: sinon.stub(),
-          once: sinon.stub(),
+          off: vi.fn(),
+          once: vi.fn(),
         },
         shouldCorrelatePreRequests: () => true,
-        getPreRequest: sinon.stub().yields({
-          browserPreRequest,
+        getPreRequest: vi.fn().mockImplementation((cb) => {
+          cb({ browserPreRequest })
         }),
       }
 
       await testMiddleware([CorrelateBrowserPreRequest], ctx)
-      .then(() => {
-        expect(ctx.getPreRequest).to.be.calledOnce
-        expect(ctx.req.browserPreRequest).to.equal(browserPreRequest)
-        expect(ctx.res.once).to.be.calledWith('close')
-        expect(ctx.res.off).to.be.calledWith('close')
-      })
+      expect(ctx.getPreRequest).toHaveBeenCalledOnce()
+      expect(ctx.req.browserPreRequest).toEqual(browserPreRequest)
+      expect(ctx.res.once).toHaveBeenCalledWith('close', expect.any(Function))
+      expect(ctx.res.off).toHaveBeenCalledWith('close', expect.any(Function))
     })
 
     it('sets noPreRequestExpected on the request', async () => {
@@ -793,22 +947,68 @@ describe('http/request-middleware', () => {
           headers: [],
         },
         res: {
-          off: sinon.stub(),
-          once: sinon.stub(),
+          off: vi.fn(),
+          once: vi.fn(),
         },
         shouldCorrelatePreRequests: () => true,
-        getPreRequest: sinon.stub().yields({
-          noPreRequestExpected: true,
+        getPreRequest: vi.fn().mockImplementation((cb) => {
+          cb({ noPreRequestExpected: true })
         }),
       }
 
       await testMiddleware([CorrelateBrowserPreRequest], ctx)
-      .then(() => {
-        expect(ctx.getPreRequest).to.be.calledOnce
-        expect(ctx.req.noPreRequestExpected).to.be.true
-        expect(ctx.res.once).to.be.calledWith('close')
-        expect(ctx.res.off).to.be.calledWith('close')
-      })
+      expect(ctx.getPreRequest).toHaveBeenCalledOnce()
+      expect(ctx.req.noPreRequestExpected).toBeTruthy()
+      expect(ctx.res.once).toHaveBeenCalledWith('close', expect.any(Function))
+      expect(ctx.res.off).toHaveBeenCalledWith('close', expect.any(Function))
+    })
+
+    it('preserves a pre-set resourceType when no browserPreRequest arrives', async () => {
+      const ctx = {
+        req: {
+          proxiedUrl: 'https://www.cypress.io/',
+          browserPreRequest: undefined,
+          resourceType: 'xhr',
+          headers: [],
+        },
+        res: {
+          off: vi.fn(),
+          once: vi.fn(),
+        },
+        shouldCorrelatePreRequests: () => true,
+        getPreRequest: vi.fn().mockImplementation((cb) => {
+          cb({ browserPreRequest: undefined })
+        }),
+      }
+
+      await testMiddleware([CorrelateBrowserPreRequest], ctx)
+      expect(ctx.req.resourceType).toEqual('xhr')
+    })
+
+    it('lets browserPreRequest.resourceType override a pre-set resourceType', async () => {
+      const ctx = {
+        req: {
+          proxiedUrl: 'https://www.cypress.io/',
+          browserPreRequest: undefined,
+          resourceType: 'xhr',
+          headers: [],
+        },
+        res: {
+          off: vi.fn(),
+          once: vi.fn(),
+        },
+        shouldCorrelatePreRequests: () => true,
+        getPreRequest: vi.fn().mockImplementation((cb) => {
+          cb({
+            browserPreRequest: {
+              resourceType: 'fetch',
+            },
+          })
+        }),
+      }
+
+      await testMiddleware([CorrelateBrowserPreRequest], ctx)
+      expect(ctx.req.resourceType).toEqual('fetch')
     })
 
     it('errors when the request is destroyed prior to receiving a pre-request', () => {
@@ -821,88 +1021,77 @@ describe('http/request-middleware', () => {
           headers: [],
         },
         res: {
-          off: sinon.stub(),
-          once: sinon.stub(),
+          off: vi.fn(),
+          once: vi.fn(),
         },
         shouldCorrelatePreRequests: () => true,
-        getPreRequest: sinon.stub(),
-        onError: sinon.stub(),
+        getPreRequest: vi.fn(),
+        onError: vi.fn(),
       }
 
       testMiddleware([CorrelateBrowserPreRequest], ctx)
-      ctx.res.once.callArg(1)
 
-      expect(ctx.getPreRequest).to.be.calledOnce
-      expect(ctx.req.noPreRequestExpected).to.be.undefined
-      expect(ctx.req.browserPreRequest).to.be.undefined
-      expect(ctx.res.once).to.be.calledWith('close')
-      expect(ctx.onError).to.be.calledOnce
+      // call the function handler to invoke the onClose function callback
+      ctx.res.once.mock.calls[0][1]()
+
+      expect(ctx.getPreRequest).toHaveBeenCalledOnce()
+      expect(ctx.req.noPreRequestExpected).toBeUndefined()
+      expect(ctx.req.browserPreRequest).toBeUndefined()
+      expect(ctx.res.once).toHaveBeenCalledWith('close', expect.any(Function))
+      expect(ctx.onError).toHaveBeenCalledOnce()
     })
   })
 
-  describe('SendRequestOutgoing', () => {
-    const { SendRequestOutgoing } = RequestMiddleware
+  describe('RedirectToClientRouteIfUnloaded', () => {
+    const { RedirectToClientRouteIfUnloaded } = RequestMiddleware
+    const clientRoute = '/__/'
 
-    let ctx
-
-    beforeEach(() => {
-      const headers = {}
-      const remoteStates = new RemoteStates(() => {})
-
-      ctx = {
-        onError: sinon.stub(),
-        request: {
-          create: (opts) => {
-            return {
-              inputArgs: opts,
-              on: (event, callback) => {
-                if (event === 'response') {
-                  callback({ request: { timings: {} } })
-                }
-              },
-            }
-          },
-        },
+    function prepareContext ({ hasAppUnloaded, isPrimarySuperDomainOrigin }: { hasAppUnloaded: boolean, isPrimarySuperDomainOrigin: boolean }) {
+      return {
         req: {
-          body: '{}',
-          headers,
-          socket: {
-            on: () => {},
-          },
-        },
+          proxiedUrl: 'http://localhost:3500/fixtures/auth/index.html',
+          cookies: hasAppUnloaded ? { '__cypress.unload': 'true' } : {},
+        } as Partial<CypressIncomingRequest>,
         res: {
-          on: (event, listener) => {},
-          off: (event, listener) => {},
-        } as Partial<CypressOutgoingResponse>,
-        remoteStates,
+          on: vi.fn(),
+          off: vi.fn(),
+          redirect: vi.fn(),
+        } as any,
+        config: {
+          clientRoute,
+        },
+        remoteStates: {
+          isPrimarySuperDomainOrigin: vi.fn().mockReturnValue(isPrimarySuperDomainOrigin),
+        },
       }
+    }
+
+    it('redirects to the client route when the app has unloaded and the request is the primary super domain origin', async () => {
+      const ctx = prepareContext({ hasAppUnloaded: true, isPrimarySuperDomainOrigin: true })
+
+      await testMiddleware([RedirectToClientRouteIfUnloaded], ctx)
+
+      expect(ctx.res.redirect).toHaveBeenCalledWith(clientRoute)
     })
 
-    context('same-origin file request', () => {
-      beforeEach(() => {
-        ctx.getFileServerToken = () => 'abcd1234'
-        ctx.req.proxiedUrl = 'https://www.cypress.io/file'
-        ctx.remoteStates.set({
-          origin: 'https://www.cypress.io',
-          strategy: 'file',
-        } as any)
-      })
+    it('does NOT redirect when the app has unloaded but the request is NOT the primary super domain origin', async () => {
+      // a stale `__cypress.unload` cookie can linger on a previously-primary
+      // domain (Firefox's `unload` event is unreliable). A later cross-origin
+      // AUT navigation back to that domain must be served, not redirected to
+      // the client route, otherwise the AUT is bounced to the Cypress specs UI.
+      const ctx = prepareContext({ hasAppUnloaded: true, isPrimarySuperDomainOrigin: false })
 
-      it('adds `x-cypress-authorization` header', async () => {
-        await testMiddleware([SendRequestOutgoing], ctx)
-        .then(() => {
-          expect(ctx.req.headers['x-cypress-authorization']).to.equal('abcd1234')
-        })
-      })
+      await testMiddleware([RedirectToClientRouteIfUnloaded], ctx)
 
-      it('handles nil fileServer token', async () => {
-        ctx.getFileServerToken = () => undefined
+      expect(ctx.res.redirect).not.toHaveBeenCalled()
+    })
 
-        await testMiddleware([SendRequestOutgoing], ctx)
-        .then(() => {
-          expect(ctx.req.headers['x-cypress-authorization']).to.be.undefined
-        })
-      })
+    it('does NOT redirect when the app has not unloaded', async () => {
+      const ctx = prepareContext({ hasAppUnloaded: false, isPrimarySuperDomainOrigin: true })
+
+      await testMiddleware([RedirectToClientRouteIfUnloaded], ctx)
+
+      expect(ctx.res.redirect).not.toHaveBeenCalled()
     })
   })
 })

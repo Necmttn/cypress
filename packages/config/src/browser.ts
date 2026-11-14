@@ -10,7 +10,7 @@ import {
 } from './options'
 
 import type { BreakingErrResult, TestingType } from '@packages/types'
-import type { BreakingOption, BreakingOptionErrorKey, OverrideLevel } from './options'
+import type { BreakingOption, BreakingOptionErrorKey, OverrideContext, OverrideLevel } from './options'
 import type { ErrResult } from './validation'
 
 // this export has to be done in 2 lines because of a bug in babel typescript
@@ -62,7 +62,7 @@ export type InvalidTestOverrideResult = {
 
 type ErrorHandler = (
   key: BreakingOptionErrorKey,
-  options: BreakingErrResult
+  options: BreakingErrResult,
 ) => void
 
 export function resetIssuedWarnings () {
@@ -70,8 +70,8 @@ export function resetIssuedWarnings () {
 }
 
 const validateNoBreakingOptions = (breakingCfgOptions: Readonly<BreakingOption[]>, cfg: any, onWarning: ErrorHandler, onErr: ErrorHandler, testingType?: TestingType) => {
-  breakingCfgOptions.forEach(({ name, errorKey, newName, isWarning, value }) => {
-    if (_.has(cfg, name)) {
+  breakingCfgOptions.forEach(({ name, errorKey, newName, isWarning, value, shouldDisplayOrThrow }) => {
+    if (_.has(cfg, name) && (!shouldDisplayOrThrow || shouldDisplayOrThrow(cfg[name]))) {
       if (value && cfg[name] !== value) {
         // Bail if a value is specified but the config does not have that value.
         return
@@ -134,6 +134,23 @@ export const getPublicConfigKeys = () => {
   return publicConfigKeys
 }
 
+/**
+ * Keys allowed on Cypress Cloud recording payloads: public config options (same basis as
+ * config.resolved) plus flattened component-testing-only fields not listed as top-level
+ * `options[].name` entries (see mergeDefaults in project/utils).
+ */
+const cloudRecordingConfigExtraKeys = ['devServer', 'devServerConfig', 'indexHtmlFile'] as const
+
+let cloudRecordingConfigKeysCache: string[] | undefined
+
+export const getCloudRecordingConfigKeys = (): string[] => {
+  if (!cloudRecordingConfigKeysCache) {
+    cloudRecordingConfigKeysCache = [...publicConfigKeys, ...cloudRecordingConfigExtraKeys]
+  }
+
+  return cloudRecordingConfigKeysCache
+}
+
 export const matchesConfigKey = (key: string) => {
   if (_.has(defaultValues, key)) {
     return key
@@ -178,17 +195,13 @@ export const validateNoBreakingConfig = (cfg: any, onWarning: ErrorHandler, onEr
   return validateNoBreakingOptions(breakingOptions, cfg, onWarning, onErr, testingType)
 }
 
-export const validateNoBreakingConfigLaunchpad = (cfg: any, onWarning: ErrorHandler, onErr: ErrorHandler) => {
-  return validateNoBreakingOptions(breakingOptions.filter((option) => option.showInLaunchpad), cfg, onWarning, onErr)
-}
-
 export const validateNoBreakingTestingTypeConfig = (cfg: any, testingType: keyof typeof testingTypeBreakingOptions, onWarning: ErrorHandler, onErr: ErrorHandler) => {
   const options = testingTypeBreakingOptions[testingType]
 
   return validateNoBreakingOptions(options, cfg, onWarning, onErr, testingType)
 }
 
-export const validateOverridableAtRunTime = (config: any, isSuiteLevelOverride: boolean, onErr: (result: InvalidTestOverrideResult) => void) => {
+export const validateOverridableAtRunTime = (config: any, overrideContext: OverrideContext, onErr: (result: InvalidTestOverrideResult) => void) => {
   Object.keys(config).some((configKey) => {
     const overrideLevel: OverrideLevel = testOverrideLevels[configKey]
 
@@ -220,7 +233,11 @@ export const validateOverridableAtRunTime = (config: any, isSuiteLevelOverride: 
     // TODO: add a hook to ensure valid testing-type configuration is being set at runtime for all configuration values.
     // https://github.com/cypress-io/cypress/issues/24365
 
-    if (overrideLevel === 'never' || (overrideLevel === 'suite' && !isSuiteLevelOverride)) {
+    if (
+      overrideLevel === 'never' ||
+      (overrideLevel === 'suite' && overrideContext !== 'suite') ||
+      (overrideLevel === 'suiteOrTest' && overrideContext === 'runtime')
+    ) {
       onErr({
         invalidConfigKey: configKey,
         supportedOverrideLevel: overrideLevel,

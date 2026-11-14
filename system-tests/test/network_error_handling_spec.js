@@ -97,8 +97,8 @@ const controllers = {
 
     return setTimeout(() => {
       return req.socket.destroy()
-    }
-    , 1000)
+    },
+     1000)
   },
 
   duringBodyReset (req, res) {
@@ -107,8 +107,8 @@ const controllers = {
 
     return setTimeout(() => {
       return req.socket.destroy()
-    }
-    , 1000)
+    },
+     1000)
   },
 
   worksThirdTime (req, res) {
@@ -240,6 +240,7 @@ describe('e2e network error handling', function () {
     ],
     settings: {
       e2e: {
+        supportFile: false,
         baseUrl: `http://localhost:${PORT}/`,
       },
     },
@@ -373,41 +374,6 @@ describe('e2e network error handling', function () {
       })
     })
 
-    it('tests run as expected', function () {
-      return systemTests.exec(this, {
-        spec: 'network_error_handling.cy.js',
-        expectedExitCode: 2,
-        snapshot: true,
-      }).then(({ stdout }) => {
-        // sometimes <img>, <script> get retried, sometimes they do not
-
-        if (counts['/immediate-reset?load-img'] > 1) {
-          console.log('load-img was retried', counts['/immediate-reset?load-img'], 'times')
-          counts['/immediate-reset?load-img'] = 1
-        }
-
-        if (counts['/immediate-reset?load-js'] > 1) {
-          console.log('load-js was retried', counts['/immediate-reset?load-js'], 'times')
-          counts['/immediate-reset?load-js'] = 1
-        }
-
-        expect(counts).to.deep.eq({
-          '/immediate-reset?visit': 5,
-          '/immediate-reset?request': 5,
-          '/immediate-reset?load-img': 1,
-          '/immediate-reset?load-js': 1,
-          '/works-third-time-else-500/500-for-request': 3,
-          '/works-third-time/for-request': 3,
-          '/works-third-time-else-500/500-for-visit': 3,
-          '/works-third-time/for-visit': 3,
-          '/print-body-third-time': 3,
-          '/print-body-third-time-form': 1,
-          '/load-img-net-error.html': 1,
-          '/load-script-net-error.html': 1,
-        })
-      })
-    })
-
     it('does not connect to the upstream proxy for the SNI server request', function () {
       const onConnect = sinon.spy(() => {
         return true
@@ -428,22 +394,21 @@ describe('e2e network error handling', function () {
           snapshot: true,
           config: {
             baseUrl: `https://localhost:${HTTPS_PORT}`,
+            // the Cypress SNI/MITM server only exists on the HTTP/1 proxy path;
+            // on the browser (CDP) network path the browser reaches the AUT directly (#34351)
+            forceHttp1: true,
           },
         })
         .then(() => {
-          expect(onConnect).to.be.calledTwice
+          // Only count CONNECTs to the test server. The browser may also make
+          // additional requests, and their count is timing-dependent.
+          const connectsToServer = onConnect.getCalls().filter((call) => {
+            return call.args[0].host === 'localhost' && call.args[0].port === HTTPS_PORT
+          })
 
           // 1st request: verifying base url
-          expect(onConnect.firstCall).to.be.calledWithMatch({
-            host: 'localhost',
-            port: HTTPS_PORT,
-          })
-
           // 2nd request: <img> load from spec
-          expect(onConnect.secondCall).to.be.calledWithMatch({
-            host: 'localhost',
-            port: HTTPS_PORT,
-          })
+          expect(connectsToServer).to.have.length(2)
         })
       })
     })

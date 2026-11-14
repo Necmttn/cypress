@@ -1,48 +1,69 @@
 import os from 'os'
 import path from 'path'
-
-// @ts-ignore
 import pkg from '@packages/root'
 import type { AllCypressErrorNames } from '@packages/errors'
 import type { TestingType } from '@packages/types'
 
 import * as validate from './validation'
 
-const BREAKING_OPTION_ERROR_KEY: Readonly<AllCypressErrorNames[]> = [
-  'COMPONENT_FOLDER_REMOVED',
-  'INTEGRATION_FOLDER_REMOVED',
+/**
+ * When adding a new config option, ensure the following steps are taken:
+ * - Add the option to the appropriate array
+ * - Add the type definition to `/cli/types/cypress.d.ts`
+ * - Ensure the `results_spec` system test passes with updated snapshots
+ * - Ensure the config package tests pass with updated snapshots
+ *
+ * Additionally, for experiments:
+ * - add name and description copy to `/packages/app/src/settings/project/Experiments.vue`
+ */
+
+const _BREAKING_OPTION_ERROR_KEY: Readonly<AllCypressErrorNames[]> = [
   'CONFIG_FILE_INVALID_ROOT_CONFIG',
   'CONFIG_FILE_INVALID_ROOT_CONFIG_E2E',
   'CONFIG_FILE_INVALID_ROOT_CONFIG_COMPONENT',
   'CONFIG_FILE_INVALID_TESTING_TYPE_CONFIG_COMPONENT',
   'CONFIG_FILE_INVALID_TESTING_TYPE_CONFIG_E2E',
-  'EXPERIMENTAL_COMPONENT_TESTING_REMOVED',
-  'EXPERIMENTAL_SAMESITE_REMOVED',
-  'EXPERIMENTAL_NETWORK_STUBBING_REMOVED',
-  'EXPERIMENTAL_RUN_EVENTS_REMOVED',
-  'EXPERIMENTAL_SESSION_SUPPORT_REMOVED',
   'EXPERIMENTAL_SESSION_AND_ORIGIN_REMOVED',
   'EXPERIMENTAL_SINGLE_TAB_RUN_MODE',
-  'EXPERIMENTAL_SHADOW_DOM_REMOVED',
-  'FIREFOX_GC_INTERVAL_REMOVED',
-  'PLUGINS_FILE_CONFIG_OPTION_REMOVED',
   'VIDEO_UPLOAD_ON_PASSES_REMOVED',
   'RENAMED_CONFIG_OPTION',
-  'TEST_FILES_RENAMED',
+  'EXPERIMENTAL_STUDIO_REMOVED',
+  'EXPERIMENTAL_PROMPT_COMMAND_REMOVED',
+  'EXPERIMENTAL_SOURCE_REWRITING_REMOVED',
+  'ALLOW_CYPRESS_ENV_REMOVED',
+  'EXEC_TIMEOUT_REMOVED',
+  'EXPERIMENTAL_FAST_VISIBILITY_RENAMED',
+  'VISIBILITY_STRATEGY_DEPRECATION',
+  'EXPERIMENTAL_MEMORY_MANAGEMENT_REMOVED',
 ] as const
 
 type ValidationOptions = {
   testingType: TestingType | null
 }
 
-export type BreakingOptionErrorKey = typeof BREAKING_OPTION_ERROR_KEY[number]
+export type BreakingOptionErrorKey = typeof _BREAKING_OPTION_ERROR_KEY[number]
 
-export type OverrideLevel = 'any' | 'suite' | 'never'
+/**
+ * Where a configuration option is allowed to be overridden at test time:
+ * - `any`: suite-level overrides, test-level overrides, and at run-time via `Cypress.config()`.
+ * - `suiteOrTest`: suite-level and test-level overrides only. Cannot be set via `Cypress.config()`
+ *    while a test is executing.
+ * - `suite`: suite-level overrides only.
+ * - `never`: cannot be overridden at test time.
+ */
+export type OverrideLevel = 'any' | 'suiteOrTest' | 'suite' | 'never'
+
+/**
+ * The context in which a test-time config change is being applied: `suite`/`test` for
+ * `describe`/`it` config overrides, `runtime` for a `Cypress.config()` call while a test is
+ * executing, and `undefined` for anything else (support/spec file load or a `test:before:run` event).
+ */
+export type OverrideContext = 'suite' | 'test' | 'runtime' | undefined
 
 interface ConfigOption {
   name: string
   defaultValue?: any
-  validation: Function
+  validation: (key: string, value: any, opts: ValidationOptions) => validate.ValidationResult
   requireRestartOnChange?: 'server' | 'browser'
   /**
    * The list of test-time overrides levels supported by the configuration option. When undefined,
@@ -89,9 +110,9 @@ export interface BreakingOption {
    */
   isWarning?: boolean
   /**
-    * Whether to show the error message in the launchpad
-    */
-  showInLaunchpad?: boolean
+   * Whether to display or throw the error message based on the configuration value present.
+   */
+  shouldDisplayOrThrow?: (value: any) => boolean
 }
 
 const isValidConfig = (testingType: string, config: any, opts: ValidationOptions) => {
@@ -149,7 +170,7 @@ const driverConfigOptions: Array<DriverConfigOption> = [
     name: 'blockHosts',
     defaultValue: null,
     validation: validate.isStringOrArrayOfStrings,
-    overrideLevel: 'any',
+    overrideLevel: 'suiteOrTest',
     requireRestartOnChange: 'server',
   }, {
     name: 'chromeWebSecurity',
@@ -169,6 +190,10 @@ const driverConfigOptions: Array<DriverConfigOption> = [
       indexHtmlFile: 'cypress/support/component-index.html',
     },
     validation: isValidConfig,
+  }, {
+    name: 'defaultBrowser',
+    defaultValue: null,
+    validation: validate.isString,
   }, {
     name: 'defaultCommandTimeout',
     defaultValue: 4000,
@@ -191,11 +216,12 @@ const driverConfigOptions: Array<DriverConfigOption> = [
     name: 'env',
     defaultValue: {},
     validation: validate.isPlainObject,
-    overrideLevel: 'any',
+    overrideLevel: 'never',
+    requireRestartOnChange: 'server',
   }, {
-    name: 'execTimeout',
-    defaultValue: 60000,
-    validation: validate.isNumber,
+    name: 'expose',
+    defaultValue: {},
+    validation: validate.isPlainObject,
     overrideLevel: 'any',
   }, {
     name: 'experimentalCspAllowList',
@@ -203,11 +229,6 @@ const driverConfigOptions: Array<DriverConfigOption> = [
     validation: validate.validateAny(validate.isBoolean, validate.isArrayIncludingAny('script-src-elem', 'script-src', 'default-src', 'form-action', 'child-src', 'frame-src')),
     overrideLevel: 'never',
     requireRestartOnChange: 'server',
-  }, {
-    name: 'experimentalFetchPolyfill',
-    defaultValue: false,
-    validation: validate.isBoolean,
-    isExperimental: true,
   }, {
     name: 'experimentalInteractiveRunEvents',
     defaultValue: false,
@@ -220,21 +241,15 @@ const driverConfigOptions: Array<DriverConfigOption> = [
     validation: validate.isBoolean,
     isExperimental: true,
   }, {
-    name: 'experimentalMemoryManagement',
-    defaultValue: false,
-    validation: validate.isBoolean,
-    isExperimental: true,
-  }, {
     name: 'experimentalModifyObstructiveThirdPartyCode',
     defaultValue: false,
     validation: validate.isBoolean,
     isExperimental: true,
     requireRestartOnChange: 'server',
   }, {
-    name: 'experimentalSkipDomainInjection',
-    defaultValue: null,
-    validation: validate.isNullOrArrayOfStrings,
-    isExperimental: true,
+    name: 'injectDocumentDomain',
+    defaultValue: false,
+    validation: validate.isBoolean,
     requireRestartOnChange: 'server',
   }, {
     name: 'experimentalOriginDependencies',
@@ -244,29 +259,22 @@ const driverConfigOptions: Array<DriverConfigOption> = [
     overrideLevel: 'any',
     requireRestartOnChange: 'browser',
   }, {
-    name: 'experimentalSourceRewriting',
-    defaultValue: false,
-    validation: validate.isBoolean,
-    isExperimental: true,
-    requireRestartOnChange: 'server',
-  }, {
     name: 'experimentalSingleTabRunMode',
     defaultValue: false,
     validation: validate.isBoolean,
     isExperimental: true,
     requireRestartOnChange: 'server',
   }, {
-    name: 'experimentalStudio',
-    defaultValue: false,
-    validation: validate.isBoolean,
-    isExperimental: true,
-    requireRestartOnChange: 'browser',
-  }, {
     name: 'experimentalWebKitSupport',
     defaultValue: false,
     validation: validate.isBoolean,
     isExperimental: true,
     requireRestartOnChange: 'server',
+  }, {
+    name: 'visibilityStrategy',
+    defaultValue: 'modern',
+    validation: validate.isOneOf('legacy', 'modern'),
+    overrideLevel: 'any',
   }, {
     name: 'fileServerFolder',
     defaultValue: '',
@@ -280,6 +288,11 @@ const driverConfigOptions: Array<DriverConfigOption> = [
     isFolder: true,
     requireRestartOnChange: 'server',
   }, {
+    name: 'forceHttp1',
+    defaultValue: false,
+    validation: validate.isBoolean,
+    requireRestartOnChange: 'server',
+  }, {
     name: 'excludeSpecPattern',
     defaultValue: (options: Record<string, any> = {}) => options.testingType === 'component' ? defaultExcludeSpecPattern.component : defaultExcludeSpecPattern.e2e,
     validation: validate.isStringOrArrayOfStrings,
@@ -290,10 +303,19 @@ const driverConfigOptions: Array<DriverConfigOption> = [
     validation: validate.isBoolean,
     overrideLevel: 'any',
   }, {
+    name: 'justInTimeCompile',
+    defaultValue: true,
+    validation: validate.isBoolean,
+    requireRestartOnChange: 'server',
+  }, {
     name: 'keystrokeDelay',
-    defaultValue: 0,
+    defaultValue: null,
     validation: validate.isNumberOrFalse,
     overrideLevel: 'any',
+  }, {
+    name: 'manageBrowserMemory',
+    defaultValue: true,
+    validation: validate.isBoolean,
   }, {
     name: 'modifyObstructiveCode',
     defaultValue: true,
@@ -316,7 +338,7 @@ const driverConfigOptions: Array<DriverConfigOption> = [
   }, {
     name: 'port',
     defaultValue: null,
-    validation: validate.isNumber,
+    validation: validate.isValidPort,
   }, {
     name: 'projectId',
     defaultValue: null,
@@ -326,6 +348,11 @@ const driverConfigOptions: Array<DriverConfigOption> = [
     defaultValue: 20,
     validation: validate.isNumber,
     overrideLevel: 'any',
+  }, {
+    name: 'removeSRIAttributes',
+    defaultValue: false,
+    validation: validate.isBoolean,
+    requireRestartOnChange: 'server',
   }, {
     name: 'reporter',
     defaultValue: 'spec',
@@ -403,7 +430,7 @@ const driverConfigOptions: Array<DriverConfigOption> = [
   }, {
     name: 'scrollBehavior',
     defaultValue: 'top',
-    validation: validate.isOneOf('center', 'top', 'bottom', 'nearest', false),
+    validation: validate.isValidScrollBehavior,
     overrideLevel: 'any',
   }, {
     name: 'supportFile',
@@ -427,7 +454,7 @@ const driverConfigOptions: Array<DriverConfigOption> = [
     validation: (key: string, value: any, opts: ValidationOptions) => {
       const { testingType } = opts
 
-      let configOpts = [true, false]
+      const configOpts = [true, false]
 
       if (testingType === 'component') {
         configOpts.pop()
@@ -440,6 +467,11 @@ const driverConfigOptions: Array<DriverConfigOption> = [
     name: 'trashAssetsBeforeRuns',
     defaultValue: true,
     validation: validate.isBoolean,
+  }, {
+    name: 'trustedCertificates',
+    defaultValue: [],
+    validation: validate.isValidTrustedCertificates,
+    requireRestartOnChange: 'browser',
   }, {
     name: 'userAgent',
     defaultValue: null,
@@ -462,12 +494,12 @@ const driverConfigOptions: Array<DriverConfigOption> = [
     name: 'viewportHeight',
     defaultValue: (options: Record<string, any> = {}) => options.testingType === 'component' ? 500 : 660,
     validation: validate.isNumber,
-    overrideLevel: 'any',
+    overrideLevel: 'suiteOrTest',
   }, {
     name: 'viewportWidth',
     defaultValue: (options: Record<string, any> = {}) => options.testingType === 'component' ? 500 : 1000,
     validation: validate.isNumber,
-    overrideLevel: 'any',
+    overrideLevel: 'suiteOrTest',
   }, {
     name: 'waitForAnimations',
     defaultValue: true,
@@ -493,7 +525,7 @@ const runtimeOptions: Array<RuntimeConfigOption> = [
     // having the final config that has the e2e property flattened/compacted
     // we may not be able to get the value to ignore.
     name: 'additionalIgnorePattern',
-    defaultValue: (options: Record<string, any> = {}) => options.testingType === 'component' ? defaultSpecPattern.e2e : [],
+    defaultValue: (options: Record<string, any> = {}): string | any[] => options.testingType === 'component' ? defaultSpecPattern.e2e : [],
     validation: validate.isStringOrArrayOfStrings,
     isInternal: true,
   }, {
@@ -534,7 +566,11 @@ const runtimeOptions: Array<RuntimeConfigOption> = [
     validation: validate.isPlainObject,
   }, {
     name: 'isInteractive',
-    defaultValue: true,
+    // `isInteractive` is the inverse of `isTextTerminal`, which run mode sets
+    // to `true`. Deriving it from the mode options ensures plugins /
+    // setupNodeEvents receive the correct value rather than a static default.
+    // https://github.com/cypress-io/cypress/issues/20789
+    defaultValue: (options: Record<string, any> = {}) => !options.isTextTerminal,
     validation: validate.isBoolean,
   }, {
     name: 'isTextTerminal',
@@ -586,7 +622,7 @@ const runtimeOptions: Array<RuntimeConfigOption> = [
     validation: validate.isString,
     isInternal: true,
   }, {
-    name: 'protocolEnabled',
+    name: 'isDefaultProtocolEnabled',
     defaultValue: false,
     validation: validate.isBoolean,
     isInternal: true,
@@ -610,72 +646,71 @@ export const options: Array<DriverConfigOption | RuntimeConfigOption> = [
 ]
 
 /**
- * Values not allowed in 10.X+ in the root, e2e and component config
+ * Values not allowed in 10.X+ in the root, e2e or component config
  */
 export const breakingOptions: Readonly<BreakingOption[]> = [
   {
-    name: 'blacklistHosts',
-    errorKey: 'RENAMED_CONFIG_OPTION',
-    newName: 'blockHosts',
-    isWarning: false,
-  }, {
-    name: 'componentFolder',
-    errorKey: 'COMPONENT_FOLDER_REMOVED',
-    isWarning: false,
-  }, {
-    name: 'experimentalComponentTesting',
-    errorKey: 'EXPERIMENTAL_COMPONENT_TESTING_REMOVED',
-    isWarning: false,
-  }, {
-    name: 'experimentalGetCookiesSameSite',
-    errorKey: 'EXPERIMENTAL_SAMESITE_REMOVED',
-    isWarning: true,
-  }, {
-    name: 'experimentalNetworkStubbing',
-    errorKey: 'EXPERIMENTAL_NETWORK_STUBBING_REMOVED',
-    isWarning: true,
-  }, {
-    name: 'experimentalRunEvents',
-    errorKey: 'EXPERIMENTAL_RUN_EVENTS_REMOVED',
-    isWarning: true,
-  }, {
-    name: 'experimentalSessionSupport',
-    errorKey: 'EXPERIMENTAL_SESSION_SUPPORT_REMOVED',
+    name: 'experimentalJustInTimeCompile',
+    errorKey: 'EXPERIMENTAL_JIT_COMPILE_REMOVED',
     isWarning: true,
   }, {
     name: 'experimentalSessionAndOrigin',
     errorKey: 'EXPERIMENTAL_SESSION_AND_ORIGIN_REMOVED',
     isWarning: true,
   }, {
-    name: 'experimentalShadowDomSupport',
-    errorKey: 'EXPERIMENTAL_SHADOW_DOM_REMOVED',
-    isWarning: true,
-  }, {
-    name: 'firefoxGcInterval',
-    errorKey: 'FIREFOX_GC_INTERVAL_REMOVED',
-    isWarning: true,
-  }, {
-    name: 'ignoreTestFiles',
-    errorKey: 'TEST_FILES_RENAMED',
-    newName: 'excludeSpecPattern',
-    isWarning: false,
-  }, {
-    name: 'integrationFolder',
-    errorKey: 'INTEGRATION_FOLDER_REMOVED',
-    isWarning: false,
-  }, {
-    name: 'pluginsFile',
-    errorKey: 'PLUGINS_FILE_CONFIG_OPTION_REMOVED',
-    isWarning: false,
-  },
-  {
-    name: 'testFiles',
-    errorKey: 'TEST_FILES_RENAMED',
-    newName: 'specPattern',
+    name: 'experimentalSkipDomainInjection',
+    errorKey: 'EXPERIMENTAL_SKIP_DOMAIN_INJECTION_REMOVED',
     isWarning: false,
   }, {
     name: 'videoUploadOnPasses',
     errorKey: 'VIDEO_UPLOAD_ON_PASSES_REMOVED',
+    isWarning: true,
+  },
+  {
+    name: 'experimentalStudio',
+    errorKey: 'EXPERIMENTAL_STUDIO_REMOVED',
+    isWarning: true,
+  },
+  {
+    name: 'experimentalPromptCommand',
+    errorKey: 'EXPERIMENTAL_PROMPT_COMMAND_REMOVED',
+    isWarning: true,
+  },
+  {
+    name: 'experimentalSourceRewriting',
+    errorKey: 'EXPERIMENTAL_SOURCE_REWRITING_REMOVED',
+    isWarning: true,
+  },
+  {
+    name: 'allowCypressEnv',
+    errorKey: 'ALLOW_CYPRESS_ENV_REMOVED',
+    isWarning: true,
+  },
+  {
+    name: 'execTimeout',
+    errorKey: 'EXEC_TIMEOUT_REMOVED',
+    isWarning: true,
+  },
+  {
+    name: 'experimentalFastVisibility',
+    errorKey: 'EXPERIMENTAL_FAST_VISIBILITY_RENAMED',
+    isWarning: true,
+  },
+  {
+    name: 'visibilityStrategy',
+    errorKey: 'VISIBILITY_STRATEGY_DEPRECATION',
+    shouldDisplayOrThrow: (value: any) => value === 'legacy',
+    isWarning: true,
+  },
+  {
+    name: 'experimentalMemoryManagement',
+    errorKey: 'EXPERIMENTAL_MEMORY_MANAGEMENT_REMOVED',
+    isWarning: true,
+  },
+  {
+    name: 'forceHttp1',
+    errorKey: 'FORCE_HTTP1_DEPRECATION',
+    shouldDisplayOrThrow: (value: any) => value === true,
     isWarning: true,
   },
 ] as const
@@ -716,11 +751,6 @@ export const breakingRootOptions: Array<BreakingOption> = [
     errorKey: 'CONFIG_FILE_INVALID_ROOT_CONFIG',
     isWarning: false,
     testingTypes: ['e2e'],
-  }, {
-    name: 'experimentalRunAllSpecs',
-    errorKey: 'EXPERIMENTAL_RUN_ALL_SPECS_E2E_ONLY',
-    isWarning: false,
-    testingTypes: ['e2e'],
   },
   {
     name: 'experimentalOriginDependencies',
@@ -729,10 +759,10 @@ export const breakingRootOptions: Array<BreakingOption> = [
     testingTypes: ['e2e'],
   },
   {
-    name: 'experimentalSkipDomainInjection',
-    errorKey: 'EXPERIMENTAL_USE_DEFAULT_DOCUMENT_DOMAIN_E2E_ONLY',
+    name: 'justInTimeCompile',
+    errorKey: 'JIT_COMPONENT_TESTING',
     isWarning: false,
-    testingTypes: ['e2e'],
+    testingTypes: ['component'],
   },
 ]
 
@@ -748,6 +778,16 @@ export const testingTypeBreakingOptions: { e2e: Array<BreakingOption>, component
       errorKey: 'CONFIG_FILE_INVALID_TESTING_TYPE_CONFIG_E2E',
       isWarning: false,
     },
+    {
+      name: 'justInTimeCompile',
+      errorKey: 'JIT_COMPONENT_TESTING',
+      isWarning: false,
+    },
+    {
+      name: 'injectDocumentDomain',
+      errorKey: 'INJECT_DOCUMENT_DOMAIN_DEPRECATION',
+      isWarning: true,
+    },
   ],
   component: [
     {
@@ -756,18 +796,8 @@ export const testingTypeBreakingOptions: { e2e: Array<BreakingOption>, component
       isWarning: false,
     },
     {
-      name: 'experimentalStudio',
-      errorKey: 'EXPERIMENTAL_STUDIO_E2E_ONLY',
-      isWarning: false,
-    },
-    {
       name: 'testIsolation',
       errorKey: 'CONFIG_FILE_INVALID_TESTING_TYPE_CONFIG_COMPONENT',
-      isWarning: false,
-    },
-    {
-      name: 'experimentalRunAllSpecs',
-      errorKey: 'EXPERIMENTAL_RUN_ALL_SPECS_E2E_ONLY',
       isWarning: false,
     },
     {
@@ -776,8 +806,8 @@ export const testingTypeBreakingOptions: { e2e: Array<BreakingOption>, component
       isWarning: false,
     },
     {
-      name: 'experimentalSkipDomainInjection',
-      errorKey: 'EXPERIMENTAL_USE_DEFAULT_DOCUMENT_DOMAIN_E2E_ONLY',
+      name: 'injectDocumentDomain',
+      errorKey: 'INJECT_DOCUMENT_DOMAIN_E2E_ONLY',
       isWarning: false,
     },
   ],

@@ -1,6 +1,6 @@
 import os from 'os'
 import chokidar from 'chokidar'
-import type { ResolvedFromConfig, RESOLVED_FROM, TestingType, SpecWithRelativeRoot } from '@packages/types'
+import type { ResolvedFromConfig, TestingType, SpecWithRelativeRoot } from '@packages/types'
 import minimatch from 'minimatch'
 import _ from 'lodash'
 import path from 'path'
@@ -18,10 +18,11 @@ import assert from 'assert'
 
 import type { DataContext } from '..'
 import { toPosix } from '../util/file'
-import type { FilePartsShape } from '@packages/graphql/src/schemaTypes/objectTypes/gql-FileParts'
+import type { FilePartsShape } from '../../graphql/schemaTypes/objectTypes/gql-FileParts'
 import type { ProjectShape } from '../data'
 import type { FindSpecs } from '../actions'
-import { FileExtension, getDefaultSpecFileName } from './migration/utils'
+import { getDefaultSpecFileName } from '../util/files'
+import type { FileExtension } from '../util/files'
 
 type SpecPatterns = {
   specPattern?: string[]
@@ -34,6 +35,8 @@ interface MatchedSpecs {
   specAbsolutePaths: string[]
   specPattern: string | string[]
 }
+
+const MASKED_ENV_VALUE = '*****'
 
 const toArray = (val?: string | string[]) => val ? typeof val === 'string' ? [val] : val : undefined
 
@@ -59,7 +62,7 @@ export function matchedSpecs ({
   return specs
 }
 
-export interface TransformSpec {
+interface TransformSpec {
   projectRoot: string
   absolute: string
   testingType: Cypress.TestingType
@@ -116,7 +119,7 @@ export function getLongestCommonPrefixFromPaths (paths: string[]): string {
   if (!paths[0]) return ''
 
   function getPathParts (pathname: string) {
-    return pathname.split(/[\/\\]/g)
+    return pathname.split(/[/\\]/g)
   }
 
   const lcp = getPathParts(paths[0])
@@ -149,7 +152,7 @@ export function getPathFromSpecPattern ({
 { specPattern: string
   testingType: TestingType
   fileExtensionToUse?: FileExtension
-  name?: string}) {
+  name?: string }) {
   function replaceWildCard (s: string, fallback: string) {
     return s.replace(/\*/g, fallback)
   }
@@ -207,6 +210,17 @@ export function getPathFromSpecPattern ({
   const randExp = new RandExp(finalGlob.replace(/\./g, '\\.'))
 
   return randExp.gen()
+}
+
+/**
+ * `minimatch` only understands posix separators, but `path.relative` emits `\` on
+ * Windows, so the relative path has to be normalized or a specPattern containing a
+ * directory segment (like the `cypress/e2e/**` default) can never match.
+ */
+export function matchesAnySpecPattern (relativeSpecPath: string, specPattern: string[], sep: string = path.sep): boolean {
+  const posixPath = toPosix(relativeSpecPath, sep)
+
+  return specPattern.some((s) => minimatch(posixPath, s))
 }
 
 export class ProjectDataSource {
@@ -372,7 +386,7 @@ export class ProjectDataSource {
     // When file system changes are detected, we retrieve any spec files matching
     // the determined specPattern. This function is debounced to limit execution
     // during sequential file operations.
-    const onProjectFileSystemChange = _.debounce(async () => {
+    const onProjectFileSystemChange = _.debounce(async (_type, _filePath) => {
       const specs = await this.findSpecs({
         projectRoot,
         testingType,
@@ -382,6 +396,9 @@ export class ProjectDataSource {
         additionalIgnorePattern,
       })
 
+      // with JIT, since we are unable to deterministically determine the dev-server in use, the test will recompile
+      // any time the spec directory has contents added/removed. This means a recompile when it is not needed, but this should
+      // only be applicable in open mode and seldomly experienced.
       if (_.isEqual(this.specs, specs)) {
         this.ctx.actions.project.refreshSpecs(specs)
 
@@ -438,14 +455,14 @@ export class ProjectDataSource {
         }
 
         // If none of the spec patterns match, we don't need to watch it
-        return !specPattern.some((s) => minimatch(path.relative(projectRoot, file), s))
+        return !matchesAnySpecPattern(path.relative(projectRoot, file), specPattern)
       }],
     })
   }
 
   async defaultSpecFileName (): Promise<string> {
     const { specPattern = [] } = await this.ctx.project.specPatterns()
-    let fileExtensionToUse: FileExtension = this.ctx.lifecycleManager.fileExtensionToUse
+    const fileExtensionToUse: FileExtension = this.ctx.lifecycleManager.fileExtensionToUse
 
     // If generating a component test then check whether there are JSX/TSX files present in the project.
     // If project uses JSX then user likely wants to use JSX for their tests as well.
@@ -534,6 +551,22 @@ export class ProjectDataSource {
     return this.ctx.project.specs.find((x) => x.absolute === absolute)
   }
 
+  getUnmatchedPatterns (patterns: string[], specs: SpecWithRelativeRoot[]): string[] {
+    // Use micromatch (the matcher backing `globby`/`fast-glob` used to discover specs)
+    const MICROMATCH_OPTIONS = { dot: true }
+    // Normalize to forward slashes: path.relative may return backslashes on Windows and
+    // micromatch treats backslashes as escape characters rather than path separators.
+    const normalize = (p: string) => p.split(path.sep).join('/')
+    const specRelativePaths = specs
+    .map((s) => s.relative)
+    .filter((p): p is string => typeof p === 'string')
+    .map(normalize)
+
+    return patterns.filter((pattern) => {
+      return !specRelativePaths.some((specPath) => micromatch.isMatch(specPath, normalize(pattern), MICROMATCH_OPTIONS))
+    })
+  }
+
   async getProjectPreferences (projectTitle: string) {
     const preferences = await this.api.getProjectPreferencesFromCache()
 
@@ -555,26 +588,14 @@ export class ProjectDataSource {
   async getResolvedConfigFields (): Promise<ResolvedFromConfig[]> {
     const config = this.ctx.lifecycleManager.loadedFullConfig?.resolved ?? {}
 
-    interface ResolvedFromWithField extends ResolvedFromConfig {
-      field: typeof RESOLVED_FROM[number]
-    }
-
-    const mapEnvResolvedConfigToObj = (config: ResolvedFromConfig): ResolvedFromWithField => {
-      return Object.entries(config).reduce<ResolvedFromWithField>((acc, [field, value]) => {
-        return {
-          ...acc,
-          value: { ...acc.value, [field]: value.value },
-        }
-      }, {
-        value: {},
-        field: 'env',
-        from: 'env',
-      })
-    }
-
     return Object.entries(config ?? {}).map(([key, value]) => {
-      if (key === 'env' && value) {
-        return mapEnvResolvedConfigToObj(value)
+      if ((key === 'env' || key === 'expose') && value) {
+        return {
+          field: key,
+          from: key,
+          // The page under test can reach this field, and env values must only reach the spec through cy.env()
+          value: Object.fromEntries(Object.entries(value).map(([field, { value }]) => [field, key === 'env' ? MASKED_ENV_VALUE : value])),
+        }
       }
 
       return { ...value, field: key }

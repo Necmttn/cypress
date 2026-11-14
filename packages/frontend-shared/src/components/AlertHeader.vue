@@ -12,14 +12,14 @@
         :class="prefixIconClass"
       />
     </slot>
-    <h3
+    <h2
       class="grow font-medium text-left leading-normal decoration-current"
       :class="headerClass"
     >
       <slot name="title">
         {{ title }}
       </slot>
-    </h3>
+    </h2>
     <div class="relative shrink">
       <slot
         name="suffixIcon"
@@ -51,11 +51,10 @@ const emit = defineEmits<{
   (eventName: 'suffixIconClicked'): void
 }>()
 
-/* eslint-disable vue/require-default-prop */
 defineProps<{
   title: string
-  prefixIcon?: FunctionalComponent<SVGAttributes, {}> | null
-  suffixIcon?: FunctionalComponent<SVGAttributes, {}> | null
+  prefixIcon?: FunctionalComponent<SVGAttributes> | null
+  suffixIcon?: FunctionalComponent<SVGAttributes> | null
   suffixIconAriaLabel?: string
   alertClass?: string
   prefixIconClass?: string

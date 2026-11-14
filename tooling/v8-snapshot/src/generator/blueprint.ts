@@ -34,6 +34,7 @@ const setGlobals = read('set-globals')
  * that are bundled
  * @property includeStrictVerifiers see {@link GenerationOpts} includeStrictVerifiers
  * @property nodeEnv see {@link GenerationOpts} nodeEnv
+ * @property cypressInternalEnv see {@link GenerationOpts} cypressInternalEnv
  * @property basedir the base dir of the project for which we are creating the
  * snapshot
  * @property sourceMap {@link Buffer} with content of raw sourcemaps
@@ -47,6 +48,7 @@ export type BlueprintConfig = {
   customRequireDefinitions: Buffer
   includeStrictVerifiers: boolean
   nodeEnv: string
+  cypressInternalEnv: string
   basedir: string
   sourceMap: Buffer | undefined
   processedSourceMapPath: string | undefined
@@ -99,6 +101,7 @@ export function scriptFromBlueprint (config: BlueprintConfig): {
     customRequireDefinitions,
     includeStrictVerifiers,
     nodeEnv,
+    cypressInternalEnv,
     basedir,
     sourceMap,
     supportTypeScript,
@@ -141,6 +144,7 @@ export function scriptFromBlueprint (config: BlueprintConfig): {
       env: {
         value: {
           NODE_ENV: '${nodeEnv}',
+          CYPRESS_INTERNAL_ENV: '${cypressInternalEnv}',
         },
         enumerable: false,
       },
@@ -220,12 +224,10 @@ export function scriptFromBlueprint (config: BlueprintConfig): {
   // Now we rendered the prelude and can calculate the bundle line offset and thus
   // process and include source maps. Since it is expensive we only do this if we
   // have a valid sourcemap.
-  let offsetToBundle: number | undefined = undefined
-
   let processedSourceMap: string | undefined
 
   if (sourceMap != null) {
-    offsetToBundle =
+    const offsetToBundle =
       newLinesInBuffer(wrapperOpen) + newLinesInBuffer(BUNDLE_WRAPPER_OPEN)
 
     processedSourceMap = processSourceMap(sourceMap, basedir, offsetToBundle)

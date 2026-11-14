@@ -1,11 +1,14 @@
-import _, { DebouncedFunc } from 'lodash'
+import type { DebouncedFunc } from 'lodash'
+import _ from 'lodash'
 import $ from 'jquery'
 import clone from 'clone'
 
 import { HIGHLIGHT_ATTR } from '../cy/snapshots'
+import type { ISnapshots } from '../cy/snapshots'
 import $dom from '../dom'
 import $utils from './utils'
 import $errUtils from './error_utils'
+import { MAX_VISIBILITY_CHECK_ELEMENTS } from '@packages/types'
 
 import type { StateFunc } from './state'
 
@@ -13,64 +16,323 @@ import type { StateFunc } from './state'
 // including the intermediate $Log interface
 const groupsOrTableRe = /^(groups|table)$/
 const parentOrChildRe = /parent|child|system/
-const SNAPSHOT_PROPS = 'id snapshots $el url coords highlightAttr scrollBy viewportWidth viewportHeight'.split(' ')
-const DISPLAY_PROPS = 'id alias aliasType callCount displayName end err event functionName groupLevel hookId instrument isStubbed group hidden message method name numElements numResponses referencesAlias renderProps sessionInfo state testId timeout type url visible wallClockStartedAt testCurrentRetry'.split(' ')
+const SNAPSHOT_PROPS = 'id testId snapshots $el url coords highlightAttr scrollBy viewportWidth viewportHeight'.split(' ')
+const DISPLAY_PROPS = 'id alias aliasType callCount defaultCollapsedState displayName end err event functionName groupLevel hookId instrument isStubbed group hidden message method name numElements numResponses referencesAlias renderProps sessionInfo state testId timeout type url visible wallClockStartedAt testCurrentRetry'.split(' ')
 const PROTOCOL_PROPS = DISPLAY_PROPS.concat(['snapshots', 'createdAtTimestamp', 'updatedAtTimestamp', 'scrollBy', 'coords', 'highlightAttr'])
 const BLACKLIST_PROPS = 'snapshots'.split(' ')
 
 const PROTOCOL_MESSAGE_TRUNCATION_LENGTH = 3000
 
+// Console props are read by tooling with a bounded context (see the tap
+// binding), so a value big enough to bury the rest of the payload is named by
+// its length instead of returned. A string is all content, so it is held to the
+// tighter bound; a container is mostly structure worth keeping, so it is
+// measured only after its own children were bounded and held to the looser one —
+// which is what keeps a response's headers and status readable next to the
+// response body that dwarfs them.
+const CONSOLE_PROPS_MAX_VALUE_LENGTH = 1000
+const CONSOLE_PROPS_MAX_CONTAINER_LENGTH = 10000
+
+export interface SerializeConsolePropsOptions {
+  /** Return every value in full, however long. */
+  full?: boolean
+}
+
+const serializedLength = (serialized): number => {
+  try {
+    return JSON.stringify(serialized)?.length ?? 0
+  } catch {
+    return 0
+  }
+}
+
+const withheld = (length: number): string => {
+  return `[${length.toLocaleString('en-US')} ${length === 1 ? 'character' : 'characters'} withheld — pass --json to include it]`
+}
+
+// A container's children are already bounded by the time this runs, so what is
+// measured is what would actually ship. The payload root is never named by its
+// length — collapsing it would leave the caller with no payload at all.
+const boundContainer = (serialized, depth: number, full: boolean): any => {
+  if (full || depth === 0) {
+    return serialized
+  }
+
+  const length = serializedLength(serialized)
+
+  return length > CONSOLE_PROPS_MAX_CONTAINER_LENGTH ? withheld(length) : serialized
+}
+
+const serializeConsolePropsValue = (value, key: string, ancestors: WeakSet<object>, full: boolean, depth: number, invokeFunction = false): any => {
+  if (BLACKLIST_PROPS.includes(key)) {
+    return null
+  }
+
+  if ($dom.isDom(value)) {
+    return $dom.stringify(value, 'short')
+  }
+
+  if (_.isFunction(value)) {
+    if (invokeFunction || groupsOrTableRe.test(key)) {
+      try {
+        return serializeConsolePropsValue(value(), key, ancestors, full, depth)
+      } catch {
+        return null
+      }
+    }
+
+    try {
+      return value.toString()
+    } catch {
+      return null
+    }
+  }
+
+  if (_.isSymbol(value)) {
+    return value.toString()
+  }
+
+  if (typeof value === 'bigint') {
+    return value.toString()
+  }
+
+  if (typeof value === 'number' && !Number.isFinite(value)) {
+    return null
+  }
+
+  if (typeof value === 'string') {
+    return !full && value.length > CONSOLE_PROPS_MAX_VALUE_LENGTH ? withheld(value.length) : value
+  }
+
+  if (!_.isObject(value)) {
+    return value
+  }
+
+  if (ancestors.has(value)) {
+    return null
+  }
+
+  ancestors.add(value)
+
+  let toJSON
+
+  try {
+    toJSON = (value as any).toJSON
+  } catch {
+    toJSON = undefined
+  }
+
+  // `Date` and anything else that opts into a JSON form would otherwise
+  // serialize as `{}`, since their state lives in internal slots.
+  if (_.isFunction(toJSON)) {
+    let serialized
+
+    try {
+      serialized = serializeConsolePropsValue(toJSON.call(value), key, ancestors, full, depth)
+    } catch {
+      serialized = null
+    }
+
+    ancestors.delete(value)
+
+    return serialized
+  }
+
+  if (_.isMap(value) || _.isSet(value)) {
+    let entries
+
+    try {
+      entries = _.isMap(value) ? [...value.entries()] : [...value.values()]
+    } catch {
+      entries = undefined
+    }
+
+    const serialized = entries ? serializeConsolePropsValue(entries, '', ancestors, full, depth) : null
+
+    ancestors.delete(value)
+
+    return serialized
+  }
+
+  if (_.isArray(value)) {
+    const serialized: any[] = []
+    let length: number
+
+    try {
+      length = value.length
+    } catch {
+      ancestors.delete(value)
+
+      return null
+    }
+
+    for (let index = 0; index < length; index++) {
+      try {
+        serialized.push(serializeConsolePropsValue(value[index], '', ancestors, full, depth + 1) ?? null)
+      } catch {
+        serialized.push(null)
+      }
+    }
+
+    ancestors.delete(value)
+
+    return boundContainer(serialized, depth, full)
+  }
+
+  const serialized: Record<string, any> = {}
+  const invokeChildren = key === 'table'
+  let childKeys: string[]
+
+  try {
+    childKeys = Object.keys(value)
+  } catch {
+    ancestors.delete(value)
+
+    return null
+  }
+
+  for (const childKey of childKeys) {
+    let childValue
+
+    try {
+      childValue = value[childKey]
+    } catch {
+      Object.defineProperty(serialized, childKey, { value: null, enumerable: true, configurable: true, writable: true })
+      continue
+    }
+
+    const child = serializeConsolePropsValue(childValue, childKey, ancestors, full, depth + 1, invokeChildren)
+
+    if (child !== undefined) {
+      Object.defineProperty(serialized, childKey, { value: child, enumerable: true, configurable: true, writable: true })
+    }
+  }
+
+  ancestors.delete(value)
+
+  return boundContainer(serialized, depth, full)
+}
+
+// Log attrs on `test.routes` / `agents` / `commands` / `hooks` retain payloads
+// (stringified args, URLs, `consoleProps`, custom `Cypress.log` fields, etc.) after a
+// test falls out of `numTestsKeptInMemory`. Everything not in this allowlist is set to
+// `null` so GC can reclaim memory and clean up custom log properties.
+//
+// Keep short display identifiers (`name`, `displayName`, `alias`, …) so `getTestsState` /
+// serialized run state still renders command logs, routes, and agents after restore.
+const REDUCE_MEMORY_PRESERVED_KEYS = new Set([
+  '_hasBeenCleanedUp',
+  'alias',
+  'aliasType',
+  'autoEnd',
+  'callCount',
+  'chainerId',
+  'count',
+  'createdAtTimestamp',
+  'defaultCollapsedState',
+  'displayName',
+  'end',
+  'ended',
+  'event',
+  'functionName',
+  'group',
+  'groupEnd',
+  'groupLevel',
+  'groupStart',
+  'hidden',
+  'hookId',
+  'id',
+  'instrument',
+  'isCrossOriginLog',
+  'isStubbed',
+  'method',
+  'name',
+  'numElements',
+  'numResponses',
+  'referencesAlias',
+  'snapshot',
+  'state',
+  'status',
+  'testCurrentRetry',
+  'testId',
+  'timestamp',
+  'timeout',
+  'type',
+  'updatedAtTimestamp',
+  'visible',
+  'wallClockStartedAt',
+])
+
 let counter = 0
 
 export const LogUtils = {
-  // mutate attrs by nulling out
-  // object properties
   reduceMemory: (attrs) => {
-    return _.each(attrs, (value, key) => {
-      if (_.isObject(value)) {
-        attrs[key] = null
+    return _.each(attrs, (_value, key) => {
+      if (REDUCE_MEMORY_PRESERVED_KEYS.has(key)) {
+        return
       }
+
+      attrs[key] = null
     })
   },
 
   toSerializedJSON (attrs) {
     const { isDom } = $dom
+    // Every object seen during this call, not just the ancestors of the current
+    // value: re-walking an object on each path that reaches it is exponential
+    // in densely linked graphs. So any later reference, cyclic or not, is `null`.
+    const seen = new WeakSet<object>()
 
     const stringify = function (value, key) {
       if (BLACKLIST_PROPS.includes(key)) {
         return null
       }
 
-      if (_.isArray(value)) {
-        return _.map(value, stringify)
-      }
+      // Anything that throws, such as a getter or a revoked Proxy, becomes `null`
+      try {
+        if (isDom(value)) {
+          return $dom.stringify(value, 'short')
+        }
 
-      if (isDom(value)) {
-        return $dom.stringify(value, 'short')
-      }
+        if (_.isFunction(value) && groupsOrTableRe.test(key)) {
+          // Under another key, so a function that `groups` or `table` returns is not called in turn
+          return stringify(value(), '')
+        }
 
-      if (_.isFunction(value) && groupsOrTableRe.test(key)) {
-        return value()
-      }
+        if (_.isFunction(value) || _.isSymbol(value)) {
+          return value.toString()
+        }
 
-      if (_.isFunction(value) || _.isSymbol(value)) {
-        return value.toString()
-      }
+        if (!_.isObject(value)) {
+          return value
+        }
 
-      if (_.isObject(value)) {
-        // clone to nuke circular references
-        // and blow away anything that throws
-        try {
-          return _.mapValues(clone(value), stringify)
-        } catch (err) {
+        if (seen.has(value)) {
           return null
         }
-      }
 
-      return value
+        seen.add(value)
+
+        // `clone` copies a promise by subscribing to it, so a rejected one would
+        // reject its copy too, with nothing to handle it
+        if (value instanceof Promise) {
+          return {}
+        }
+
+        // A shallow clone picks which properties to keep (it skips getter-only
+        // ones on the prototype, which throw on objects like XMLHttpRequest) but
+        // leaves the children as the originals, so the check above sees them.
+        return _.isArray(value) ? _.map(value, stringify) : _.mapValues(clone(value, false, 1), stringify)
+      } catch (err) {
+        return null
+      }
     }
 
     return _.mapValues(attrs, stringify)
+  },
+
+  toSerializedConsoleProps (consoleProps, { full = false }: SerializeConsolePropsOptions = {}) {
+    return serializeConsolePropsValue(consoleProps, '', new WeakSet(), full, 0)
   },
 
   getDisplayProps: (attrs) => {
@@ -101,7 +363,7 @@ export const LogUtils = {
     return _
     .chain(tests)
     .flatMap((test) => test.prevAttempts ? [test, ...test.prevAttempts] : [test])
-    .flatMap<{id: string}>((tests) => [].concat(tests.agents, tests.routes, tests.commands))
+    .flatMap<{ id: string }>((tests) => [].concat(tests.agents, tests.routes, tests.commands))
     .compact()
     .union([{ id: '0' }])
     // id is a string in the form of 'log-origin-#', grab the number off the end.
@@ -179,29 +441,19 @@ const defaults = function (state: StateFunc, config, obj) {
 
   const runnable = state('runnable')
 
-  const getTestAttemptFromRunnable = (runnable) => {
-    if (!runnable) {
-      return
-    }
-
-    const t = $utils.getTestFromRunnable(runnable)
-
-    // @ts-ignore
-    return t._currentRetry || 0
-  }
-
   counter++
   _.defaults(obj, {
     isCrossOriginLog: Cypress.isCrossOriginSpecBridge,
     id: `log-${window.location.origin}-${counter}`,
     chainerId,
     state: 'pending',
+    defaultCollapsedState: 'open',
     hidden: false,
     instrument: 'command',
     url: state('url'),
     hookId: state('hookId'),
     testId: runnable ? runnable.id : undefined,
-    testCurrentRetry: getTestAttemptFromRunnable(state('runnable')),
+    testCurrentRetry: $utils.getTestAttemptFromRunnable(state('runnable')),
     viewportWidth: state('viewportWidth'),
     viewportHeight: state('viewportHeight'),
     referencesAlias: undefined,
@@ -239,7 +491,7 @@ const defaults = function (state: StateFunc, config, obj) {
 }
 
 export class Log {
-  createSnapshot: Function
+  createSnapshot: ISnapshots['createSnapshot']
   state: StateFunc
   config: any
   fireChangeEvent: DebouncedFunc<((log) => (void | undefined))>
@@ -255,14 +507,14 @@ export class Log {
     // only fire the log:state:changed event as fast as every 4ms
     this.fireChangeEvent = _.debounce(fireChangeEvent, 4)
 
-    if (config('protocolEnabled')) {
-      Cypress.on('test:after:run', () => {
+    if (state('isProtocolEnabled')) {
+      Cypress.once('test:after:run', () => {
         this.fireChangeEvent.flush()
       })
     }
   }
 
-  get (attr) {
+  get (attr?: string) {
     if (attr) {
       return this.attributes[attr]
     }
@@ -337,7 +589,7 @@ export class Log {
 
     // truncate message when log is hidden to prevent bloating memory
     // and the protocol database
-    if (obj.message && this.config('protocolEnabled') && isHiddenLog) {
+    if (obj.message && this.state('isProtocolEnabled') && isHiddenLog) {
       obj.message = $utils
       .stringify(obj.message)
       .substring(0, PROTOCOL_MESSAGE_TRUNCATION_LENGTH)
@@ -357,7 +609,7 @@ export class Log {
       this.wrapConsoleProps()
     }
 
-    if (obj.renderProps && _.isFunction(obj.renderProps) && isHiddenLog && this.config('protocolEnabled')) {
+    if (obj.renderProps && _.isFunction(obj.renderProps) && isHiddenLog && this.state('isProtocolEnabled')) {
       this.wrapRenderProps()
     }
 
@@ -395,14 +647,25 @@ export class Log {
   }
 
   snapshot (name?, options: any = {}) {
-    // bail early and don't snapshot if
-    // 1. we're a cross-origin log tracked on the primary origin (the log on that origin will send their snapshot!)
-    // 2. we're in headless mode
-    // 3. or we're not storing tests and the protocol is not enabled
-    if (
-      (!Cypress.isCrossOriginSpecBridge && this.get('isCrossOriginLog'))
-      || (!this.config('isInteractive')
-      || (this.config('numTestsKeptInMemory') === 0)) && !this.config('protocolEnabled')) {
+    // Take a snapshot only when something will consume it: command-log time-travel
+    // (interactive mode with tests retained in memory) or Test Replay capture.
+    // Cross-origin logs on the primary origin defer to the spec bridge origin.
+    const shouldDeferSnapshotToSpecBridge =
+      !Cypress.isCrossOriginSpecBridge && this.get('isCrossOriginLog')
+
+    const needsTimeTravelSnapshot =
+      this.config('isInteractive') && this.config('numTestsKeptInMemory') !== 0
+
+    // Protocol uses a portion of the snapshot for the replayed DOM.
+    // the command-log snapshot's `body`/`htmlAttrs` are dropped at ingestion
+    // via replacing `cy.createSnapshot` outright during consumption.
+    const needsProtocolSnapshot = this.state('isProtocolEnabled')
+
+    const shouldTakeSnapshot =
+      !shouldDeferSnapshotToSpecBridge
+      && (needsTimeTravelSnapshot || needsProtocolSnapshot)
+
+    if (!shouldTakeSnapshot) {
       return this
     }
 
@@ -411,7 +674,7 @@ export class Log {
       this.set('next', null)
     }
 
-    const snapshot = this.createSnapshot(name, this.get('$el'))
+    const snapshot = this.createSnapshot(name, this.get('$el'), undefined, this)
 
     this.addSnapshot(snapshot, options)
 
@@ -483,12 +746,29 @@ export class Log {
       return this.unset('$el')
     }
 
-    // make sure all $el elements are visible!
+    const numElements = $el.length
+
     return this.set({
       highlightAttr: HIGHLIGHT_ATTR,
-      numElements: $el.length,
-      visible: this.get('visible') ?? $el.length === $el.filter(':visible').length,
+      numElements,
+      visible: this.isVisible($el, numElements),
     })
+  }
+
+  private isVisible ($el: JQuery<Element>, numElements: number): boolean | undefined {
+    if (this.get('hidden')) {
+      return undefined
+    }
+
+    if (this.get('visible') !== undefined) {
+      return this.get('visible')
+    }
+
+    if (numElements <= MAX_VISIBILITY_CHECK_ELEMENTS) {
+      return numElements === $el.filter(':visible').length
+    }
+
+    return undefined
   }
 
   merge (log) {
@@ -535,28 +815,31 @@ export class Log {
   }
 
   wrapConsoleProps () {
-    const _this = this
+    // the wrapper passes its own `this` on to the original consoleProps, so it
+    // reads this log through these arrows
+    const get = (attr: string) => this.get(attr)
+    const getError = (err) => this.getError(err)
 
     const { consoleProps } = this.attributes
 
     this.attributes.consoleProps = function (...invokedArgs) {
       const consoleObj: Record<string, any> = {
-        name: _this.get('name'),
-        type: _this.get('event') ? 'event' : 'command',
+        name: get('name'),
+        type: get('event') ? 'event' : 'command',
       }
 
       // TODO: right here we need to automatically
       // merge in "Yielded + Element" if there is an $el
 
       // and finally add error if one exists
-      if (_this.get('error')) {
+      if (get('error')) {
         _.defaults(consoleObj, {
-          error: _this.getError(_this.get('error')),
+          error: getError(get('error')),
         })
       }
 
       // add note if no snapshot exists on command instruments
-      if ((_this.get('instrument') === 'command') && _this.get('snapshot') && !_this.get('snapshots')) {
+      if ((get('instrument') === 'command') && get('snapshot') && !get('snapshots')) {
         consoleObj.snapshot = 'The snapshot is missing. Displaying current state of the DOM.'
       } else {
         delete consoleObj.snapshot
@@ -569,7 +852,11 @@ export class Log {
       const expectedProperties = ['name', 'type', 'error', 'snapshot', 'args', 'groups', 'table', 'props']
       const expectedPropertiesObj = _.reduce(_.pick(consoleObjResult, expectedProperties), (memo, value, key) => {
         // don't include properties with undefined values
-        return value === undefined ? memo : _.extend(memo, { [key]: value })
+        if (value !== undefined) {
+          memo[key] = value
+        }
+
+        return memo
       }, consoleObj)
       // any other key/value pairs need to be added to the `props` property
       const rest = _.omit(consoleObjResult, expectedProperties)
@@ -659,7 +946,7 @@ class LogManager {
         $errUtils.throwErrByPath('log.invalid_argument', { args: { arg: options } })
       }
 
-      if (!config('protocolEnabled') && options.hidden !== undefined && options.hidden) {
+      if (!state('isProtocolEnabled') && options.hidden !== undefined && options.hidden) {
         return
       }
 

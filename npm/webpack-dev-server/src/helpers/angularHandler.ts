@@ -1,10 +1,9 @@
+import { createHash } from 'crypto'
 import * as fs from 'fs-extra'
-import { tmpdir } from 'os'
+import { tmpdir, platform } from 'os'
 import * as path from 'path'
-import { gte } from 'semver'
 import type { Configuration, RuleSetRule } from 'webpack'
 import type { PresetHandlerResult, WebpackDevServerConfig } from '../devServer'
-import { dynamicAbsoluteImport, dynamicImport } from '../dynamic-import'
 import { sourceDefaultWebpackDependencies } from './sourceRelativeWebpackModules'
 import debugLib from 'debug'
 import type { logging as AngularLogging } from '@angular-devkit/core'
@@ -14,7 +13,7 @@ const debug = debugLib(debugPrefix)
 
 export type BuildOptions = Record<string, any>
 
-export type AngularWebpackDevServerConfig = Extract<WebpackDevServerConfig, {framework: 'angular'}>
+export type AngularWebpackDevServerConfig = Extract<WebpackDevServerConfig, { framework: 'angular' }>
 
 type Configurations = {
   configurations?: {
@@ -22,7 +21,7 @@ type Configurations = {
   }
 }
 
-export type AngularJsonProjectConfig = {
+type AngularJsonProjectConfig = {
   projectType: string
   root: string
   sourceRoot: string
@@ -154,15 +153,18 @@ export async function generateTsConfig (devServerConfig: AngularWebpackDevServer
     include: includePaths,
   }, null, 2)
 
-  const tsConfigPath = path.join(await getTempDir(path.basename(projectRoot)), 'tsconfig.json')
+  const tsConfigPath = path.join(await getTempDir(path.basename(projectRoot), projectRoot), 'tsconfig.json')
 
   await fs.writeFile(tsConfigPath, tsConfigContent)
 
   return tsConfigPath
 }
 
-export async function getTempDir (projectName: string): Promise<string> {
-  const cypressTempDir = path.join(tmpdir(), 'cypress-angular-ct', projectName)
+export async function getTempDir (projectName: string, projectRoot?: string): Promise<string> {
+  const uniqueName = projectRoot
+    ? `${projectName}-${createHash('sha1').update(projectRoot).digest('hex').slice(0, 8)}`
+    : projectName
+  const cypressTempDir = path.join(tmpdir(), 'cypress-angular-ct', uniqueName)
 
   await fs.ensureDir(cypressTempDir)
 
@@ -170,22 +172,11 @@ export async function getTempDir (projectName: string): Promise<string> {
 }
 
 export async function getAngularCliModules (projectRoot: string) {
-  let angularVersion: string
-
-  try {
-    angularVersion = await getInstalledPackageVersion('@angular-devkit/core', projectRoot)
-  } catch {
-    throw new Error(`Could not resolve "@angular-devkit/core". Do you have it installed?`)
-  }
-
   const angularCLiModules = [
     '@angular-devkit/build-angular/src/utils/webpack-browser-config.js',
     // in Angular 16.1 the locations of these files below were changed
-    ...(
-      gte(angularVersion, '16.1.0')
-        ? ['@angular-devkit/build-angular/src/tools/webpack/configs/common.js', '@angular-devkit/build-angular/src/tools/webpack/configs/styles.js']
-        : ['@angular-devkit/build-angular/src/webpack/configs/common.js', '@angular-devkit/build-angular/src/webpack/configs/styles.js']
-    ),
+    '@angular-devkit/build-angular/src/tools/webpack/configs/common.js',
+    '@angular-devkit/build-angular/src/tools/webpack/configs/styles.js',
     '@angular-devkit/core/src/index.js',
   ] as const
 
@@ -194,13 +185,22 @@ export async function getAngularCliModules (projectRoot: string) {
     { getCommonConfig },
     { getStylesConfig },
     { logging },
-  ] = await Promise.all(angularCLiModules.map((dep) => {
+  ] = await Promise.all(angularCLiModules.map(async (dep) => {
     try {
-      const depPath = require.resolve(dep, { paths: [projectRoot] })
+      let depPath = require.resolve(dep, { paths: [projectRoot] })
+      // NOTE: @cypress/webpack-dev-server is a CJS package, but we need to import some ESM files and absolute imports.
+      // since import statements in TypeScript will get transpiled down to CommonJS require statements, we want to use tsx to leverage
+      // an ESM style import here, which supports CommonJS and ESM.
+      const { tsImport } = require('tsx/esm/api')
 
-      return dynamicAbsoluteImport(depPath)
+      // NOTE: on Windows, fully qualified paths (ex: C:\Users\username\project\blah) need to be prefixed with `file://` to be properly resolved.
+      depPath = platform() === 'win32' ? `file://${toPosix(depPath)}` : depPath
+
+      const module = await tsImport(depPath, __filename)
+
+      return module
     } catch (e) {
-      throw new Error(`Could not resolve "${dep}". Do you have "@angular-devkit/build-angular" and "@angular-devkit/core" installed?`)
+      throw new Error(`Could not resolve "${dep}". Do you have "@angular-devkit/build-angular" and "@angular-devkit/core" installed?`, { cause: e })
     }
   }))
 
@@ -212,17 +212,13 @@ export async function getAngularCliModules (projectRoot: string) {
   }
 }
 
-async function getInstalledPackageVersion (pkgName: string, projectRoot: string): Promise<string> {
-  const packageJsonPath = require.resolve(`${pkgName}/package.json`, { paths: [projectRoot] })
-  const { version } = JSON.parse(
-    await fs.readFile(packageJsonPath, { encoding: 'utf-8' }),
-  )
-
-  return version
-}
-
 export async function getAngularJson (projectRoot: string): Promise<AngularJson> {
-  const { findUp } = await dynamicImport<typeof import('find-up')>('find-up')
+  // NOTE: @cypress/webpack-dev-server is a CJS package, but find-up +6.0.0 is an ESM only package.
+  // In order to dynamically import the find-up package, we need to use tsx to do so until @cypress/webpack-dev-server is an ESM-only package,
+  // which would be a breaking change to @cypress/webpack-dev-server and cypress.
+  const { tsImport } = require('tsx/esm/api')
+
+  const { findUp } = await tsImport('find-up', __filename) as typeof import('find-up')
 
   const angularJsonPath = await findUp('angular.json', { cwd: projectRoot })
 
@@ -318,6 +314,14 @@ async function getAngularCliWebpackConfig (devServerConfig: AngularWebpackDevSer
       return [getCommonConfig(wco), stylesConfig]
     },
   )
+
+  // @see https://github.com/cypress-io/cypress/issues/26456
+  // if verbose is not set, we set the stats to errors-only
+  // users can either override this stat by passing in a custom webpack config
+  // or by setting the verbose option to true
+  if (!buildOptions.verbose) {
+    config.stats = 'errors-only'
+  }
 
   delete config.entry.main
 

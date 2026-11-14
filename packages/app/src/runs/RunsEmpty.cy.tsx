@@ -1,5 +1,4 @@
 import RunsEmpty from './RunsEmpty.vue'
-import { defaultMessages } from '@cy/i18n'
 
 describe('RunsEmpty', () => {
   it('renders expected content', () => {
@@ -10,7 +9,7 @@ describe('RunsEmpty', () => {
       title: 'project_title',
     } as any
 
-    cy.contains(defaultMessages.runs.empty.title).should('be.visible')
+    cy.contains('Copy the command below to record your first run').should('be.visible')
     cy.findByDisplayValue('npx cypress run --record --key 2aaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa').should('be.visible')
   })
 })

@@ -8,7 +8,9 @@ export const root = _path.join(__dirname, '..')
 
 const serverRoot = _path.join(__dirname, '../../packages/server/')
 
-export { fixtureDirs, ProjectFixtureDir } from './fixtureDirs'
+export { fixtureDirs } from './fixtureDirs'
+
+export type { ProjectFixtureDir } from './fixtureDirs'
 
 export const projects = _path.join(root, 'projects')
 
@@ -18,8 +20,15 @@ export const cyTmpDir = _path.join(tempDir, 'cy-projects')
 
 const projectFixtureDirs = fs.readdirSync(projectFixtures, { withFileTypes: true }).filter((f) => f.isDirectory()).map((f) => f.name)
 
-const safeRemove = (path) => {
+const safeRemove = (path: string) => {
   try {
+    // fs-extra's lstat-based removeSync unlinks junctions/symlinks instead of
+    // recursing into them. Native fs.rmSync must not be used here: under
+    // Electron's libc++-built Node 24+, std::filesystem::remove_all classifies
+    // Windows junctions (created when scaffolding project node_modules) as
+    // plain directories and deletes their target contents — including the
+    // monorepo dirs they point to. removeSync also retries transient Windows
+    // races (ENOTEMPTY/EBUSY/EPERM) internally.
     fs.removeSync(path)
   } catch (_err) {
     const err = _err as NodeJS.ErrnoException
@@ -37,7 +46,7 @@ const safeRemove = (path) => {
 
 // copy contents instead of deleting+creating new file, which can cause
 // filewatchers to lose track of toFile.
-const copyContents = (fromFile, toFile) => {
+const copyContents = (fromFile: string, toFile: string) => {
   return Promise.all([
     fs.open(toFile, 'w'),
     fs.readFile(fromFile),
@@ -53,6 +62,27 @@ const copyContents = (fromFile, toFile) => {
 // copies all of the project fixtures
 // to the cyTmpDir .projects in the root
 export function scaffold () {
+  // Prevent copying directory into itself
+  const resolvedProjects = _path.resolve(projects)
+  const resolvedCyTmpDir = _path.resolve(cyTmpDir)
+
+  if (resolvedProjects === resolvedCyTmpDir ||
+      resolvedCyTmpDir.startsWith(resolvedProjects + _path.sep) ||
+      resolvedProjects.startsWith(resolvedCyTmpDir + _path.sep)) {
+    throw new Error(`Cannot copy directory into itself: projects=${projects}, cyTmpDir=${cyTmpDir}`)
+  }
+
+  // Ensure temp directory is clean before copying
+  try {
+    fs.removeSync(cyTmpDir)
+  } catch (err) {
+    // Ignore errors if directory doesn't exist
+  }
+
+  // Create temp directory if it doesn't exist
+  fs.ensureDirSync(cyTmpDir)
+
+  // Copy projects to temp directory
   fs.copySync(projects, cyTmpDir)
 }
 
@@ -77,9 +107,10 @@ export async function scaffoldProject (project: ProjectFixtureDir): Promise<stri
 
       await fs.copy(_path.join(projectFixtures, fixtureDir), to, { overwrite: false })
     }
-  } catch (e) {
-    if (e.code !== 'MODULE_NOT_FOUND') {
-      throw e
+  } catch (err) {
+    // Jest's resolver throws this from another realm, where `instanceof Error` is false
+    if (!(typeof err === 'object' && err !== null && 'code' in err && err.code === 'MODULE_NOT_FOUND')) {
+      throw err
     }
   }
 
@@ -131,7 +162,7 @@ export function projectPath (name: ProjectFixtureDir) {
   return _path.join(cyTmpDir, name)
 }
 
-export function get (fixture, encoding: BufferEncoding = 'utf8') {
+export function get (fixture: string, encoding: BufferEncoding = 'utf8') {
   return fs.readFileSync(_path.join(serverRoot, 'test', 'support', 'fixtures', fixture), { encoding })
 }
 

@@ -1,11 +1,80 @@
 import Bluebird from 'bluebird'
 import Debug from 'debug'
 import _ from 'lodash'
-import * as events from 'events'
+import semverLt from 'semver/functions/lt'
+import semverValid from 'semver/functions/valid'
+import type * as events from 'events'
 import * as path from 'path'
 import webpack from 'webpack'
 import utils from './lib/utils'
+import { getResolvedTypescriptVersion } from './lib/get-typescript'
 import { overrideSourceMaps } from './lib/typescript-overrides'
+
+const getTsLoaderIfExists = (rules) => {
+  let tsLoaderRule
+
+  rules.some((rule) => {
+    if (!rule.use && !rule.loader) return false
+
+    if (Array.isArray(rule.use)) {
+      const foundRule = rule.use.find((use) => {
+        return use.loader && use.loader.match(/(^|[^a-zA-Z])ts-loader([^a-zA-Z]|$)/)
+      })
+
+      /**
+       * If the rule is found, it will look like this:
+       * rules: [
+       *  {
+       *    test: /\.tsx?$/,
+       *    exclude: [/node_modules/],
+       *    use: [{
+       *      loader: 'ts-loader'
+       *    }]
+       *  }
+       * ]
+       */
+      tsLoaderRule = foundRule
+
+      return tsLoaderRule
+    }
+
+    if (_.isObject(rule.use) && rule.use.loader && rule.use.loader.match(/(^|[^a-zA-Z])ts-loader([^a-zA-Z]|$)/)) {
+      /**
+       * If the rule is found, it will look like this:
+       * rules: [
+       *  {
+       *    test: /\.tsx?$/,
+       *    exclude: [/node_modules/],
+       *    use: {
+       *      loader: 'ts-loader'
+       *    }
+       *  }
+       * ]
+       */
+      tsLoaderRule = rule.use
+
+      return tsLoaderRule
+    }
+
+    tsLoaderRule = rules.find((rule) => {
+      /**
+       * If the rule is found, it will look like this:
+       * rules: [
+       *  {
+       *    test: /\.tsx?$/,
+       *    exclude: [/node_modules/],
+       *    loader: 'ts-loader'
+       *  }
+       * ]
+       */
+      return rule.loader && rule.loader.match(/(^|[^a-zA-Z])ts-loader([^a-zA-Z]|$)/)
+    })
+
+    return tsLoaderRule
+  })
+
+  return tsLoaderRule
+}
 
 const debug = Debug('cypress:webpack')
 const debugStats = Debug('cypress:webpack:stats')
@@ -18,7 +87,7 @@ interface BundleObject {
 }
 
 // bundle promises from input spec filename to output bundled file paths
-let bundles: {[key: string]: BundleObject} = {}
+let bundles: { [key: string]: BundleObject } = {}
 
 // we don't automatically load the rules, so that the babel dependencies are
 // not required if a user passes in their own configuration
@@ -99,7 +168,7 @@ const quietErrorMessage = (err: Error) => {
  */
 interface PreprocessorOptions {
   webpackOptions?: webpack.Configuration
-  watchOptions?: Object
+  watchOptions?: object
   typescript?: string
   additionalEntries?: string[]
 }
@@ -116,7 +185,7 @@ interface FileEvent extends events.EventEmitter {
  */
 type FilePreprocessor = (file: FileEvent) => Bluebird<FilePath>
 
-type WebpackPreprocessorFn = (options: PreprocessorOptions) => FilePreprocessor
+type WebpackPreprocessorFn = (options?: PreprocessorOptions) => FilePreprocessor
 
 /**
  * Cypress file preprocessor that can bundle specs
@@ -139,6 +208,12 @@ interface WebpackPreprocessor extends WebpackPreprocessorFn {
    * @memberof WebpackPreprocessor
    */
   defaultOptions: Omit<PreprocessorOptions, 'additionalEntries'>
+
+  /**
+   * Resolves the TypeScript package version used for ts-loader (project or explicit path).
+   * @param typescriptPath - Optional path to the `typescript` module (same as the preprocessor `typescript` option).
+   */
+  getResolvedTypescriptVersion: (typescriptPath?: string) => string | null
 }
 
 /**
@@ -149,8 +224,8 @@ interface WebpackPreprocessor extends WebpackPreprocessorFn {
   on('file:preprocessor', webpackPreprocessor(options))
   ```
  */
-// @ts-ignore
-const preprocessor: WebpackPreprocessor = (options: PreprocessorOptions = {}): FilePreprocessor => {
+// @ts-expect-error - `defaultOptions` is defined below with `Object.defineProperty`, and `options?` with a default initializer is TS1015
+const preprocessor: WebpackPreprocessor = (options?: PreprocessorOptions = {}): FilePreprocessor => {
   debug('user options: %o', options)
 
   // we return function that accepts the arguments provided by
@@ -209,6 +284,50 @@ const preprocessor: WebpackPreprocessor = (options: PreprocessorOptions = {}): F
       },
     })
     .tap((opts) => {
+      try {
+        const tsLoaderRule = getTsLoaderIfExists(opts?.module?.rules)
+
+        if (!tsLoaderRule) {
+          debug('ts-loader not detected')
+
+          return
+        }
+
+        // FIXME: To prevent disruption, we are only passing in a subset of options to ts-loader.
+        // We will be passing in the entire compilerOptions object from the tsconfig.json in Cypress 15.
+        // @see https://github.com/cypress-io/cypress/issues/29614#issuecomment-2722071332
+        // @see https://github.com/cypress-io/cypress/issues/31282
+        // Cypress ALWAYS wants sourceMap set to true, regardless of the user configuration.
+        // This is because we want to display a correct code frame in the test runner.
+        tsLoaderRule.options = tsLoaderRule?.options || {}
+        tsLoaderRule.options.compilerOptions = tsLoaderRule.options?.compilerOptions || {}
+
+        const tsVersion = getResolvedTypescriptVersion(options.typescript)
+        const isTypescriptBelow6 = Boolean(
+          tsVersion && semverValid(tsVersion) && semverLt(tsVersion, '6.0.0-0'),
+        )
+
+        debug(
+          `ts-loader detected: overriding tsconfig to use sourceMap:true, inlineSourceMap:false, inlineSources:false${
+            isTypescriptBelow6
+              ? ', downlevelIteration:true'
+              : ''
+          } (TypeScript ${tsVersion ?? 'version unknown'})`,
+        )
+
+        tsLoaderRule.options.compilerOptions.sourceMap = true
+        tsLoaderRule.options.compilerOptions.inlineSourceMap = false
+        tsLoaderRule.options.compilerOptions.inlineSources = false
+        if (isTypescriptBelow6) {
+          tsLoaderRule.options.compilerOptions.downlevelIteration = true
+        }
+      } catch (e) {
+        debug('ts-loader not detected', e)
+
+        return
+      }
+    })
+    .tap((opts) => {
       if (opts.devtool === false) {
         // disable any overrides if we've explicitly turned off sourcemaps
         overrideSourceMaps(false, options.typescript)
@@ -238,7 +357,7 @@ const preprocessor: WebpackPreprocessor = (options: PreprocessorOptions = {}): F
 
     const compiler = webpack(webpackOptions)
 
-    let firstBundle = utils.createDeferred<string>()
+    const firstBundle = utils.createDeferred<string>()
 
     // cache the bundle promise, so it can be returned if this function
     // is invoked again with the same filePath
@@ -252,7 +371,7 @@ const preprocessor: WebpackPreprocessor = (options: PreprocessorOptions = {}): F
     const rejectWithErr = (err: Error) => {
       err = quietErrorMessage(err)
 
-      // @ts-ignore
+      // @ts-expect-error - `filePath` is not on `Error`; Cypress reads it to report which spec failed
       err.filePath = filePath
 
       debug(`errored bundling ${outputPath}`, err.message)
@@ -362,12 +481,9 @@ const preprocessor: WebpackPreprocessor = (options: PreprocessorOptions = {}): F
     // to rerun the tests
     if (file.shouldWatch) {
       if (compiler.hooks) {
-        // TODO compile.tap takes "string | Tap"
-        // so seems we just need to pass plugin.name
-        // @ts-ignore
         compiler.hooks.compile.tap(plugin, onCompile)
       } else if ('plugin' in compiler) {
-        // @ts-ignore
+        // @ts-expect-error - `plugin` is the webpack 3 API, which webpack 5 types do not declare
         compiler.plugin('compile', onCompile)
       }
     }
@@ -394,6 +510,8 @@ const preprocessor: WebpackPreprocessor = (options: PreprocessorOptions = {}): F
   }
 }
 
+preprocessor.getResolvedTypescriptVersion = getResolvedTypescriptVersion
+
 // provide a clone of the default options
 Object.defineProperty(preprocessor, 'defaultOptions', {
   get () {
@@ -407,23 +525,22 @@ Object.defineProperty(preprocessor, 'defaultOptions', {
 })
 
 // for testing purposes, but do not add this to the typescript interface
-// @ts-ignore
+// @ts-expect-error - `__reset` is deliberately left off `WebpackPreprocessor`
 preprocessor.__reset = () => {
   bundles = {}
 }
 
 // for testing purposes, but do not add this to the typescript interface
-// @ts-ignore
+// @ts-expect-error - `__bundles` is deliberately left off `WebpackPreprocessor`
 preprocessor.__bundles = () => {
   return bundles
 }
 
-// @ts-ignore - webpack.StatsError is unique to webpack 5
-// TODO: Remove this when we update to webpack 5.
 function cleanseError (err: string | webpack.StatsError) {
-  let msg = typeof err === 'string' ? err : err.message
+  const msg = typeof err === 'string' ? err : err.message
 
   return msg.replace(/\n\s*at.*/g, '').replace(/From previous event:\n?/g, '')
 }
 
+// NOTE: needs to be changed to support ESM when the time comes, but will be considered a breaking change.
 export = preprocessor

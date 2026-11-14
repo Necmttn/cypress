@@ -1,59 +1,66 @@
 const { $, _, Promise } = Cypress
 
-export const getCommandLogWithText = (command, type = 'method') => {
+// the reporter renders inside a same-origin iframe in the runner UI, so
+// reporter queries must target that document
+const getReporterDocument = () => {
+  return top!.document.querySelector<HTMLIFrameElement>('#reporter-frame')!.contentDocument!
+}
+
+export const getCommandLogWithText = (command, type?) => {
+  if (!type) {
+    type = 'method'
+  }
+
   // Open current test if not already open, so we can find the command log
-  cy.$$('.runnable-active .collapsible:not(.is-open) .collapsible-header', top?.document).click()
+  cy.$$('.runnable-active .collapsible:not(.is-open) .collapsible-header', getReporterDocument()).click()
 
   return cy
-  .$$(`.runnable-active .command-${type}:contains(${command})`, top?.document)
+  .$$(`.test.runnable-active .command-${type}:contains(${command})`, getReporterDocument())
   .closest('.command')
 }
 
-export const findReactInstance = function (dom) {
-  let key = _.keys(dom).find((key) => key.startsWith('__reactInternalInstance$')) as string
-  let internalInstance = dom[key]
+// This work around is super hacky to get the appState from the Test Mobx Observable Model
+// this is needed to pause the runner to assert on the test
+export const findAppStateFromTest = function (dom) {
+  const key = _.keys(dom).find((key) => key.startsWith('__reactFiber')) as string
+  const internalInstance = dom[key]
 
   if (internalInstance == null) return null
 
   return internalInstance._debugOwner
-    ? internalInstance._debugOwner.stateNode
-    : internalInstance.return.stateNode
+    ? internalInstance._debugOwner.memoizedProps.model.store.appState
+    : internalInstance.return.memoizedProps.model.store.appState
 }
 
-export const clickCommandLog = (sel, type) => {
-  return cy.wait(10)
+export const clickCommandLog = (sel, type?) => {
+  // trigger the LONG_RUNNING_THRESHOLD to display the command line
+  // this adds time to test but makes a more accurate test as React 18+ does not rerender when setting internals
+  // eslint-disable-next-line cypress/no-unnecessary-waiting -- LONG_RUNNING_THRESHOLD has to pass before the command shows in the log
+  return cy.wait(2000)
   .then(() => {
-    return withMutableReporterState(() => {
-      const commandLogEl = getCommandLogWithText(sel, type)
-      const reactCommandInstance = findReactInstance(commandLogEl[0])
+    const commandLogEl = getCommandLogWithText(sel, type)
 
-      if (!reactCommandInstance) {
-        assert(false, 'failed to get command log React instance')
-      }
+    const activeTestEl = commandLogEl[0].closest('li.test.runnable.runnable-active')
 
-      reactCommandInstance.props.appState.isRunning = false
-      const inner = $(commandLogEl).find('.command-wrapper-text')
+    // We are manually manipulating the state of the appState to stop the runner.
+    // This does NOT happen in the wild and is only for testing purposes.
+    const appStateInstance = findAppStateFromTest(activeTestEl)
 
-      inner.get(0).click()
+    if (!appStateInstance) {
+      assert(false, 'failed to get command log React instance')
+    }
 
+    // forces the runner off (NOTE: this will break auto scrolling in open mode for tests that use this helper specifically)
+    appStateInstance.isRunning = false
+    const inner = $(commandLogEl).find('.command-wrapper-text')
+
+    inner.get(0).click()
+
+    // retry until the reporter repaints
+    cy.wrap(null, { log: false }).should(() => {
       // make sure command was pinned, otherwise throw a better error message
-      expect(cy.$$('.runnable-active .command-pin', top?.document).length, 'command should be pinned').ok
+      expect(cy.$$('.runnable-active .command-pin', getReporterDocument()).length, 'command should be pinned').ok
     })
-  })
-}
-
-export const withMutableReporterState = (fn) => {
-  // @ts-ignore
-  top?.UnifiedRunner.MobX.configure({ enforceActions: 'never' })
-
-  const currentTestLog = findReactInstance(cy.$$('.runnable-active', top?.document)[0])
-
-  currentTestLog.props.model._isOpen = true
-
-  return Promise.try(fn)
-  .then(() => {
-    // @ts-ignore
-    top?.UnifiedRunner.MobX.configure({ enforceActions: 'always' })
   })
 }
 
@@ -123,21 +130,41 @@ export const keyEvents = [
   'textInput',
 ]
 
+export const mouseClickEvents = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']
+
+export const mouseHoverEvents = [
+  'pointerout',
+  'pointerleave',
+  'pointerover',
+  'pointerenter',
+  'mouseout',
+  'mouseleave',
+  'mouseover',
+  'mouseenter',
+  'pointermove',
+  'mousemove',
+]
+
+export const focusEvents = ['focus', 'focusin']
+
 export const attachKeyListeners = attachListeners(keyEvents)
+
+export const attachFocusListeners = attachListeners(focusEvents)
+
+export const attachMouseClickListeners = attachListeners(mouseClickEvents)
+
+export const attachMouseHoverListeners = attachListeners(mouseHoverEvents)
+
+// Browser detection utilities
+export const isFirefox = Cypress.isBrowser('firefox')
+
+export const isWebKit = Cypress.isBrowser('webkit')
 
 // trim new lines at the end of innerText
 // due to changing browser versions implementing
 // this differently
 export const trimInnerText = ($el) => {
   return _.trimEnd($el.get(0).innerText, '\n')
-}
-
-export const expectCaret = (start, end) => {
-  return ($el) => {
-    end = end == null ? start : end
-    // @ts-ignore
-    expect(Cypress.dom.getSelectionBounds($el.get(0))).to.deep.eq({ start, end })
-  }
 }
 
 export const makeRequestForCookieBehaviorTests = (
@@ -154,7 +181,7 @@ export const makeRequestForCookieBehaviorTests = (
   }
 
   return new Promise<void>((resolve, reject) => {
-    let xhr = new XMLHttpRequest()
+    const xhr = new XMLHttpRequest()
 
     xhr.open('GET', url)
     xhr.withCredentials = Cypress._.isBoolean(credentials) ? credentials : false
@@ -171,7 +198,6 @@ export const makeRequestForCookieBehaviorTests = (
 }
 
 function runCommands () {
-  cy.exec('echo "hello"')
   cy.readFile('cypress/fixtures/app.json')
   cy.writeFile('cypress/_test-output/written.json', 'contents')
   cy.task('return:arg', 'arg')

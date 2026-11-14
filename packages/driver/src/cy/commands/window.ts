@@ -3,6 +3,7 @@ import Promise from 'bluebird'
 
 import $errUtils from '../../cypress/error_utils'
 import type { Log } from '../../cypress/log'
+import { getTitleFromAutomation } from './helpers/window'
 
 const viewports = {
   'macbook-16': '1536x960',
@@ -38,6 +39,12 @@ let currentViewport: CurrentViewport | null = null
 
 interface InternalViewportOptions extends Partial<Cypress.Loggable> {
   _log?: Log
+}
+
+export function getTitleQueryCommand (Cypress: Cypress.Cypress, options: Partial<Cypress.Loggable & Cypress.Timeoutable> = {}) {
+  Cypress.log({ timeout: options.timeout, hidden: options.log === false })
+
+  return getTitleFromAutomation.bind(this)(Cypress, options)
 }
 
 export default (Commands, Cypress, cy, state) => {
@@ -88,14 +95,12 @@ export default (Commands, Cypress, cy, state) => {
     })
   }
 
-  Commands.addQuery('title', function title (options: Partial<Cypress.Loggable & Cypress.Timeoutable> = {}) {
-    this.set('timeout', options.timeout)
-    Cypress.log({ timeout: options.timeout, hidden: options.log === false })
-
-    return () => (state('document')?.title || '')
+  Commands.addQuery('title', function (options: Partial<Cypress.Loggable & Cypress.Timeoutable> = {}) {
+    return getTitleQueryCommand.call(this, Cypress, options)
   })
 
   Commands.addQuery('window', function windowFn (options: Partial<Cypress.Loggable & Cypress.Timeoutable> = {}) {
+    // Make sure the window command can communicate with the AUT.
     this.set('timeout', options.timeout)
     Cypress.log({
       hidden: options.log === false,
@@ -114,6 +119,8 @@ export default (Commands, Cypress, cy, state) => {
   })
 
   Commands.addQuery('document', function documentFn (options: Partial<Cypress.Loggable & Cypress.Timeoutable> = {}) {
+    // Make sure the document command can communicate with the AUT.
+    Cypress.ensure.commandCanCommunicateWithAUT(cy)
     this.set('timeout', options.timeout)
     Cypress.log({
       hidden: options.log === false,

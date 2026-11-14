@@ -9,16 +9,15 @@ describe('Spec List - Last updated with git info', () => {
       cy.openProject('cypress-in-cypress')
       cy.startAppServer('e2e')
       cy.visitApp()
+      cy.specsPageIsVisible()
     })
   })
 
   it('shows correct git icons', () => {
-    cy.wait(500)
-
     // foo.spec.js is newly created, not yet committed
-    // this is performed by the task `initGitRepoForTestProject`
-
-    cy.get('[data-cy-row="foo.spec.js"] [data-cy="git-info-row"] svg')
+    // this is performed by the task `initGitRepoForTestProject`, and git status
+    // for the freshly initialized repo can take a while to arrive
+    cy.get('[data-cy-row="foo.spec.js"] [data-cy="git-info-row"] svg', { timeout: 10000 })
     .should('have.class', 'icon-light-jade-50')
 
     cy.get('[data-cy-row="foo.spec.js"] [data-cy="git-info-row"] svg')
@@ -60,7 +59,6 @@ describe('Spec List - Last updated with git info', () => {
       )
     })
 
-    cy.wait(500)
     // should update via GraphQL subscription, now the status is modified.
     cy.get('[data-cy-row="dom-container.spec.js"] [data-cy="git-info-row"] svg')
     .should('have.class', 'icon-light-orange-50')
@@ -80,6 +78,7 @@ describe('Spec List - Last updated with git info', () => {
       )
     })
 
+    // eslint-disable-next-line cypress/no-unnecessary-waiting -- the status is asserted not to change, so give the git watcher time to report first
     cy.wait(500)
 
     // even if a created file is updated, the status should stay created
@@ -94,8 +93,6 @@ describe('Spec List - Last updated with git info', () => {
     .trigger('mouseleave')
 
     cy.task('resetGitRepoForTestProject', projectRoot)
-
-    cy.wait(500)
 
     cy.get('[data-cy-row="dom-container.spec.js"] [data-cy="git-info-row"] svg')
     .should('have.class', 'icon-light-gray-500')

@@ -133,7 +133,14 @@ context('cy.origin actions', { browser: '!webkit' }, () => {
 
     cy.origin('http://www.foobar.com:3500', () => {
       cy.get('#scroll-into-view-vertical h5')
-      .should('not.be.visible')
+      .then(($el) => {
+        // Before scrolling, the heading is below the scroll container's
+        // visible area. The modern visibility algorithm no longer reports
+        // scroll-clipped elements as hidden, so assert the geometry directly.
+        const container = $el[0].closest('#scroll-into-view-vertical') as HTMLElement
+
+        expect($el[0].getBoundingClientRect().top).to.be.greaterThan(container.getBoundingClientRect().bottom)
+      })
       .scrollIntoView().should('be.visible')
     })
   })
@@ -142,7 +149,12 @@ context('cy.origin actions', { browser: '!webkit' }, () => {
     cy.get('a[data-cy="scrolling-link"]').click()
 
     cy.origin('http://www.foobar.com:3500', () => {
-      cy.get('#scroll-into-view-vertical h5').should('not.be.visible')
+      cy.get('#scroll-into-view-vertical h5').then(($el) => {
+        const container = $el[0].closest('#scroll-into-view-vertical') as HTMLElement
+
+        expect($el[0].getBoundingClientRect().top).to.be.greaterThan(container.getBoundingClientRect().bottom)
+      })
+
       cy.get('#scroll-into-view-vertical').scrollTo(0, 300)
       cy.get('#scroll-into-view-vertical h5').should('be.visible')
     })
@@ -188,24 +200,114 @@ context('cy.origin actions', { browser: '!webkit' }, () => {
     })
   })
 
+  // With Cypress 15, window() will work always without cy.origin().
+  // However, users may not have access to the AUT window object, so cy.window() yielded window objects
+  // may return cross-origin errors.
+  context('cross-origin AUT commands working with cy.origin()', () => {
+    it('.window()', (done) => {
+      cy.get('a[data-cy="dom-link"]').click()
+      cy.window().then((win) => {
+        // The window is in a cross-origin state, but users are able to yield the command
+        // as well as basic accessible properties
+        expect(win.length).to.equal(2)
+        try {
+          // but cannot access cross-origin properties
+          // eslint-disable-next-line chai-friendly/no-unused-expressions -- the catch block asserts on the error
+          win[0].location.href
+        } catch (e) {
+          expect(e.name).to.equal('SecurityError')
+          if (Cypress.isBrowser('firefox')) {
+            expect(e.message).to.include('Permission denied to get property "href" on cross-origin object')
+          } else {
+            expect(e.message).to.include('Blocked a frame with origin "http://localhost:3500" from accessing a cross-origin frame.')
+          }
+
+          done()
+        }
+      })
+    })
+
+    it('.reload()', () => {
+      cy.get('a[data-cy="dom-link"]').click()
+      cy.reload()
+    })
+
+    it('.url()', () => {
+      cy.get('a[data-cy="dom-link"]').click()
+      cy.url().then((url) => {
+        expect(url).to.equal('http://www.foobar.com:3500/fixtures/dom.html')
+      })
+    })
+
+    it('.hash()', () => {
+      cy.get('a[data-cy="dom-link"]').click()
+      cy.hash().then((hash) => {
+        expect(hash).to.equal('')
+      })
+    })
+
+    it('.location()', () => {
+      cy.get('a[data-cy="dom-link"]').click()
+      cy.location().then((loc) => {
+        expect(loc.href).to.equal('http://www.foobar.com:3500/fixtures/dom.html')
+      })
+    })
+
+    it('.title()', () => {
+      cy.get('a[data-cy="dom-link"]').click()
+      cy.title().then((title) => {
+        expect(title).to.equal('DOM Fixture')
+      })
+    })
+
+    it('.go()', () => {
+      cy.get('a[data-cy="dom-link"]').click()
+      cy.go('back')
+      cy.url().should('contain', '/fixtures/primary-origin.html')
+    })
+  })
+
   context('cross-origin AUT errors', () => {
     // We only need to check .get here because the other commands are chained off of it.
+    // the exceptions are document() and scrollTo()
+    const assertOriginFailure = (err: Error, done: () => void) => {
+      expect(err.message).to.include(`The command was expected to run against origin \`http://localhost:3500\` but the application is at origin \`http://www.foobar.com:3500\`.`)
+      expect(err.message).to.include(`This commonly happens when you have either not navigated to the expected origin or have navigated away unexpectedly.`)
+      expect(err.message).to.include(`Use \`cy.origin()\` to wrap the commands run on \`http://www.foobar.com:3500\`.`)
+      expect(err.message).to.include(`cy.origin('http://www.foobar.com:3500', () => {\`\n\`  <commands targeting http://www.foobar.com:3500 go here>\`\n\`})`)
+
+      //  make sure that the secondary origin failures do NOT show up as spec failures or AUT failures
+      expect(err.message).not.to.include(`The following error originated from your test code, not from Cypress`)
+      expect(err.message).not.to.include(`The following error originated from your application code, not from Cypress`)
+      done()
+    }
+
     it('.get()', { defaultCommandTimeout: 50 }, (done) => {
       cy.on('fail', (err) => {
         expect(err.message).to.include(`Timed out retrying after 50ms:`)
-        expect(err.message).to.include(`The command was expected to run against origin \`http://localhost:3500\` but the application is at origin \`http://www.foobar.com:3500\`.`)
-        expect(err.message).to.include(`This commonly happens when you have either not navigated to the expected origin or have navigated away unexpectedly.`)
-        expect(err.message).to.include(`Using \`cy.origin()\` to wrap the commands run on \`http://www.foobar.com:3500\` will likely fix this issue.`)
-        expect(err.message).to.include(`cy.origin('http://www.foobar.com:3500', () => {\`\n\`  <commands targeting http://www.foobar.com:3500 go here>\`\n\`})`)
-
-        //  make sure that the secondary origin failures do NOT show up as spec failures or AUT failures
-        expect(err.message).not.to.include(`The following error originated from your test code, not from Cypress`)
-        expect(err.message).not.to.include(`The following error originated from your application code, not from Cypress`)
-        done()
+        assertOriginFailure(err, done)
       })
 
       cy.get('a[data-cy="dom-link"]').click()
       cy.get('#button')
+    })
+
+    it('.document()', (done) => {
+      cy.on('fail', (err) => {
+        assertOriginFailure(err, done)
+      })
+
+      cy.get('a[data-cy="dom-link"]').click()
+      cy.document()
+    })
+
+    it('.scrollTo()', (done) => {
+      cy.on('fail', (err) => {
+        assertOriginFailure(err, done)
+      })
+
+      cy.get('a[data-cy="dom-link"]').click()
+      cy.scrollTo('bottom')
     })
   })
 
@@ -749,7 +851,11 @@ context('cy.origin actions', { browser: '!webkit' }, () => {
       cy.origin('http://www.foobar.com:3500', () => {
         // FIXME: snapshot of primary is showing for scrollIntoView
         cy.get('#scroll-into-view-vertical h5')
-        .should('not.be.visible')
+        .then(($el) => {
+          const container = $el[0].closest('#scroll-into-view-vertical') as HTMLElement
+
+          expect($el[0].getBoundingClientRect().top).to.be.greaterThan(container.getBoundingClientRect().bottom)
+        })
         .scrollIntoView()
       })
 
@@ -776,7 +882,12 @@ context('cy.origin actions', { browser: '!webkit' }, () => {
       cy.get('a[data-cy="scrolling-link"]').click()
 
       cy.origin('http://www.foobar.com:3500', () => {
-        cy.get('#scroll-into-view-vertical h5').should('not.be.visible')
+        cy.get('#scroll-into-view-vertical h5').then(($el) => {
+          const container = $el[0].closest('#scroll-into-view-vertical') as HTMLElement
+
+          expect($el[0].getBoundingClientRect().top).to.be.greaterThan(container.getBoundingClientRect().bottom)
+        })
+
         cy.get('#scroll-into-view-vertical').scrollTo(0, 300)
       })
 

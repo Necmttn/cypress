@@ -1,10 +1,12 @@
 import _ from 'lodash'
-import { action, computed, observable } from 'mobx'
+import { action, computed, observable, makeObservable } from 'mobx'
 
-import Err, { ErrProps } from '../errors/err-model'
-import Instrument, { InstrumentProps } from '../instruments/instrument-model'
+import type { ErrProps } from '../errors/err-model'
+import Err from '../errors/err-model'
+import type { InstrumentProps } from '../instruments/instrument-model'
+import Instrument from '../instruments/instrument-model'
 import type { TimeoutID } from '../lib/types'
-import { SessionProps } from '../sessions/sessions-model'
+import type { SessionProps } from '../sessions/sessions-model'
 
 const LONG_RUNNING_THRESHOLD = 1000
 
@@ -21,6 +23,7 @@ export interface RenderProps {
   }>
   status?: InterceptStatuses | XHRStatuses
   wentToOrigin?: boolean
+  selfHealed?: boolean
 }
 
 export interface CommandProps extends InstrumentProps {
@@ -34,7 +37,6 @@ export interface CommandProps extends InstrumentProps {
   visible?: boolean
   wallClockStartedAt?: string
   hookId: string
-  isStudio?: boolean
   group?: number
   groupLevel?: number
   hasSnapshot?: boolean
@@ -42,29 +44,28 @@ export interface CommandProps extends InstrumentProps {
 }
 
 export default class Command extends Instrument {
-  @observable.struct renderProps: RenderProps = {}
-  @observable.struct sessionInfo?: SessionProps['sessionInfo']
-  @observable err?: Err
-  @observable event?: boolean = false
-  @observable isLongRunning = false
-  @observable number?: number
-  @observable numElements: number
-  @observable timeout?: number
-  @observable visible?: boolean
-  @observable wallClockStartedAt?: string
-  @observable children: Array<Command> = []
-  @observable hookId: string
-  @observable isStudio: boolean
-  @observable group?: number
-  @observable groupLevel?: number
-  @observable hasSnapshot?: boolean
-  @observable hasConsoleProps?: boolean
-  @observable _isOpen: boolean|null = null
+  renderProps: RenderProps = {}
+  sessionInfo?: SessionProps['sessionInfo']
+  err?: Err
+  event?: boolean = false
+  isLongRunning = false
+  number?: number
+  numElements: number
+  timeout?: number
+  visible?: boolean
+  wallClockStartedAt?: string
+  children: Array<Command> = []
+  hookId: string
+  group?: number
+  groupLevel?: number
+  hasSnapshot?: boolean
+  hasConsoleProps?: boolean
+  _isOpen: boolean | null = null
 
   private _prevState: string | null | undefined = null
   private _pendingTimeout?: TimeoutID = undefined
 
-  @computed get displayMessage () {
+  get displayMessage () {
     return this.renderProps.message || this.message
   }
 
@@ -76,7 +77,7 @@ export default class Command extends Instrument {
     return children.length + children.reduce((previousValue, child) => previousValue + this.countNestedCommands(child.children), 0)
   }
 
-  @computed get numChildren () {
+  get numChildren () {
     if (this.event) {
       // add one to include self so it's the total number of same events
       return this.children.length + 1
@@ -85,19 +86,19 @@ export default class Command extends Instrument {
     return this.countNestedCommands(this.children)
   }
 
-  @computed get isOpen () {
+  get isOpen () {
     if (!this.hasChildren) return null
 
     return this._isOpen || (this._isOpen === null
       && (
         this.err?.isRecovered ||
-        (this.name === 'session' && this.state === 'failed') ||
+        (this.defaultCollapsedState === 'closed' && this.state === 'failed') ||
         // command has nested commands
-        (this.name !== 'session' && this.hasChildren && !this.event && this.type !== 'system') ||
+        (this.defaultCollapsedState !== 'closed' && this.hasChildren && !this.event && this.type !== 'system') ||
         // command has nested commands with children
-        (this.name !== 'session' && _.some(this.children, (v) => v.hasChildren)) ||
+        (this.defaultCollapsedState !== 'closed' && _.some(this.children, (v) => v.hasChildren)) ||
         // last nested command is open
-        (this.name !== 'session' && _.last(this.children)?.isOpen) ||
+        (this.defaultCollapsedState !== 'closed' && _.last(this.children)?.isOpen) ||
         // show slow command when test is running
         (_.some(this.children, (v) => v.isLongRunning) && _.last(this.children)?.state === 'pending') ||
         // at last nested command failed
@@ -106,11 +107,11 @@ export default class Command extends Instrument {
     )
   }
 
-  @action toggleOpen () {
+  toggleOpen () {
     this._isOpen = !this.isOpen
   }
 
-  @computed get hasChildren () {
+  get hasChildren () {
     if (this.event) {
       // if the command is an event log, we add one to the number of children count to include
       // itself in the total number of same events that render when the group is closed
@@ -120,7 +121,7 @@ export default class Command extends Instrument {
     return this.numChildren > 0
   }
 
-  @computed get showError () {
+  get showError () {
     if (this.hasChildren) {
       return (this.err?.isRecovered && this.isOpen)
     }
@@ -128,8 +129,40 @@ export default class Command extends Instrument {
     return this.err?.isRecovered
   }
 
+  get isCyPrompt () {
+    return this.name === 'prompt'
+  }
+
   constructor (props: CommandProps) {
     super(props)
+
+    makeObservable(this, {
+      renderProps: observable.struct,
+      sessionInfo: observable.struct,
+      err: observable,
+      event: observable,
+      isLongRunning: observable,
+      number: observable,
+      numElements: observable,
+      timeout: observable,
+      visible: observable,
+      wallClockStartedAt: observable,
+      children: observable,
+      hookId: observable,
+      group: observable,
+      groupLevel: observable,
+      hasSnapshot: observable,
+      hasConsoleProps: observable,
+      _isOpen: observable,
+      displayMessage: computed,
+      numChildren: computed,
+      isOpen: computed,
+      toggleOpen: action,
+      hasChildren: computed,
+      showError: computed,
+      setGroup: action,
+      isSelfHealed: computed,
+    })
 
     if (props.err) {
       this.err = new Err(props.err)
@@ -146,7 +179,6 @@ export default class Command extends Instrument {
     this.visible = props.visible === undefined || props.visible
     this.wallClockStartedAt = props.wallClockStartedAt
     this.hookId = props.hookId
-    this.isStudio = !!props.isStudio
     this.group = props.group
     this.hasSnapshot = !!props.hasSnapshot
     this.hasConsoleProps = !!props.hasConsoleProps
@@ -188,7 +220,6 @@ export default class Command extends Instrument {
     return command.event && this.matches(command)
   }
 
-  @action
   setGroup (id) {
     this.group = id
   }
@@ -244,5 +275,9 @@ export default class Command extends Instrument {
 
   _isPending () {
     return this.state === 'pending'
+  }
+
+  get isSelfHealed () {
+    return (!!this.renderProps.selfHealed || (this.hasChildren && !this.isOpen && this.children.some((child) => child.isSelfHealed)))
   }
 }

@@ -1,5 +1,5 @@
-import { EventEmitter } from 'events'
-import CommandModel from './../../src/commands/command-model'
+import type { EventEmitter } from 'events'
+import type CommandModel from './../../src/commands/command-model'
 
 const { _ } = Cypress
 
@@ -10,19 +10,24 @@ interface File {
 }
 
 interface HandlesFileOpeningProps {
-  getRunner: Function
+  getRunner: () => EventEmitter
   selector: string
   file: File
   stackTrace?: boolean
+  previousClickSelector?: string
 }
 
-export const itHandlesFileOpening = ({ getRunner, selector, file, stackTrace = false }: HandlesFileOpeningProps) => {
+export const itHandlesFileOpening = ({ getRunner, selector, file, stackTrace = false, previousClickSelector }: HandlesFileOpeningProps) => {
   describe('it handles file opening', () => {
     it('emits unified file open event', () => {
       cy.stub(getRunner(), 'emit').callThrough()
 
       if (stackTrace) {
-        cy.contains('View stack trace').click()
+        cy.contains('Stack trace').click()
+      }
+
+      if (previousClickSelector) {
+        cy.get(previousClickSelector).click()
       }
 
       cy.get(selector).first().click().then(() => {
@@ -46,6 +51,7 @@ export const addCommand = (runner: EventEmitter, log: Partial<CommandModel>) => 
     type: 'parent',
     url: 'http://example.com',
     hasConsoleProps: true,
+    defaultCollapsedState: 'open',
   }
 
   const commandLog = Object.assign(defaultLog, log)

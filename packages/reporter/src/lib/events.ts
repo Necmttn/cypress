@@ -1,15 +1,21 @@
 import { EventEmitter } from 'events'
 import { action } from 'mobx'
-import appState, { AppState } from './app-state'
-import runnablesStore, { RunnablesStore, LogProps, RootRunnable } from '../runnables/runnables-store'
-import statsStore, { StatsStore } from '../header/stats-store'
-import scroller, { Scroller } from './scroller'
-import { UpdatableTestProps, UpdateTestCallback, TestProps } from '../test/test-model'
-import Err from '../errors/err-model'
+import type { AppState } from './app-state'
+import appState from './app-state'
+import type { RunnablesStore, LogProps, RootRunnable } from '../runnables/runnables-store'
+import runnablesStore from '../runnables/runnables-store'
+import type { StatsStore } from '../header/stats-store'
+import statsStore from '../header/stats-store'
+import type { Scroller } from './scroller'
+import scroller from './scroller'
+import type { UpdatableTestProps, UpdateTestCallback, TestProps } from '../test/test-model'
+import type Err from '../errors/err-model'
 
 import type { ReporterStartInfo, ReporterRunState } from '@packages/types'
 
 const localBus = new EventEmitter()
+
+type StudioEntrySource = 'welcome' | 'new-test-root' | 'new-test-suite' | 'edit'
 
 interface InitEvent {
   appState: AppState
@@ -79,6 +85,7 @@ const events: Events = {
     runner.on('run:start', action('run:start', () => {
       if (runnablesStore.hasTests) {
         appState.startRunning()
+        appState.hasBeenPaused = false
       }
     }))
 
@@ -86,6 +93,8 @@ const events: Events = {
       appState.temporarilySetAutoScrolling(startInfo.autoScrollingEnabled)
       runnablesStore.setInitialScrollTop(startInfo.scrollTop)
       appState.setStudioActive(startInfo.studioActive)
+      appState.setStudioSingleTestActive(startInfo.studioSingleTestActive)
+
       if (runnablesStore.hasTests) {
         statsStore.start(startInfo)
       }
@@ -127,6 +136,14 @@ const events: Events = {
 
     runner.on('reporter:snapshot:unpinned', action('snapshot:unpinned', () => {
       appState.pinnedSnapshotId = null
+    }))
+
+    // A pin driven from outside the reporter (e.g. the tap CLI): reflect it the
+    // way a user click would — highlight the command and open its test so the
+    // command (and its pin icon) actually render in the log.
+    runner.on('reporter:snapshot:pinned', action('snapshot:pinned', (testId: string, logId: number | string) => {
+      appState.pinnedSnapshotId = logId
+      runnablesStore.testById(testId)?.setIsOpen(true)
     }))
 
     localBus.on('resume', action('resume', () => {
@@ -182,16 +199,8 @@ const events: Events = {
       runner.emit('runner:unpin:snapshot', testId, logId)
     })
 
-    localBus.on('get:user:editor', (cb) => {
-      runner.emit('get:user:editor', cb)
-    })
-
     localBus.on('clear:all:sessions', (cb) => {
       runner.emit('clear:all:sessions', cb)
-    })
-
-    localBus.on('set:user:editor', (editor) => {
-      runner.emit('set:user:editor', editor)
     })
 
     localBus.on('save:state', () => {
@@ -199,11 +208,17 @@ const events: Events = {
         // the "autoScrollingEnabled" key in `savedState` stores to the preference value itself, it is not the same as the "autoScrollingEnabled" variable stored in application state, which can be temporarily deactivated
         autoScrollingEnabled: appState.autoScrollingUserPref,
         isSpecsListOpen: appState.isSpecsListOpen,
+        showFetchRequests: appState.showFetchRequests,
+        codeEditorLineWrap: appState.codeEditorLineWrap,
       })
     })
 
     localBus.on('external:open', (url) => {
       runner.emit('external:open', url)
+    })
+
+    localBus.on('open:login:connect:modal', (args) => {
+      runner.emit('open:login:connect:modal', args)
     })
 
     localBus.on('open:file', (fileDetails) => {
@@ -214,28 +229,20 @@ const events: Events = {
       runner.emit('open:file:unified', fileDetails)
     })
 
-    localBus.on('studio:init:test', (testId) => {
-      runner.emit('studio:init:test', testId)
+    localBus.on('studio:init:test', ({ testId }: { testId: string }) => {
+      runner.emit('studio:init:test', { testId })
     })
 
-    localBus.on('studio:init:suite', (suiteId) => {
-      runner.emit('studio:init:suite', suiteId)
-    })
-
-    localBus.on('studio:remove:command', (commandId) => {
-      runner.emit('studio:remove:command', commandId)
+    localBus.on('studio:init:suite', ({ suiteId, entrySource }: { suiteId: string, entrySource?: StudioEntrySource }) => {
+      runner.emit('studio:init:suite', { suiteId, entrySource })
     })
 
     localBus.on('studio:cancel', () => {
       runner.emit('studio:cancel')
     })
 
-    localBus.on('studio:save', () => {
-      runner.emit('studio:save')
-    })
-
-    localBus.on('studio:copy:to:clipboard', (cb) => {
-      runner.emit('studio:copy:to:clipboard', cb)
+    localBus.on('prompt:get-code', (args: { testId: string, logId: string }) => {
+      runner.emit('prompt:get-code', args)
     })
   },
 

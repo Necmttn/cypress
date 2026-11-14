@@ -5,9 +5,11 @@ import ffmpeg from 'fluent-ffmpeg'
 import stream from 'stream'
 import Bluebird from 'bluebird'
 import { path as ffmpegPath } from '@ffmpeg-installer/ffmpeg'
+import { path as ffprobePath } from '@ffprobe-installer/ffprobe'
 import BlackHoleStream from 'black-hole-stream'
 import { fs } from './util/fs'
 import type { ProcessOptions, WriteVideoFrame } from '@packages/types'
+import type { FfprobeData } from 'fluent-ffmpeg'
 
 const debug = Debug('cypress:server:video')
 const debugVerbose = Debug('cypress-verbose:server:video')
@@ -17,6 +19,7 @@ const debugFrames = Debug('cypress-verbose:server:video:frames')
 debug('using ffmpeg from %s', ffmpegPath)
 
 ffmpeg.setFfmpegPath(ffmpegPath)
+ffmpeg.setFfprobePath(ffprobePath)
 
 const deferredPromise = function () {
   let reject
@@ -34,9 +37,15 @@ export function generateFfmpegChaptersConfig (tests) {
     return
   }
 
-  const configString = tests.map((test) => {
-    return test.attempts.map((attempt, i) => {
+  const configString = tests.flatMap((test) => {
+    return test.attempts.flatMap((attempt, i) => {
       const { videoTimestamp, wallClockDuration } = attempt
+
+      // pending tests never ran, so they have no place in the video
+      if (videoTimestamp == null || wallClockDuration == null) {
+        return []
+      }
+
       let title = test.title ? test.title.join(' ') : ''
 
       if (i > 0) {
@@ -46,11 +55,11 @@ export function generateFfmpegChaptersConfig (tests) {
       return [
         '[CHAPTER]',
         'TIMEBASE=1/1000',
-          `START=${videoTimestamp - wallClockDuration}`,
-          `END=${videoTimestamp}`,
-          `title=${title}`,
+        `START=${videoTimestamp}`,
+        `END=${videoTimestamp + wallClockDuration}`,
+        `title=${title}`,
       ].join('\n')
-    }).join('\n')
+    })
   }).join('\n')
 
   return `;FFMETADATA1\n${configString}`
@@ -60,8 +69,17 @@ export function getMsFromDuration (duration) {
   return utils.timemarkToSeconds(duration) * 1000
 }
 
-export function getCodecData (src) {
-  return new Bluebird((resolve, reject) => {
+type CodecData = {
+  format: string
+  audio: string
+  audio_details: string
+  video: string
+  video_details: string
+  duration: string
+}
+
+export function getCodecData (src): Bluebird<CodecData> {
+  return new Bluebird<CodecData>((resolve, reject) => {
     return ffmpeg()
     .on('stderr', (stderr) => {
       return debug('get codecData stderr log %o', { message: stderr })
@@ -80,8 +98,8 @@ export function getCodecData (src) {
   })
 }
 
-export function getChapters (fileName) {
-  return new Bluebird((resolve, reject) => {
+export function getChapters (fileName): Bluebird<FfprobeData> {
+  return new Bluebird<FfprobeData>((resolve, reject) => {
     ffmpeg.ffprobe(fileName, ['-show_chapters'], (err, metadata) => {
       if (err) {
         return reject(err)
@@ -89,22 +107,6 @@ export function getChapters (fileName) {
 
       resolve(metadata)
     })
-  })
-}
-
-export function copy (src, dest) {
-  debug('copying from %s to %s', src, dest)
-
-  return fs
-  .copy(src, dest, { overwrite: true })
-  .catch((err) => {
-    if (err.code === 'ENOENT') {
-      debug('caught ENOENT error on copy, ignoring %o', { src, dest, err })
-
-      return
-    }
-
-    throw err
   })
 }
 
@@ -124,6 +126,7 @@ export function start (options: StartOptions) {
   let wantsWrite = true
   let skippedFramesCount = 0
   let writtenFramesCount = 0
+  let startedVideoCapture: Date
 
   _.defaults(options, {
     onError () {},
@@ -140,8 +143,14 @@ export function start (options: StartOptions) {
       })
       .then(() => endVideoCapture())
       .timeout(3000)
-      .catch(() => endVideoCapture(false))
+      .catch((err) => {
+        debug('wait for additional frames failed or timed out after 3000ms with %d frame(s) written; ending capture without waiting: %o', writtenFramesCount, err)
+
+        return endVideoCapture(false)
+      })
     }
+
+    debug('ending video capture with %d frame(s) written and %d frame(s) skipped', writtenFramesCount, skippedFramesCount)
 
     doneCapturing = true
 
@@ -188,6 +197,11 @@ export function start (options: StartOptions) {
 
     writtenFramesCount++
 
+    // the video's timeline begins at the first frame, so chapter timestamps must be measured from it
+    if (writtenFramesCount === 1) {
+      startedVideoCapture = new Date
+    }
+
     debugFrames('writing video frame')
 
     if (wantsWrite) {
@@ -218,10 +232,9 @@ export function start (options: StartOptions) {
       .on('start', (command) => {
         debug('capture started %o', { command })
 
-        return resolve({
-          cmd,
-          startedVideoCapture: new Date,
-        })
+        startedVideoCapture = new Date
+
+        return resolve({ cmd })
       }).on('codecData', (data) => {
         return debug('capture codec data: %o', data)
       }).on('stderr', (stderr) => {
@@ -272,13 +285,15 @@ export function start (options: StartOptions) {
   }
 
   return startCapturing()
-  .then(({ cmd, startedVideoCapture }: any) => {
+  .then(({ cmd }: any) => {
     return {
       _pt: pt,
       cmd,
       endVideoCapture,
       writeVideoFrame,
-      startedVideoCapture,
+      get startedVideoCapture () {
+        return startedVideoCapture
+      },
       restart: () => {
         throw new Error('restart cannot be called on a plain ffmpeg stream')
       },
@@ -371,7 +386,6 @@ export async function compress (options: ProcessOptions) {
 
       const progressed = utils.timemarkToSeconds(progress.timemark)
 
-      // @ts-ignore
       const percent = progressed / total
 
       if (percent < 1) {

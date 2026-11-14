@@ -1,4 +1,6 @@
-import Fixtures, { ProjectFixtureDir } from '@tooling/system-tests'
+import { describe, it } from 'vitest'
+import type { ProjectFixtureDir } from '@tooling/system-tests'
+import Fixtures from '@tooling/system-tests'
 import * as FixturesScaffold from '@tooling/system-tests/lib/dep-installer'
 import execa from 'execa'
 import path from 'path'
@@ -24,17 +26,16 @@ const runCommandInProject = (command: string, projectPath: string) => {
 
 const cypressSchematicPackagePath = path.join(__dirname, '..')
 
-const ANGULAR_PROJECTS: ProjectFixtureDir[] = ['angular-14', 'angular-15']
+const ANGULAR_PROJECTS: ProjectFixtureDir[] = ['angular-21', 'angular-22']
 
-describe('ng add @cypress/schematic / only e2e', function () {
-  this.timeout(1000 * 60 * 5)
-
+describe('ng add @cypress/schematic / only e2e', { timeout: 1000 * 60 * 5 }, function () {
   for (const project of ANGULAR_PROJECTS) {
     it('should install e2e files by default', async () => {
       const projectPath = await scaffoldAngularProject(project)
 
       await runCommandInProject(`yarn add @cypress/schematic@file:${cypressSchematicPackagePath}`, projectPath)
-      await runCommandInProject('yarn ng add @cypress/schematic --e2e --component false --add-ct-specs false', projectPath)
+      await runCommandInProject('yarn ng add @cypress/schematic --e2e --component --add-ct-specs false', projectPath)
+
       await runCommandInProject('yarn ng e2e --watch false', projectPath)
     })
   }

@@ -1,7 +1,7 @@
 import type { Wizard, WizardBundler } from '../generated/test-graphql-types.gen'
-import * as wizardDeps from '@packages/scaffold-config/src/dependencies'
 import type { MaybeResolver } from './clientTestUtils'
 import { testNodeId } from './clientTestUtils'
+import { WIZARD_DEPENDENCY_REACT, WIZARD_DEPENDENCY_REACT_DOM, WIZARD_DEPENDENCY_TYPESCRIPT } from '@packages/scaffold-config/browser/dependencies'
 
 const testBundlerVite = {
   type: 'vite',
@@ -28,26 +28,34 @@ export const allBundlers = testBundlers.map((bundler, idx) => {
 })
 
 const testFrameworks = [
-  { name: 'Create React App (v5)', type: 'reactscripts', supportedBundlers: [testBundlerWebpack], category: 'framework', supportStatus: 'alpha' },
+  { name: 'React.js', type: 'react', supportedBundlers: [testBundlerWebpack], category: 'framework', supportStatus: 'full' },
   { name: 'Vue.js (v3)', type: 'vue3', supportedBundlers: [testBundlerVite, testBundlerWebpack], category: 'library', supportStatus: 'full' },
 ] as const
 
 export const stubWizard: MaybeResolver<Wizard> = {
   __typename: 'Wizard',
-  installDependenciesCommand: `npm install -D ${wizardDeps.WIZARD_DEPENDENCY_REACT_SCRIPTS.package} ${wizardDeps.WIZARD_DEPENDENCY_TYPESCRIPT.package}`,
+  installDependenciesCommand: `npm install -D ${WIZARD_DEPENDENCY_REACT.package} ${WIZARD_DEPENDENCY_REACT_DOM.package} ${WIZARD_DEPENDENCY_TYPESCRIPT.package}`,
   packagesToInstall: [
     {
       __typename: 'WizardNpmPackage',
-      id: 'cra',
+      id: 'react',
       satisfied: true,
-      ...wizardDeps.WIZARD_DEPENDENCY_REACT_SCRIPTS,
+      detectedVersion: '18.3.1',
+      ...WIZARD_DEPENDENCY_REACT,
+    },
+    {
+      __typename: 'WizardNpmPackage',
+      id: 'react-dom',
+      satisfied: true,
+      detectedVersion: '18.3.1',
+      ...WIZARD_DEPENDENCY_REACT_DOM,
     },
     {
       __typename: 'WizardNpmPackage',
       id: 'typescript',
       satisfied: false,
-      detectedVersion: '2.0.1',
-      ...wizardDeps.WIZARD_DEPENDENCY_TYPESCRIPT,
+      detectedVersion: '3.9.4',
+      ...WIZARD_DEPENDENCY_TYPESCRIPT,
     },
   ],
   allBundlers,

@@ -1,24 +1,35 @@
 // See: ./errorScenarios.md for details about error messages and stack traces
 
+// NOTE: If you modify the logic relating to this file, ensure the
+// UI for error code frames works as expected with the binary. This includes each
+// browser, as well as e2e and CT testing types. Stack patterns differ in Chrome
+// between the binary and dev mode, so Cy in Cy tests cannot catch them proactively.
+
+// Various stack patterns are saved as scenario fixtures in ./driver/test
+// to prevent regressions.
+
 import chai from 'chai'
 import _ from 'lodash'
 import $dom from '../dom'
 import { stripAnsi } from '@packages/errors'
 import $errorMessages from './error_messages'
-import $stackUtils, { StackAndCodeFrameIndex } from './stack_utils'
+import type { StackAndCodeFrameIndex } from './stack_utils'
+import $stackUtils from './stack_utils'
 import $utils from './utils'
 import type { HandlerType } from './runner'
 
-const ERROR_PROPS = ['message', 'type', 'name', 'stack', 'parsedStack', 'fileName', 'lineNumber', 'columnNumber', 'host', 'uncaught', 'actual', 'expected', 'showDiff', 'isPending', 'isRecovered', 'docsUrl', 'codeFrame'] as const
+const ERROR_PROPS = ['message', 'type', 'name', 'stack', 'parsedStack', 'fileName', 'lineNumber', 'columnNumber', 'host', 'uncaught', 'actual', 'expected', 'showDiff', 'isPending', 'isRecovered', 'docsUrl', 'codeFrame', 'docsUrlTitle', 'triggerAction'] as const
 const ERR_PREPARED_FOR_SERIALIZATION = Symbol('ERR_PREPARED_FOR_SERIALIZATION')
 
 const crossOriginScriptRe = /^script error/i
 
+let allErrorMessages = $errorMessages
+
 if (!Error.captureStackTrace) {
   Error.captureStackTrace = (err, fn) => {
-    const stack = (new Error()).stack;
+    const stack = (new Error()).stack
 
-    (err as Error).stack = $stackUtils.stackWithLinesDroppedFromMarker(stack, fn?.name)
+    ;(err as Error).stack = $stackUtils.stackWithLinesDroppedFromMarker(stack, fn?.name)
   }
 }
 
@@ -136,7 +147,7 @@ const getUserInvocationStack = (err, state) => {
   // command errors and command assertion errors (default assertion or cy.should)
   // have the invocation stack attached to the current command
   // prefer err.userInvocation stack if it's been set
-  let userInvocationStack = getUserInvocationStackFromError(err) || state('currentAssertionUserInvocationStack')
+  let userInvocationStack: string | undefined = err.userInvocationStack || state('currentAssertionUserInvocationStack')
 
   // if there is no user invocation stack from an assertion or it is the default
   // assertion, meaning it came from a command (e.g. cy.get), prefer the
@@ -153,7 +164,30 @@ const getUserInvocationStack = (err, state) => {
     userInvocationStack = withInvocationStack?.get('userInvocationStack')
   }
 
-  if (!userInvocationStack) return
+  if (!userInvocationStack) return undefined
+
+  // In some environments, additional codepoints are included in the stack prior
+  // to the first userland codepoint.
+  const internalCodepointIdentifier = [
+    '/__cypress/runner', // binary environments and most dev environments
+    'cypress:///../driver', // webpack CT with a dev build
+  ].find((identifier) => {
+    return userInvocationStack?.includes(identifier)
+  })
+
+  // removes lines in the invocation stack above the first userland line. If one
+  // of the cypress codepoint identifiers is not present in the stack trace,
+  // the first line will be a userland codepoint, so no dropping is necessary.
+  userInvocationStack = internalCodepointIdentifier ? _.dropWhile(
+    userInvocationStack.split('\n'),
+    (stackLine) => {
+      return stackLine.includes(internalCodepointIdentifier)
+    },
+  ).join('\n') : userInvocationStack
+
+  // remove lines that are included _after and including_ the replacement marker -
+  // these are also internal to cypress, and unimportant for the user invocation stack
+  userInvocationStack = $stackUtils.stackPriorToReplacementMarker(userInvocationStack)
 
   if (
     isCypressErr(err)
@@ -162,16 +196,39 @@ const getUserInvocationStack = (err, state) => {
   ) {
     return userInvocationStack
   }
+
+  return undefined
 }
 
+const setErrProp = (err, prop: string, value: any): boolean => {
+  try {
+    err[prop] = value
+  } catch {
+    // `DOMException`, which browsers throw for cross-origin access and CSP
+    // violations, inherits `message` as a getter-only accessor, so a plain
+    // assignment throws. An own property shadows the accessor.
+    try {
+      Object.defineProperty(err, prop, { value, writable: true, configurable: true })
+    } catch {
+      return false
+    }
+  }
+
+  return true
+}
+
+// Decorating is best effort: an error that could not be annotated is better
+// than one replaced by the failure to annotate it.
+// https://github.com/cypress-io/cypress/issues/34818
 const modifyErrMsg = (err, newErrMsg, cb) => {
-  err.stack = $stackUtils.normalizedStack(err)
+  setErrProp(err, 'stack', $stackUtils.normalizedStack(err))
 
   const newMessage = cb(err.message, newErrMsg)
   const newStack = stackWithReplacedProps(err, { message: newMessage })
 
-  err.message = newMessage
-  err.stack = newStack
+  if (setErrProp(err, 'message', newMessage)) {
+    setErrProp(err, 'stack', newStack)
+  }
 
   return err
 }
@@ -188,23 +245,34 @@ const appendErrMsg = (err, errMsg) => {
   })
 }
 
-const makeErrFromObj = (obj) => {
+const makeErrFromObj = (obj: any) => {
   if (_.isString(obj)) {
     return new Error(obj)
   }
 
-  const err2 = new Error(obj.message)
-
-  err2.name = obj.name
-  err2.stack = obj.stack
-
-  _.each(obj, (val, prop) => {
-    if (!err2[prop]) {
-      err2[prop] = val
+  if (_.isObject(obj) && _.isString((obj as any).message)) {
+    obj = obj as {
+      message: string
+      name: string
+      stack?: string
     }
-  })
 
-  return err2
+    const err2 = new Error(obj.message)
+
+    err2.name = (obj as any).name
+    err2.stack = (obj as any).stack
+
+    _.each(obj, (val, prop) => {
+      if (!err2[prop]) {
+        err2[prop] = val
+      }
+    })
+
+    return err2
+  }
+
+  // handle all other errors gracefully (e.g. a promise is rejected with undefined)
+  return new Error(`An unknown error has occurred: ${obj}`)
 }
 
 const makeErrFromErr = (err, options: any = {}) => {
@@ -212,7 +280,8 @@ const makeErrFromErr = (err, options: any = {}) => {
     err = cypressErr({ message: err })
   }
 
-  let { onFail, errProps } = options
+  const { errProps } = options
+  let { onFail } = options
 
   // assume onFail is a command if
   // onFail is present and isn't a function
@@ -267,7 +336,7 @@ const warnByPath = (errPath, options: any = {}) => {
 }
 
 export class InternalCypressError extends Error {
-  onFail?: Function
+  onFail?: (err: Error) => void
   isRecovered?: boolean
 
   constructor (message) {
@@ -283,9 +352,11 @@ export class InternalCypressError extends Error {
 
 export class CypressError extends Error {
   docsUrl?: string
+  docsUrlTitle?: string | null
+  triggerAction?: 'loginModal' | 'projectConnectModal' | null
   retry?: boolean
   userInvocationStack?: any
-  onFail?: Function
+  onFail?: (err: Error) => void
   isRecovered?: boolean
 
   constructor (message) {
@@ -303,10 +374,6 @@ export class CypressError extends Error {
 
     return this
   }
-}
-
-const getUserInvocationStackFromError = (err) => {
-  return err.userInvocationStack
 }
 
 const internalErr = (err): InternalCypressError => {
@@ -331,7 +398,9 @@ const replaceErrMsgTokens = (errMessage, args) => {
   if (!errMessage) return errMessage
 
   const replace = (str, argValue, argKey) => {
-    return str.replace(new RegExp(`\{\{${argKey}\}\}`, 'g'), argValue)
+    // Use a replacer function so `$` sequences in the (user-controlled) arg are
+    // inserted literally rather than treated as special replacement patterns.
+    return str.replace(new RegExp(`\\{\\{${argKey}\\}\\}`, 'g'), () => argValue)
   }
 
   const getMsg = function (args = {}) {
@@ -348,25 +417,26 @@ const replaceErrMsgTokens = (errMessage, args) => {
   return $utils.normalizeNewLines(getMsg(args), 2)
 }
 
-// recursively try for a default docsUrl
-const docsUrlByParents = (msgPath) => {
+// Walk up the error message path (e.g. foo.bar.baz -> foo.bar -> foo) and return
+// the first ancestor object in allErrorMessages that defines `propName`.
+const findPropByParents = (msgPath, propName) => {
   msgPath = msgPath.split('.').slice(0, -1).join('.')
 
   if (!msgPath) {
     return // reached root
   }
 
-  const obj = _.get($errorMessages, msgPath)
+  const obj = _.get(allErrorMessages, msgPath)
 
-  if (obj.hasOwnProperty('docsUrl')) {
-    return obj.docsUrl
+  if (Object.prototype.hasOwnProperty.call(obj, propName)) {
+    return obj[propName]
   }
 
-  return docsUrlByParents(msgPath)
+  return findPropByParents(msgPath, propName)
 }
 
 const errByPath = (msgPath, args?) => {
-  let msgValue = _.get($errorMessages, msgPath)
+  const msgValue = _.get(allErrorMessages, msgPath)
 
   if (!msgValue) {
     return internalErr({ message: `Error message path '${msgPath}' does not exist` })
@@ -384,17 +454,26 @@ const errByPath = (msgPath, args?) => {
     }
   }
 
-  const docsUrl = (msgObj.hasOwnProperty('docsUrl') && msgObj.docsUrl) || docsUrlByParents(msgPath)
+  const docsUrl = (Object.prototype.hasOwnProperty.call(msgObj, 'docsUrl') && msgObj.docsUrl) || findPropByParents(msgPath, 'docsUrl')
+  const docsUrlTitle = (Object.prototype.hasOwnProperty.call(msgObj, 'docsUrlTitle') && msgObj.docsUrlTitle) || findPropByParents(msgPath, 'docsUrlTitle')
+  const triggerAction = (Object.prototype.hasOwnProperty.call(msgObj, 'triggerAction') && msgObj.triggerAction) || findPropByParents(msgPath, 'triggerAction')
+
+  const resolvedTriggerAction =
+    triggerAction === 'loginModal' || triggerAction === 'projectConnectModal'
+      ? triggerAction
+      : undefined
 
   return cypressErr({
     message: replaceErrMsgTokens(msgObj.message, args),
     docsUrl: docsUrl ? replaceErrMsgTokens(docsUrl, args) : undefined,
+    docsUrlTitle: docsUrlTitle ? replaceErrMsgTokens(docsUrlTitle, args) : undefined,
+    triggerAction: resolvedTriggerAction,
   })
 }
 
 const createUncaughtException = ({ frameType, handlerType, state, err }) => {
   const errPath = frameType === 'spec' ? 'uncaught.fromSpec' : 'uncaught.fromApp'
-  let uncaughtErr = errByPath(errPath, {
+  const uncaughtErr = errByPath(errPath, {
     errMsg: stripAnsi(err.message),
     promiseAddendum: handlerType === 'unhandledrejection' ? ' It was caused by an unhandled promise rejection.' : '',
   }) as CypressError
@@ -426,7 +505,8 @@ const stackAndCodeFrameIndex = (err, userInvocationStack): StackAndCodeFrameInde
 }
 
 const preferredStackAndCodeFrameIndex = (err, userInvocationStack) => {
-  let { stack, index } = stackAndCodeFrameIndex(err, userInvocationStack)
+  const { stack: codeFrameStack, index } = stackAndCodeFrameIndex(err, userInvocationStack)
+  let stack = codeFrameStack
 
   stack = $stackUtils.stackWithContentAppended(err, stack)
   stack = $stackUtils.stackWithReplacementMarkerLineRemoved(stack)
@@ -479,7 +559,8 @@ const getStackFromErrArgs = ({ filename, lineno, colno }) => {
 }
 
 const convertErrorEventPropertiesToObject = (args) => {
-  let { message, filename, lineno, colno, err } = args
+  const { filename, lineno, colno, err } = args
+  let { message } = args
 
   // if the error was thrown as a string (throw 'some error'), `err` is
   // the message ('some error') and message is some browser-created
@@ -494,14 +575,17 @@ const convertErrorEventPropertiesToObject = (args) => {
   })
 }
 
-export interface ErrorFromErrorEvent {
+interface ErrorFromErrorEvent {
   originalErr: Error
   err: Error
 }
 
 const errorFromErrorEvent = (event): ErrorFromErrorEvent => {
-  let { message, filename, lineno, colno, error } = event
+  const { filename, lineno, colno, error } = event
+  let { message } = event
   let docsUrl = error?.docsUrl
+  let docsUrlTitle = error?.docsUrlTitle
+  let triggerAction = error?.triggerAction
 
   // reset the message on a cross origin script error
   // since no details are accessible
@@ -510,6 +594,8 @@ const errorFromErrorEvent = (event): ErrorFromErrorEvent => {
 
     message = crossOriginErr.message
     docsUrl = crossOriginErr.docsUrl
+    docsUrlTitle = crossOriginErr.docsUrlTitle
+    triggerAction = crossOriginErr.triggerAction
   }
 
   // it's possible the error was thrown as a string (throw 'some error')
@@ -519,6 +605,8 @@ const errorFromErrorEvent = (event): ErrorFromErrorEvent => {
   })) as CypressError
 
   err.docsUrl = docsUrl
+  err.docsUrlTitle = docsUrlTitle
+  err.triggerAction = triggerAction
 
   // makeErrFromObj clones the error, so the original doesn't get mutated
   return {
@@ -553,17 +641,88 @@ const errorFromUncaughtEvent = (handlerType: HandlerType, event) => {
     errorFromProjectRejectionEvent(event)
 }
 
+// #27415 — Repeated identical uncaught exceptions within a test collapse into one
+// updating log (consecutive occurrences only). Handled (suppressed) exceptions
+// skip DOM snapshots. State is cleared with each test via `cy.reset()`.
+// https://github.com/cypress-io/cypress/issues/27415
+interface UncaughtErrorSignature {
+  runnableId?: string
+  message: string
+  retry: number
+  handled: boolean
+}
+
+const UNCAUGHT_ERROR_STATE_KEY = 'uncaughtErrorLog'
+
+interface UncaughtErrorRecord {
+  signature: UncaughtErrorSignature
+  log: any
+  count: number
+}
+
+// Collapse unless a previously suppressed error later throws unhandled (it needs
+// its own failing log rather than updating the grey suppressed one).
+const canCollapseHandledTransition = (previousHandled: boolean, currentHandled: boolean): boolean => {
+  return currentHandled || !previousHandled
+}
+
+const canCollapseUncaughtError = (previous: UncaughtErrorSignature | undefined, current: UncaughtErrorSignature): boolean => {
+  return (
+    previous !== undefined &&
+    // only collapse errors scoped to a test, so two test-less errors
+    // (both with an undefined runnableId) are never treated as the same log
+    current.runnableId !== undefined &&
+    previous.runnableId === current.runnableId &&
+    previous.message === current.message &&
+    previous.retry === current.retry &&
+    canCollapseHandledTransition(previous.handled, current.handled)
+  )
+}
+
 const logError = (Cypress, handlerType: HandlerType, err: unknown, handled = false) => {
   const error = toLoggableError(err)
+  const message = `${error.name || 'Error'}: ${error.message}`
+  const state = typeof Cypress.state === 'function' ? Cypress.state : undefined
+  const runnable = state?.('runnable')
 
-  Cypress.log({
-    message: `${error.name || 'Error'}: ${error.message}`,
+  const signature: UncaughtErrorSignature = {
+    runnableId: runnable?.id,
+    message,
+    retry: $utils.getTestAttemptFromRunnable(runnable),
+    handled,
+  }
+
+  const previous: UncaughtErrorRecord | undefined = state?.(UNCAUGHT_ERROR_STATE_KEY)
+
+  // previous.log can be undefined if the prior Cypress.log was suppressed
+  // (e.g. onBeforeLog returned false); never try to update a missing log
+  if (previous?.log && canCollapseUncaughtError(previous.signature, signature)) {
+    const count = previous.count + 1
+
+    previous.log.set({
+      message: `${message} (${count})`,
+      // an unhandled occurrence turns the collapsed log red/failed
+      ...(handled ? {} : { error: err }),
+    })
+
+    state?.(UNCAUGHT_ERROR_STATE_KEY, {
+      log: previous.log,
+      count,
+      // once a collapsed log is unhandled (red), it stays unhandled
+      signature: { ...signature, handled: previous.signature.handled && handled },
+    })
+
+    return
+  }
+
+  const log = Cypress.log({
+    message,
     name: 'uncaught exception',
     type: 'parent',
     // specifying the error causes the log to be red/failed
     // otherwise, if it's been handled, we omit the error so it is grey/passed
     error: handled ? undefined : err,
-    snapshot: true,
+    snapshot: !handled,
     event: true,
     timeout: 0,
     end: true,
@@ -576,6 +735,10 @@ const logError = (Cypress, handlerType: HandlerType, err: unknown, handled = fal
       return consoleObj
     },
   })
+
+  // Cypress.log returns undefined when the log is suppressed; only retain a
+  // record we can actually update, otherwise clear any stale prior record.
+  state?.(UNCAUGHT_ERROR_STATE_KEY, log ? { signature, log, count: 1 } : undefined)
 }
 
 interface LoggableError { name?: string, message: string }
@@ -597,22 +760,11 @@ const toLoggableError = (maybeError: unknown): LoggableError => {
   }
 }
 
-const getUnsupportedPlugin = (runnable) => {
-  if (!(runnable.invocationDetails && runnable.invocationDetails.originalFile && runnable.err && runnable.err.message)) {
-    return null
+const extendErrorMessages = (errorMessages: any) => {
+  allErrorMessages = {
+    ...allErrorMessages,
+    ...errorMessages,
   }
-
-  const pluginsErrors = {
-    '@cypress/code-coverage': 'glob pattern string required',
-  }
-
-  const unsupportedPluginFound = Object.keys(pluginsErrors).find((plugin) => runnable.invocationDetails.originalFile.includes(plugin))
-
-  if (unsupportedPluginFound && pluginsErrors[unsupportedPluginFound] && runnable.err.message.includes(pluginsErrors[unsupportedPluginFound])) {
-    return unsupportedPluginFound
-  }
-
-  return null
 }
 
 export default {
@@ -624,14 +776,13 @@ export default {
   enhanceStack,
   errByPath,
   errorFromUncaughtEvent,
-  getUnsupportedPlugin,
   getUserInvocationStack,
-  getUserInvocationStackFromError,
   isAssertionErr,
   isChaiValidationErr,
   isCypressErr,
   isSpecError,
   logError,
+  UNCAUGHT_ERROR_STATE_KEY,
   makeErrFromObj,
   mergeErrProps,
   modifyErrMsg,
@@ -640,4 +791,5 @@ export default {
   throwErrByPath,
   warnByPath,
   wrapErr,
+  extendErrorMessages,
 }

@@ -1,9 +1,8 @@
 import _ from 'lodash'
-import defaultMessages from '@packages/frontend-shared/src/locales/en-US.json'
 
 // Assert that either the the dialog is presented or the mutation is emitted, depending on
 // whether the test has a preferred IDE defined.
-const verifyIdeOpen = ({ fileName, action, hasPreferredIde, line, column }) => {
+const verifyIdeOpen = ({ fileName, filePath, action, hasPreferredIde, line, column }) => {
   if (hasPreferredIde) {
     cy.withCtx((ctx, o) => {
       // @ts-expect-error - check if we've stubbed it already, only need to stub it once
@@ -15,13 +14,13 @@ const verifyIdeOpen = ({ fileName, action, hasPreferredIde, line, column }) => {
     action()
 
     cy.withCtx((ctx, o) => {
-      expect(ctx.actions.file.openFile).to.have.been.calledWith(o.sinon.match(new RegExp(`${o.fileName}$`)), o.line, o.column)
-    }, { fileName, line, column })
+      expect(ctx.actions.file.openFile).to.have.been.calledWith(o.sinon.match(new RegExp(`cypress/e2e/${o.filePath}$`)), o.line, o.column)
+    }, { fileName, filePath, line, column })
   } else {
     action()
 
-    cy.contains(defaultMessages.globalPage.externalEditorPreferences).should('be.visible')
-    cy.findByRole('button', { name: defaultMessages.actions.close }).click()
+    cy.contains('External editor preferences').should('be.visible')
+    cy.getByRole('button', { name: 'Close' }).click()
   }
 }
 
@@ -38,6 +37,7 @@ const verifyFailure = (options) => {
     command,
     stack,
     fileName,
+    filePath,
     uncaught = false,
     uncaughtMessage,
     line,
@@ -50,18 +50,28 @@ const verifyFailure = (options) => {
     codeFrameText = specTitle
   }
 
-  const codeFrameColumnArray = [].concat(column)
-  const codeFrameColumn = codeFrameColumnArray[0]
-  const stackColumnArray = codeFrameColumnArray.map((col) => col - 1)
-  const stackColumn = stackColumnArray[0]
+  let codeFrameColumnArray: number[] = []
+  let codeFrameColumn = column
+  let stackColumnArray: number[] = []
+  let stackColumn = column
 
-  stackRegex = regex || stackRegex || new RegExp(`${fileName}:${line || '\\d+'}:(${stackColumnArray.join('|')})`)
-  codeFrameRegex = regex || codeFrameRegex || new RegExp(`${fileName}:${line || '\\d+'}:(${codeFrameColumnArray.join('|')})`)
+  // Only calculate a column if one is passed into the verify function.
+  // Not all stack traces in Typescript 5+ will have a column associated if they throw at the end of the column.
+  // This is now considered the beginning of the row, which does not produce a column
+  if (column) {
+    codeFrameColumnArray = codeFrameColumnArray.concat(column)
+    codeFrameColumn = codeFrameColumnArray[0]
+    stackColumnArray = codeFrameColumnArray.map((col) => col - 1)
+    stackColumn = stackColumnArray[0]
+  }
 
-  cy.contains('.runnable-title', specTitle).closest('.runnable').as('Root')
+  stackRegex = regex || stackRegex || new RegExp(`${fileName}:${line || '\\d+'}${stackColumnArray.length ? `:(${stackColumnArray.join('|')})` : ''}`)
+  codeFrameRegex = regex || codeFrameRegex || new RegExp(`${fileName}:${line || '\\d+'}${codeFrameColumnArray.length ? `:(${codeFrameColumnArray.join('|')})` : ''}`)
+
+  cy.reporter().contains('.runnable-title', specTitle).closest('.runnable').as('Root')
 
   cy.get('@Root').within(() => {
-    cy.contains('View stack trace').click()
+    cy.contains('Stack trace').click()
 
     const messageLines = [].concat(message)
 
@@ -128,6 +138,7 @@ const verifyFailure = (options) => {
   if (verifyOpenInIde) {
     verifyIdeOpen({
       fileName,
+      filePath,
       hasPreferredIde,
       action: () => {
         cy.get('@Root').contains('.runnable-err-stack-trace .runnable-err-file-path a', fileName)
@@ -175,6 +186,7 @@ const verifyFailure = (options) => {
   if (verifyOpenInIde) {
     verifyIdeOpen({
       fileName,
+      filePath,
       hasPreferredIde,
       action: () => {
         cy.get('@Root').contains('.test-err-code-frame .runnable-err-file-path a', fileName)
@@ -188,12 +200,13 @@ const verifyFailure = (options) => {
 
 type ChainableVerify = (specTitle: string, props: any) => Cypress.Chainable
 
-export const createVerify = ({ fileName, hasPreferredIde, mode }): ChainableVerify => {
+export const createVerify = ({ fileName, filePath, hasPreferredIde, mode }): ChainableVerify => {
   return (specTitle: string, props: any) => {
     props.specTitle ||= specTitle
     props.fileName ||= fileName
     props.hasPreferredIde = hasPreferredIde
     props.mode = mode
+    props.filePath ||= filePath
 
     return cy.wrap(
       (props.verifyFn || verifyFailure).call(null, props),
@@ -204,7 +217,7 @@ export const createVerify = ({ fileName, hasPreferredIde, mode }): ChainableVeri
 export const verifyInternalFailure = (props) => {
   const { specTitle, method, stackMethod } = props
 
-  cy.contains('.runnable-title', specTitle).closest('.runnable').within(() => {
+  cy.reporter().contains('.runnable-title', specTitle).closest('.runnable').within(() => {
     cy.get('.runnable-err-message')
     .should('include.text', `thrown in ${method.replace(/\./g, '-')}`)
 

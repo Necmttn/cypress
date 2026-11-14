@@ -16,6 +16,8 @@ import * as Cookies from './cookies'
 
 import * as Debugging from './debugging'
 
+import * as Env from './env'
+
 import * as Exec from './exec'
 
 import * as Files from './files'
@@ -52,6 +54,8 @@ import Window from './window'
 
 import * as Xhr from './xhr'
 
+import * as Prompt from './prompt'
+
 export const allCommands = {
   ...Actions,
   Agents,
@@ -62,6 +66,7 @@ export const allCommands = {
   Connectors,
   Cookies,
   Debugging,
+  Env,
   Exec,
   Files,
   Fixtures,
@@ -70,6 +75,7 @@ export const allCommands = {
   Misc,
   Origin,
   Popups,
+  Prompt,
   Navigation,
   ...Querying,
   Request,

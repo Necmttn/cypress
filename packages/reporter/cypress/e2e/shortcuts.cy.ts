@@ -1,5 +1,15 @@
-import sinon, { SinonStub, SinonSpy } from 'sinon'
-import { EventEmitter } from 'events'
+import { MobxRunnerStore } from '@packages/app/src/store/mobx-runner-store'
+import type { SinonStub, SinonSpy } from 'sinon'
+import sinon from 'sinon'
+import type { EventEmitter } from 'events'
+
+const runnerStore = new MobxRunnerStore()
+
+runnerStore.setSpec({
+  name: 'foo.js',
+  relative: 'relative/path/to/foo.js',
+  absolute: '/absolute/path/to/foo.js',
+})
 
 type EventEmitterStub = EventEmitter & Stub
 
@@ -26,17 +36,11 @@ describe('shortcuts', function () {
     cy.visit('/').then((win) => {
       win.render({
         runner,
-        runnerStore: {
-          spec: {
-            name: 'foo.js',
-            relative: 'relative/path/to/foo.js',
-            absolute: '/absolute/path/to/foo.js',
-          },
-        },
+        runnerStore,
       })
     })
 
-    cy.get('.reporter').then(() => {
+    cy.get('.reporter.mounted').then(() => {
       runner.emit('runnables:ready', this.runnables)
       runner.emit('reporter:start', {})
     })
@@ -82,17 +86,17 @@ describe('shortcuts', function () {
 
       cy.get('body').then(() => {
         expect(runner.emit).not.to.have.been.calledWith('save:state')
-        cy.contains('button', 'Specs').should('have.attr', 'aria-expanded', 'false')
+        cy.get('[data-cy=toggle-specs-button]').should('have.attr', 'aria-expanded', 'false')
       })
 
       cy.get('body').type('f').then(() => {
         expect(runner.emit).to.have.been.calledWith('save:state')
-        cy.contains('button', 'Specs').should('have.attr', 'aria-expanded', 'true')
+        cy.get('[data-cy=toggle-specs-button]').should('have.attr', 'aria-expanded', 'true')
       })
 
       cy.get('body').type('f').then(() => {
         expect(runner.emit).to.have.been.calledWith('save:state')
-        cy.contains('button', 'Specs').should('have.attr', 'aria-expanded', 'false')
+        cy.get('[data-cy=toggle-specs-button]').should('have.attr', 'aria-expanded', 'false')
       })
     })
 
@@ -118,11 +122,15 @@ describe('shortcuts', function () {
 
     it('toggles auto-scrolling', () => {
       cy.get('body').type('a')
-      cy.get('.testing-preferences-toggle').click()
+      cy.get('[data-cy="runnable-options-button"]').click()
+      cy.get('[data-cy="more-options-runnable-popover"]').should('be.visible')
       cy.get('[data-cy=auto-scroll-switch]').invoke('attr', 'aria-checked').should('eq', 'false')
-      cy.get('.testing-preferences-toggle').click()
+      cy.get('[data-cy=runnable-options-button]').click()
+      cy.get('[data-cy="more-options-runnable-popover"]').should('not.exist')
+
       cy.get('body').type('a')
-      cy.get('.testing-preferences-toggle').click()
+      cy.get('[data-cy="runnable-options-button"]').click()
+      cy.get('[data-cy="more-options-runnable-popover"]').should('be.visible')
       cy.get('[data-cy=auto-scroll-switch]').invoke('attr', 'aria-checked').should('eq', 'true')
     })
 
@@ -140,9 +148,9 @@ describe('shortcuts', function () {
     })
 
     it('has shortcut in tooltips', () => {
-      cy.get('.toggle-specs-wrapper > button').trigger('mouseover')
+      cy.get('[data-cy=toggle-specs-button]').trigger('mouseover')
       cy.get('.cy-tooltip').should('have.text', 'Expand Specs List F')
-      cy.get('.toggle-specs-wrapper > button').trigger('mouseout')
+      cy.get('[data-cy=toggle-specs-button]').trigger('mouseout')
 
       cy.get('button.restart').trigger('mouseover')
       cy.get('.cy-tooltip').should('have.text', 'Run All Tests R')

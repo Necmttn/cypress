@@ -1,6 +1,7 @@
-import type { NexusGenAbstractTypeMembers } from '@packages/graphql/src/gen/nxs.gen'
+import type { NexusGenAbstractTypeMembers } from '../gen/nxs.gen'
 import debugLib from 'debug'
-import { execute, FieldNode, GraphQLResolveInfo, print, visit } from 'graphql'
+import { execute, print, visit } from 'graphql'
+import type { FieldNode, GraphQLResolveInfo } from 'graphql'
 import type { core } from 'nexus'
 import _ from 'lodash'
 import type { DataContext } from '..'
@@ -9,21 +10,21 @@ import { DocumentNodeBuilder } from '../util/DocumentNodeBuilder'
 const debug = debugLib('cypress:data-context:sources:GraphQLDataSource')
 const RESOLVED_SOURCE = Symbol('RESOLVED_SOURCE')
 
-export interface PushResultParams {
+interface PushResultParams {
   info: GraphQLResolveInfo
   ctx: DataContext
   result: any
   source?: any
 }
 
-export interface PushQueryFragmentParams {
+interface PushQueryFragmentParams {
   source?: any
   result: any
   ctx: DataContext
   info: GraphQLResolveInfo
 }
 
-export interface PushNodeFragmentParams extends PushQueryFragmentParams {
+interface PushNodeFragmentParams extends PushQueryFragmentParams {
   source: any
 }
 

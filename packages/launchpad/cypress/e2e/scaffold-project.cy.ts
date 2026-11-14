@@ -1,4 +1,4 @@
-import type { SnapshotScaffoldTestResult } from '@packages/launchpad/cypress/tasks/snapshotsScaffold'
+import type { SnapshotScaffoldTestResult } from '../tasks/snapshotsScaffold'
 
 // The tests in this file take an existing project without Cypress Configured
 // and add Cypress using the launchpad setup wizard.
@@ -36,7 +36,6 @@ function scaffoldAndOpenE2EProject (opts: {
   }
 
   cy.visitLaunchpad()
-  cy.skipWelcome()
 
   cy.contains('Welcome to Cypress!').should('be.visible')
   cy.contains('[data-cy-testingtype="e2e"]', 'Not Configured')
@@ -71,7 +70,6 @@ function scaffoldAndOpenCTProject (opts: {
   }
 
   cy.visitLaunchpad()
-  cy.skipWelcome()
 
   cy.contains('Welcome to Cypress!').should('be.visible')
   cy.contains('[data-cy-testingtype="e2e"]', 'Not Configured')
@@ -81,21 +79,21 @@ function scaffoldAndOpenCTProject (opts: {
   cy.contains('Pick a framework').click()
   cy.contains(opts.framework).click()
   if (opts.bundler) {
-    cy.contains('Webpack(detected)').click()
-    cy.contains(opts.bundler).click()
+    cy.contains('Pick a bundler').click()
+    cy.contains(Cypress._.startCase(opts.bundler)).click()
   }
 
   cy.contains('Next step').click()
 
-  cy.contains(cy.i18n.setupWizard.installDependencies.title).should('be.visible')
-  cy.contains('button', cy.i18n.setupWizard.installDependencies.waitForInstall).should('be.disabled')
+  cy.contains('Install dev dependencies').should('be.visible')
+  cy.contains('button', 'Waiting for you to install the dependencies...').should('be.disabled')
   cy.contains('Skip').click()
 
   cy.contains('We added the following files to your project:')
   cy.contains('Continue').click()
 }
 
-function assertScaffoldedFilesAreCorrect (opts: { language: 'js' | 'ts', testingType: Cypress.TestingType, ctFramework?: string, customDirectory?: string}) {
+function assertScaffoldedFilesAreCorrect (opts: { language: 'js' | 'ts', testingType: Cypress.TestingType, ctFramework?: string, customDirectory?: string }) {
   cy.withCtx((ctx) => ctx.currentProject).then((currentProject) => {
     cy.task<SnapshotScaffoldTestResult>('snapshotCypressDirectory', {
       currentProject,
@@ -149,25 +147,25 @@ describe('scaffolding new projects', { defaultCommandTimeout: 7000 }, () => {
   it('scaffolds CT for a JS project', () => {
     const language = 'js'
 
-    scaffoldAndOpenCTProject({ name: 'pristine', framework: 'Create React App', removeFixturesFolder: true })
-    assertScaffoldedFilesAreCorrect({ language, testingType: 'component', ctFramework: 'Create React App (v5)' })
+    scaffoldAndOpenCTProject({ name: 'pristine', framework: 'React.js', bundler: 'webpack', removeFixturesFolder: true })
+    assertScaffoldedFilesAreCorrect({ language, testingType: 'component', ctFramework: 'React.js' })
   })
 
   it('scaffolds CT for a TS project', () => {
     const language = 'ts'
 
-    scaffoldAndOpenCTProject({ name: 'pristine-yarn', framework: 'Create React App', removeFixturesFolder: true })
-    assertScaffoldedFilesAreCorrect({ language, testingType: 'component', ctFramework: 'Create React App (v5)' })
+    scaffoldAndOpenCTProject({ name: 'pristine-yarn', framework: 'React.js', bundler: 'webpack', removeFixturesFolder: true })
+    assertScaffoldedFilesAreCorrect({ language, testingType: 'component', ctFramework: 'React.js' })
   })
 
   it('scaffolds CT and skip fixtures for a JS project', () => {
     const language = 'js'
 
-    scaffoldAndOpenCTProject({ name: 'pristine', framework: 'Create React App', removeFixturesFolder: false })
-    assertScaffoldedFilesAreCorrect({ language, testingType: 'component', ctFramework: 'Create React App (v5)', customDirectory: 'without-fixtures' })
+    scaffoldAndOpenCTProject({ name: 'pristine', framework: 'React.js', bundler: 'webpack', removeFixturesFolder: false })
+    assertScaffoldedFilesAreCorrect({ language, testingType: 'component', ctFramework: 'React.js', customDirectory: 'without-fixtures' })
   })
 
-  // NOTE: Skipping this test because it is flaky
+  // TODO: Fix flaky test
   it.skip('generates valid config file for pristine project without cypress installed', () => {
     cy.intercept('mutation-ScaffoldedFiles_completeSetup').as('mutationScaffoldedFiles')
     cy.intercept('query-MainLaunchpadQuery').as('mainLaunchpadQuery')
@@ -180,17 +178,16 @@ describe('scaffolding new projects', { defaultCommandTimeout: 7000 }, () => {
     })
 
     cy.visitLaunchpad()
-    cy.skipWelcome()
-    cy.contains('button', cy.i18n.testingType.e2e.name).click()
-    cy.contains('button', cy.i18n.setupPage.step.continue).click()
+    cy.contains('button', 'E2E Testing').click()
+    cy.contains('button', 'Continue').click()
     cy.wait('@mutationScaffoldedFiles')
     cy.wait('@mainLaunchpadQuery')
     cy.wait('@headerBarQuery')
     cy.wait('@cloudViewerAndProjectRequiredData')
-    cy.get('h1').contains(cy.i18n.setupPage.testingCard.chooseABrowser).should('be.visible')
+    cy.get('h1').contains('Choose a browser').should('be.visible')
 
     cy.withCtx(async (ctx) => {
-      let config = await ctx.actions.file.readFileInProject('cypress.config.js')
+      const config = await ctx.actions.file.readFileInProject('cypress.config.js')
 
       expect(config).not.to.contain('defineConfig')
     })

@@ -1,19 +1,28 @@
-import { expect } from 'chai'
-
+import { vi, describe, it, expect, afterEach } from 'vitest'
 import errors from '@packages/errors'
-
 import { updateWithPluginValues } from '../../src/project'
 
+vi.mock('@packages/errors', async (importActual) => {
+  const actual = await importActual<typeof import('@packages/errors')>()
+
+  return {
+    default: {
+      ...actual.default,
+      throwErr: vi.fn(),
+    },
+  }
+})
+
 describe('config/src/project/index', () => {
-  context('.updateWithPluginValues', () => {
+  describe('.updateWithPluginValues', () => {
     it('is noop when no overrides', () => {
-      expect(updateWithPluginValues({ foo: 'bar' } as any, null as any, 'e2e')).to.deep.eq({
+      expect(updateWithPluginValues({ foo: 'bar' } as any, null as any, 'e2e')).toEqual({
         foo: 'bar',
       })
     })
 
     it('is noop with empty overrides', () => {
-      expect(updateWithPluginValues({ foo: 'bar' } as any, {} as any, 'e2e')).to.deep.eq({
+      expect(updateWithPluginValues({ foo: 'bar' } as any, {} as any, 'e2e')).toEqual({
         foo: 'bar',
       })
     })
@@ -50,7 +59,7 @@ describe('config/src/project/index', () => {
         },
       }
 
-      expect(updateWithPluginValues(cfg as any, overrides, 'e2e')).to.deep.eq({
+      expect(updateWithPluginValues(cfg as any, overrides, 'e2e')).toEqual({
         foo: 'bar',
         baz: 'baz',
         lol: 1234,
@@ -96,7 +105,7 @@ describe('config/src/project/index', () => {
 
       const overrides = {}
 
-      expect(updateWithPluginValues(cfg as any, overrides, 'e2e')).to.deep.eq({
+      expect(updateWithPluginValues(cfg as any, overrides, 'e2e')).toEqual({
         browsers: [browser],
         resolved: {
           browsers: {
@@ -132,10 +141,11 @@ describe('config/src/project/index', () => {
         browsers: null,
       }
 
-      sinon.stub(errors, 'throwErr')
+      const throwErrSpy = vi.spyOn(errors, 'throwErr')
+
       updateWithPluginValues(cfg as any, overrides, 'e2e')
 
-      expect(errors.throwErr).to.have.been.calledWith('CONFIG_VALIDATION_MSG_ERROR')
+      expect(throwErrSpy).toHaveBeenCalledWith('CONFIG_VALIDATION_MSG_ERROR', 'configFile', undefined, 'Missing browsers list')
     })
 
     it('allows user to filter browsers', () => {
@@ -173,14 +183,14 @@ describe('config/src/project/index', () => {
 
       const updated = updateWithPluginValues(cfg as any, overrides, 'e2e')
 
-      expect(updated.resolved, 'resolved values').to.deep.eq({
+      expect(updated.resolved, 'resolved values').toEqual({
         browsers: {
           value: [browserTwo],
           from: 'plugin',
         },
       })
 
-      expect(updated, 'all values').to.deep.eq({
+      expect(updated, 'all values').toEqual({
         browsers: [browserTwo],
         resolved: {
           browsers: {
@@ -188,6 +198,68 @@ describe('config/src/project/index', () => {
             from: 'plugin',
           },
         },
+      })
+    })
+
+    describe('numTestsKeptInMemory', () => {
+      afterEach(() => {
+        vi.unstubAllEnvs()
+      })
+
+      it('forces numTestsKeptInMemory to 0 in run mode when setupNodeEvents returns a non-zero value', () => {
+        const cfg = {
+          isTextTerminal: true,
+          numTestsKeptInMemory: 0,
+          resolved: {
+            numTestsKeptInMemory: { value: 0, from: 'default' },
+          },
+        }
+
+        const overrides = {
+          numTestsKeptInMemory: 50,
+        }
+
+        const updated = updateWithPluginValues(cfg as any, overrides, 'e2e')
+
+        expect(updated.numTestsKeptInMemory).toEqual(0)
+      })
+
+      it('honors numTestsKeptInMemory in run mode when CYPRESS_INTERNAL_HONOR_NUM_TESTS_KEPT_IN_MEMORY=true', () => {
+        vi.stubEnv('CYPRESS_INTERNAL_HONOR_NUM_TESTS_KEPT_IN_MEMORY', 'true')
+
+        const cfg = {
+          isTextTerminal: true,
+          numTestsKeptInMemory: 0,
+          resolved: {
+            numTestsKeptInMemory: { value: 0, from: 'default' },
+          },
+        }
+
+        const overrides = {
+          numTestsKeptInMemory: 50,
+        }
+
+        const updated = updateWithPluginValues(cfg as any, overrides, 'e2e')
+
+        expect(updated.numTestsKeptInMemory).toEqual(50)
+      })
+
+      it('does not force numTestsKeptInMemory to 0 in open mode', () => {
+        const cfg = {
+          isTextTerminal: false,
+          numTestsKeptInMemory: 0,
+          resolved: {
+            numTestsKeptInMemory: { value: 0, from: 'default' },
+          },
+        }
+
+        const overrides = {
+          numTestsKeptInMemory: 50,
+        }
+
+        const updated = updateWithPluginValues(cfg as any, overrides, 'e2e')
+
+        expect(updated.numTestsKeptInMemory).toEqual(50)
       })
     })
   })

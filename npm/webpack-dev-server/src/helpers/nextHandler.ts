@@ -3,8 +3,10 @@ import Module from 'module'
 import type { Configuration } from 'webpack'
 import * as fs from 'fs'
 import * as path from 'path'
+import semver from 'semver'
 import type { PresetHandlerResult, WebpackDevServerConfig } from '../devServer'
-import { cypressWebpackPath, getMajorVersion, ModuleClass, SourcedDependency, SourcedWebpack, sourceFramework, sourceHtmlWebpackPlugin, sourceWebpackDevServer } from './sourceRelativeWebpackModules'
+import type { ModuleClass, SourcedDependency, SourcedWebpack } from './sourceRelativeWebpackModules'
+import { getMajorVersion, sourceFramework, sourceHtmlWebpackPlugin, sourceWebpackDevServer } from './sourceRelativeWebpackModules'
 
 const debug = debugLib('cypress:webpack-dev-server-fresh:nextHandler')
 
@@ -13,7 +15,7 @@ export async function nextHandler (devServerConfig: WebpackDevServerConfig): Pro
 
   debug('resolved next.js webpack config %o', webpackConfig)
 
-  checkSWC(webpackConfig, devServerConfig.cypressConfig)
+  checkNodeVersion(webpackConfig, devServerConfig.cypressConfig)
   watchEntryPoint(webpackConfig)
   allowGlobalStylesImports(webpackConfig)
   changeNextCachePath(webpackConfig)
@@ -27,13 +29,25 @@ export async function nextHandler (devServerConfig: WebpackDevServerConfig): Pro
  * `loadConfig` acquires the next.config.js
  * `getNextJsBaseWebpackConfig` acquires the webpackConfig dependent on the next.config.js
  */
-function getNextJsPackages (devServerConfig: WebpackDevServerConfig) {
+async function getNextJsPackages (devServerConfig: WebpackDevServerConfig) {
   const resolvePaths = { paths: [devServerConfig.cypressConfig.projectRoot] }
   const packages = {} as {
     loadConfig: (phase: 'development', dir: string) => Promise<any>
-    getNextJsBaseWebpackConfig: Function
-    nextLoadJsConfig: Function
+    getNextJsBaseWebpackConfig: (dir: string, options: Record<string, unknown>) => Promise<Configuration>
+    nextLoadJsConfig: (dir: string, nextConfig: unknown) => Promise<{ jsConfig: unknown, resolvedBaseUrl: unknown }>
     getSupportedBrowsers: (dir: string, isDevelopment: boolean, nextJsConfig: any) => Promise<string[] | undefined>
+  }
+
+  // Starting with Next.js 16.0.3, we need to proactively install SWC bindings
+  // See: https://github.com/vercel/next.js/pull/85787
+  try {
+    const installBindingsPath = require.resolve('next/dist/build/swc/install-bindings', resolvePaths)
+    const { installBindings } = require(installBindingsPath)
+
+    await installBindings()
+  } catch (e: any) {
+    // installBindings doesn't exist in Next.js < 16.0.3, which is fine
+    debug('installBindings not available (Next.js < 16.0.3): %s', e.message ?? e)
   }
 
   try {
@@ -41,7 +55,7 @@ function getNextJsPackages (devServerConfig: WebpackDevServerConfig) {
 
     packages.loadConfig = require(loadConfigPath).default
   } catch (e: any) {
-    throw new Error(`Failed to load "next/dist/server/config" with error: ${e.message ?? e}`)
+    throw new Error(`Failed to load "next/dist/server/config" with error: ${e.message ?? e}`, { cause: e })
   }
 
   try {
@@ -49,7 +63,7 @@ function getNextJsPackages (devServerConfig: WebpackDevServerConfig) {
 
     packages.getNextJsBaseWebpackConfig = require(getNextJsBaseWebpackConfigPath).default
   } catch (e: any) {
-    throw new Error(`Failed to load "next/dist/build/webpack-config" with error: ${ e.message ?? e}`)
+    throw new Error(`Failed to load "next/dist/build/webpack-config" with error: ${ e.message ?? e}`, { cause: e })
   }
 
   try {
@@ -57,7 +71,7 @@ function getNextJsPackages (devServerConfig: WebpackDevServerConfig) {
 
     packages.nextLoadJsConfig = require(loadJsConfigPath).default
   } catch (e: any) {
-    throw new Error(`Failed to load "next/dist/build/load-jsconfig" with error: ${ e.message ?? e}`)
+    throw new Error(`Failed to load "next/dist/build/load-jsconfig" with error: ${ e.message ?? e}`, { cause: e })
   }
 
   // Does not exist prior to Next 13.
@@ -66,7 +80,7 @@ function getNextJsPackages (devServerConfig: WebpackDevServerConfig) {
 
     packages.getSupportedBrowsers = require(getUtilsPath).getSupportedBrowsers ?? (() => Promise.resolve([]))
   } catch (e: any) {
-    throw new Error(`Failed to load "next/dist/build/utils" with error: ${ e.message ?? e}`)
+    throw new Error(`Failed to load "next/dist/build/utils" with error: ${ e.message ?? e}`, { cause: e })
   }
 
   return packages
@@ -74,124 +88,50 @@ function getNextJsPackages (devServerConfig: WebpackDevServerConfig) {
 
 /**
  * Types for `getNextJsBaseWebpackConfig` based on version:
- * - v11.1.4
-  [
-    dir: string,
-    options: {
-      buildId: string
-      config: NextConfigComplete
-      dev?: boolean
-      isServer?: boolean
-      pagesDir: string
-      target?: string
-      reactProductionProfiling?: boolean
-      entrypoints: WebpackEntrypoints
-      rewrites: CustomRoutes['rewrites']
-      isDevFallback?: boolean
-      runWebpackSpan: Span
-    }
-  ]
-
- * - v12.0.0 = Same as v11.1.4
-
- * - v12.1.6
-  [
-    dir: string,
-    options: {
-      buildId: string
-      config: NextConfigComplete
-      compilerType: 'client' | 'server' | 'edge-server'
-      dev?: boolean
-      entrypoints: webpack5.EntryObject
-      hasReactRoot: boolean
-      isDevFallback?: boolean
-      pagesDir: string
-      reactProductionProfiling?: boolean
-      rewrites: CustomRoutes['rewrites']
-      runWebpackSpan: Span
-      target?: string
-    }
-  ]
-
- * - v13.0.0
-  [
-    dir: string,
-    options: {
-      buildId: string
-      config: NextConfigComplete
-      compilerType: CompilerNameValues
-      dev?: boolean
-      entrypoints: webpack.EntryObject
-      hasReactRoot: boolean
-      isDevFallback?: boolean
-      pagesDir?: string
-      reactProductionProfiling?: boolean
-      rewrites: CustomRoutes['rewrites']
-      runWebpackSpan: Span
-      target?: string
-      appDir?: string
-      middlewareMatchers?: MiddlewareMatcher[]
-    }
-  ]
-
- * - v13.0.1
-  [
-    dir: string,
-    options: {
-      buildId: string
-      config: NextConfigComplete
-      compilerType: CompilerNameValues
-      dev?: boolean
-      entrypoints: webpack.EntryObject
-      isDevFallback?: boolean
-      pagesDir?: string
-      reactProductionProfiling?: boolean
-      rewrites: CustomRoutes['rewrites']
-      runWebpackSpan: Span
-      target?: string
-      appDir?: string
-      middlewareMatchers?: MiddlewareMatcher[]
-    }
-  ]
-
- * - v13.2.1
+ * - v15.0.0 and v16.0.0
   [
     dir: string,
     options:  {
-    buildId: string
-    config: NextConfigComplete
-    compilerType: CompilerNameValues
-    dev?: boolean
-    entrypoints: webpack.EntryObject
-    isDevFallback?: boolean
-    pagesDir?: string
-    reactProductionProfiling?: boolean
-    rewrites: CustomRoutes['rewrites']
-    runWebpackSpan: Span
-    target?: string
-    appDir?: string
-    middlewareMatchers?: MiddlewareMatcher[]
-    noMangling?: boolean
-    jsConfig: any
-    resolvedBaseUrl: string | undefined
-    supportedBrowsers: string[] | undefined
-    clientRouterFilters?: {
-        staticFilter: ReturnType<
-          import('../shared/lib/bloom-filter').BloomFilter['export']
-        >
-        dynamicFilter: ReturnType<
-          import('../shared/lib/bloom-filter').BloomFilter['export']
-        >
+      buildId: string
+      encryptionKey: string
+      config: NextConfigComplete
+      compilerType: CompilerNameValues
+      dev?: boolean
+      entrypoints: webpack.EntryObject
+      isDevFallback?: boolean
+      pagesDir?: string
+      reactProductionProfiling?: boolean
+      rewrites: CustomRoutes['rewrites']
+      originalRewrites?: CustomRoutes['rewrites']
+      originalRedirects?: CustomRoutes['redirects']
+      runWebpackSpan: Span
+      appDir?: string
+      middlewareMatchers?: ProxyMatcher[]
+      noMangling?: boolean
+      jsConfig: any
+      jsConfigPath?: string
+      resolvedBaseUrl: ResolvedBaseUrl
+      supportedBrowsers: string[] | undefined
+      clientRouterFilters?: {
+          staticFilter: ReturnType<
+            import('../shared/lib/bloom-filter').BloomFilter['export']
+          >
+          dynamicFilter: ReturnType<
+            import('../shared/lib/bloom-filter').BloomFilter['export']
+          >
+        }
+      fetchCacheKeyPrefix?: string
+      isCompileMode?: boolean
+      previewProps: NonNullable<(typeof NextBuildContext)['previewProps']>;
       }
     }
   ]
  */
 async function loadWebpackConfig (devServerConfig: WebpackDevServerConfig): Promise<Configuration> {
-  const { loadConfig, getNextJsBaseWebpackConfig, nextLoadJsConfig, getSupportedBrowsers } = getNextJsPackages(devServerConfig)
+  const { loadConfig, getNextJsBaseWebpackConfig, nextLoadJsConfig, getSupportedBrowsers } = await getNextJsPackages(devServerConfig)
 
   const nextConfig = await loadConfig('development', devServerConfig.cypressConfig.projectRoot)
   const runWebpackSpan = getRunWebpackSpan(devServerConfig)
-  const reactVersion = getReactVersion(devServerConfig.cypressConfig.projectRoot)
   const jsConfigResult = await nextLoadJsConfig?.(devServerConfig.cypressConfig.projectRoot, nextConfig)
   const supportedBrowsers = await getSupportedBrowsers(devServerConfig.cypressConfig.projectRoot, true, nextConfig)
 
@@ -205,12 +145,8 @@ async function loadWebpackConfig (devServerConfig: WebpackDevServerConfig): Prom
       entrypoints: {},
       rewrites: { fallback: [], afterFiles: [], beforeFiles: [] },
       ...runWebpackSpan,
-      // Client webpack config for Next.js <= 12.1.5
-      isServer: false,
       // Client webpack config for Next.js > 12.1.5
       compilerType: 'client',
-      // Required for Next.js > 13
-      hasReactRoot: reactVersion === 18,
       // Required for Next.js > 13.2.0 to respect TS/JS config
       jsConfig: jsConfigResult.jsConfig,
       // Required for Next.js > 13.2.0 to respect tsconfig.compilerOptions.baseUrl
@@ -224,27 +160,18 @@ async function loadWebpackConfig (devServerConfig: WebpackDevServerConfig): Prom
 }
 
 /**
- * Check if Next is using the SWC compiler. Compilation will fail if user has `nodeVersion: "bundled"` set
- * due to SWC certificate issues.
+ * Compilation will fail if user has `nodeVersion: "bundled"` set due to SWC certificate issues.
  */
-function checkSWC (
-  webpackConfig: Configuration,
+function checkNodeVersion (
+  _webpackConfig: Configuration,
   cypressConfig: Cypress.PluginConfigOptions,
 ) {
-  const hasSWCLoader = webpackConfig.module?.rules?.some((rule) => {
-    return typeof rule !== 'string' && rule.oneOf?.some(
-      (oneOf) => (oneOf.use as any)?.loader === 'next-swc-loader',
-    )
-  })
-
   // "resolvedNodePath" is only set when using the user's Node.js, which is required to compile Next.js with SWC optimizations
   // If it is not set, they have either explicitly set "nodeVersion" to "bundled" or are are using Cypress < 9.0.0 where it was set to "bundled" by default
   // @ts-expect-error nodeVersion has been removed as of 13.0.0 however this plugin can be used with many versions of cypress
-  if (hasSWCLoader && cypressConfig.nodeVersion === 'bundled') {
+  if (cypressConfig.nodeVersion === 'bundled') {
     throw new Error(`Cypress cannot compile your Next.js application when "nodeVersion" is set to "bundled". Please remove this option from your Cypress configuration file.`)
   }
-
-  return false
 }
 
 const exists = async (file: string) => {
@@ -278,28 +205,13 @@ async function findPagesDir (projectRoot: string) {
   return projectRoot
 }
 
-// Starting with v11.1.1, a trace is required.
-// 'next/dist/telemetry/trace/trace' only exists since v10.0.9
-// and our peerDeps support back to v8 so try-catch this import
-// Starting from 12.0 trace is now located in 'next/dist/trace/trace'
+// 'next/dist/trace/trace' has been the trace location since Next.js 12.0
 function getRunWebpackSpan (devServerConfig: WebpackDevServerConfig): { runWebpackSpan?: any } {
-  let trace: (name: string) => any
-
   try {
-    try {
-      const traceImportPath = require.resolve('next/dist/telemetry/trace/trace', { paths: [devServerConfig.cypressConfig.projectRoot] })
+    const traceImportPath = require.resolve('next/dist/trace/trace', { paths: [devServerConfig.cypressConfig.projectRoot] })
+    const trace: (name: string) => any = require(traceImportPath).trace
 
-      trace = require(traceImportPath).trace
-
-      return { runWebpackSpan: trace('cypress') }
-    } catch (_) {
-      // @ts-ignore
-      const traceImportPath = require.resolve('next/dist/trace/trace', { paths: [devServerConfig.cypressConfig.projectRoot] })
-
-      trace = require(traceImportPath).trace
-
-      return { runWebpackSpan: trace('cypress') }
-    }
+    return { runWebpackSpan: trace('cypress') }
   } catch (_) {
     return {}
   }
@@ -310,7 +222,7 @@ const originalModuleLoad = (Module as ModuleClass)._load
 function sourceNextWebpackDeps (devServerConfig: WebpackDevServerConfig) {
   const framework = sourceFramework(devServerConfig)!
   const webpack = sourceNextWebpack(devServerConfig, framework)
-  const webpackDevServer = sourceWebpackDevServer(devServerConfig, framework)
+  const webpackDevServer = sourceWebpackDevServer(devServerConfig, webpack, framework)
   const htmlWebpackPlugin = sourceHtmlWebpackPlugin(devServerConfig, framework, webpack)
 
   return {
@@ -338,49 +250,27 @@ function sourceNextWebpack (devServerConfig: WebpackDevServerConfig, framework: 
     throw e
   }
 
-  // Next 11 allows the choice of webpack@4 or webpack@5, depending on the "webpack5" property in their next.config.js
-  // The webpackModule.init" for Next 11 returns a webpack@4 or webpack@4 compiler instance based on this boolean
-  let webpack5 = true
   const importPath = path.join(path.dirname(webpackJsonPath), 'webpack.js')
   const webpackModule = require(importPath)
 
-  try {
-    const nextConfig = require(path.resolve(devServerConfig.cypressConfig.projectRoot, 'next.config.js'))
-
-    debug('NextWebpack: next.config.js found - %o', nextConfig)
-
-    if (nextConfig.webpack5 === false) {
-      webpack5 = false
-    }
-  } catch (e) {
-    // No next.config.js, assume webpack 5
+  // If Next.js is 16 and greater, webpack.js runs the required code previously inside init() on require().
+  // init() no longer exists and has the same affect on import, so we don't/can't invoke it
+  if (semver.lt(framework.packageJson.version, '16.0.0')) {
+    // for next 15 and down, we need to initialize the webpack module
+    webpackModule.init(true)
   }
-
-  debug('NextWebpack: webpack5 - %s', webpack5)
-  webpackModule.init(webpack5)
 
   const packageJson = require(webpackJsonPath)
 
   webpack.importPath = importPath
   // The package.json of "next/dist/compiled/webpack/package.json" has no version so we supply the version for later use
-  webpack.packageJson = { ...packageJson, version: webpack5 ? '5' : '4' }
+  webpack.packageJson = { ...packageJson, version: '5' }
   webpack.module = webpackModule.webpack
-  webpack.majorVersion = getMajorVersion(webpack.packageJson, [4, 5])
+  webpack.majorVersion = getMajorVersion(webpack.packageJson, [5])
 
   debug('NextWebpack: Successfully loaded NextWebpack - %o', webpack)
 
   ;(Module as ModuleClass)._load = function (request, parent, isMain) {
-    // Next with webpack@4 doesn't ship certain dependencies that HtmlWebpackPlugin requires, so we patch the resolution through to our bundled version
-    if ((request === 'webpack' || request.startsWith('webpack/')) && webpack.majorVersion === 4) {
-      const resolvePath = require.resolve(request, {
-        paths: [cypressWebpackPath(devServerConfig)],
-      })
-
-      debug('NextWebpack: Module._load for webpack@4 - %s', resolvePath)
-
-      return originalModuleLoad(resolvePath, parent, isMain)
-    }
-
     if (request === 'webpack' || request.startsWith('webpack/')) {
       const resolvePath = require.resolve(request, {
         paths: [framework.importPath],
@@ -406,7 +296,7 @@ function watchEntryPoint (webpackConfig: Configuration) {
       ignored: [...webpackConfig.watchOptions.ignored.filter((pattern: string) => !/node_modules/.test(pattern)), '**/node_modules/!(@cypress/webpack-dev-server/dist/browser.js)**'],
     }
 
-    debug('found options next.js watchOptions.ignored %O', webpackConfig.watchOptions.ignored)
+    debug('found options next.js watchOptions.ignored %o', webpackConfig.watchOptions.ignored)
   }
 }
 
@@ -447,16 +337,5 @@ function changeNextCachePath (webpackConfig: Configuration) {
     webpackConfig.cache.cacheDirectory = cacheDirectory.replace(/webpack$/, 'cypress-webpack')
 
     debug('Changing Next cache path from %s to %s', cacheDirectory, webpackConfig.cache.cacheDirectory)
-  }
-}
-
-function getReactVersion (projectRoot: string): number | undefined {
-  try {
-    const reactPackageJsonPath = require.resolve('react/package.json', { paths: [projectRoot] })
-    const { version } = require(reactPackageJsonPath)
-
-    return Number(version.split('.')[0])
-  } catch (e) {
-    debug('Failed to source react with error: ', e)
   }
 }

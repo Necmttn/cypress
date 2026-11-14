@@ -1,3 +1,108 @@
+# [@[secure]/grep-v7.0.0](https://github.com/[secure]-io/[secure]/compare/@[secure]/grep-v[secure]...@[secure]/grep-v7.0.0) (2026-08-26)
+
+
+### breaking
+
+* remove `Cypress.env()` API, `env` testConfig override, and `allowCypressEnv` config option ([#33963](https://github.com/[secure]-io/[secure]/issues/33963)) ([e4fd8ad](https://github.com/[secure]-io/[secure]/commit/e4fd8ade91d832e80b3d18b612ca006ea7ba8fc5)), closes [project-base#getConfig](https://github.com/project-base/issues/getConfig)
+
+
+### BREAKING CHANGES
+
+* Cypress.env() has been removed. Use Cypress.expose() for
+values that need to be accessible in the [secure], or cy.env() to read
+server-side environment variables.
+
+env is no longer a valid key in per-test or suite config overrides. Test
+config overrides execute only in the [secure], so env values could never be
+applied via the server. Use expose: { KEY: value } as the direct replacement.
+
+allowCypressEnv has been removed from config. If the option is still present
+in a project's [secure].config, Cypress will warn the user to remove it.
+
+Also bumps @percy/[secure] to 3.1.8 for Cypress.expose() compatibility, removes
+env: {} from the [secure]-tests.ts type test, restores correct formatting and
+trailing newline state in pristine scaffold snapshot files, and adds a root
+.eslintignore to prevent lint-staged from reformatting those snapshot files.
+
+Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+
+* fix: compute isInteractive server-side for simulate-open-mode
+
+HtmlDataSource strips cfg.env before serializing config to the [secure],
+so the driver cannot read INTERNAL_SIMULATE_OPEN_MODE from env. Compute
+
+# [@cypress/grep-v6.0.3](https://github.com/cypress-io/cypress/compare/@cypress/grep-v6.0.2...@cypress/grep-v6.0.3) (2026-08-07)
+
+
+### Bug Fixes
+
+* **grep:** ignore empty parts in a semicolon-separated grep title ([#34525](https://github.com/cypress-io/cypress/issues/34525)) ([4e8fe8e](https://github.com/cypress-io/cypress/commit/4e8fe8e346b9bc0ee1d71a501788a2393d369382))
+
+# [@cypress/grep-v6.0.2](https://github.com/cypress-io/cypress/compare/@cypress/grep-v6.0.1...@cypress/grep-v6.0.2) (2026-06-03)
+
+
+### Bug Fixes
+
+* improve grep warning message when all specs are filtered ([#33999](https://github.com/cypress-io/cypress/issues/33999)) ([a991400](https://github.com/cypress-io/cypress/commit/a991400a3dcc95e4f12bc2dee701531ecfcd28d6)), closes [#24568](https://github.com/cypress-io/cypress/issues/24568)
+
+# [@cypress/grep-v6.0.1](https://github.com/cypress-io/cypress/compare/@cypress/grep-v6.0.0...@cypress/grep-v6.0.1) (2026-06-01)
+
+# [@cypress/grep-v6.0.0](https://github.com/cypress-io/cypress/compare/@cypress/grep-v5.1.0...@cypress/grep-v6.0.0) (2026-02-05)
+
+
+### breaking
+
+* **@cypress/grep:** release version 6.0.0 of @cypress/grep ([#33242](https://github.com/cypress-io/cypress/issues/33242)) ([49aa0bb](https://github.com/cypress-io/cypress/commit/49aa0bbab1af77be3f6431d2252c4d7cac6bff26))
+
+
+### BREAKING CHANGES
+
+* **@cypress/grep:** use Cypress.expose() instead of Cypress.env(), which requires a peer dependency on Cypress 15.10.0
+
+Co-authored-by: Cacie Prins <cacieprins@users.noreply.github.com>
+
+# [@cypress/grep-v5.1.0](https://github.com/cypress-io/cypress/compare/@cypress/grep-v5.0.1...@cypress/grep-v5.1.0) (2026-01-22)
+
+
+### Features
+
+* add `cy.env()`,` allowCypressEnv`, and deprecate `Cypress.env()` ([#33181](https://github.com/cypress-io/cypress/issues/33181)) ([ebe4a2c](https://github.com/cypress-io/cypress/commit/ebe4a2cab7312df76b28f59c3b0a91fc4a5e2444))
+
+# [@cypress/grep-v5.0.1](https://github.com/cypress-io/cypress/compare/@cypress/grep-v5.0.0...@cypress/grep-v5.0.1) (2025-12-08)
+
+
+### Bug Fixes
+
+* handle grepFilterSpecs as string "true" from CLI environment variables ([#33060](https://github.com/cypress-io/cypress/issues/33060)) ([d296aad](https://github.com/cypress-io/cypress/commit/d296aad1c9f3598c587ac6e520bd300d9dac1813))
+
+# [@cypress/grep-v5.0.0](https://github.com/cypress-io/cypress/compare/@cypress/grep-v4.1.1...@cypress/grep-v5.0.0) (2025-09-19)
+
+
+### breaking
+
+* convert @cypress/grep to TypeScript and change what is exported ([c83df82](https://github.com/cypress-io/cypress/commit/c83df82db01ffecc6e217fb1ab01103ef72f1095))
+
+
+### BREAKING CHANGES
+
+* @cypress/grep now exports a register function that can be imported from the users spec file. Additionally, the plugin can be imported via @cypress/grep/plugin.
+
+# [@cypress/grep-v4.1.1](https://github.com/cypress-io/cypress/compare/@cypress/grep-v4.1.0...@cypress/grep-v4.1.1) (2025-08-08)
+
+# [@cypress/grep-v4.1.0](https://github.com/cypress-io/cypress/compare/@cypress/grep-v4.0.2...@cypress/grep-v4.1.0) (2024-07-02)
+
+
+### Features
+
+* **deps:** update dependency find-test-names to ^1.28.18 ([#29672](https://github.com/cypress-io/cypress/issues/29672)) ([c3694a8](https://github.com/cypress-io/cypress/commit/c3694a8835f715c9fb3cd1713dbe60f1b047c2ff))
+
+# [@cypress/grep-v4.0.2](https://github.com/cypress-io/cypress/compare/@cypress/grep-v4.0.1...@cypress/grep-v4.0.2) (2024-06-07)
+
+
+### Bug Fixes
+
+* update cypress to Typescript 5 ([#29568](https://github.com/cypress-io/cypress/issues/29568)) ([f3b6766](https://github.com/cypress-io/cypress/commit/f3b67666a5db0438594339c379cf27e1fd1e4abc))
+
 # [@cypress/grep-v4.0.1](https://github.com/cypress-io/cypress/compare/@cypress/grep-v4.0.0...@cypress/grep-v4.0.1) (2023-10-16)
 
 

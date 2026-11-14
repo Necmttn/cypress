@@ -1,11 +1,15 @@
 import debugFn from 'debug'
-import type { ModuleNode, Plugin, ViteDevServer } from 'vite'
-import type { Vite } from '../getVite'
+import type { ModuleNode, PluginOption, ViteDevServer } from 'vite-8'
+import type { Vite } from '../getVite.js'
 import { parse, HTMLElement } from 'node-html-parser'
 import fs from 'fs'
 
-import type { ViteDevServerConfig } from '../devServer'
+import type { ViteDevServerConfig } from '../devServer.js'
 import path from 'path'
+import { fileURLToPath } from 'url'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
 
 const debug = debugFn('cypress:vite-dev-server:plugins:cypress')
 
@@ -27,7 +31,7 @@ function getSpecsPathsSet (specs: Spec[]) {
 export const Cypress = (
   options: ViteDevServerConfig,
   vite: Vite,
-): Plugin => {
+): PluginOption => {
   let base = '/'
 
   const projectRoot = options.cypressConfig.projectRoot
@@ -40,9 +44,15 @@ export const Cypress = (
   let specsPathsSet = getSpecsPathsSet(specs)
   // TODO: use async fs methods here
   // eslint-disable-next-line no-restricted-syntax
-  let loader = fs.readFileSync(INIT_FILEPATH, 'utf8')
+  const loader = fs.readFileSync(INIT_FILEPATH, 'utf8')
 
-  devServerEvents.on('dev-server:specs:changed', (specs: Spec[]) => {
+  devServerEvents.on('dev-server:specs:changed', ({ specs, options }: { specs: Spec[], options?: { neededForJustInTimeCompile: boolean } }) => {
+    if (options?.neededForJustInTimeCompile) {
+      // if an option is needed for just in time compile, no-op as this isn't supported in vite
+      return
+    }
+
+    debug(`dev-server:secs:changed: ${specs.map((spec) => spec.relative)}`)
     specsPathsSet = getSpecsPathsSet(specs)
   })
 
@@ -93,13 +103,7 @@ export const Cypress = (
     },
     configureServer: async (server: ViteDevServer) => {
       server.middlewares.use(`${base}index.html`, async (req, res) => {
-        let transformedIndexHtml = await server.transformIndexHtml(base, '')
-        const viteImport = `<script type="module" src="${options.cypressConfig.devServerPublicPathRoute}/@vite/client"></script>`
-
-        // If we're doing cy-in-cy, we need to be able to access the Cypress instance from the parent frame.
-        if (process.env.CYPRESS_INTERNAL_VITE_OPEN_MODE_TESTING) {
-          transformedIndexHtml = transformedIndexHtml.replace(viteImport, `<script>document.domain = 'localhost';</script>${viteImport}`)
-        }
+        const transformedIndexHtml = await server.transformIndexHtml(base, '')
 
         return res.end(transformedIndexHtml)
       })

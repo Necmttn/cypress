@@ -5,11 +5,13 @@ import Promise from 'bluebird'
 import debugFn from 'debug'
 import $dom from '../dom'
 import $utils from './../cypress/utils'
-import type { ElWindowPostion, ElViewportPostion, ElementPositioning } from '../dom/coordinates'
+import type { ElWindowPosition, ElViewportPosition, ElementPositioning } from '../dom/coordinates'
 import $elements from '../dom/elements'
 import $errUtils from '../cypress/error_utils'
 import { callNativeMethod, getNativeProp } from '../dom/elements/nativeProps'
 const debug = debugFn('cypress:driver:actionability')
+// for logs emitted on every retry iteration of an actionability check
+const debugVerbose = debugFn('cypress-verbose:driver:actionability')
 
 const delay = 50
 
@@ -18,20 +20,33 @@ const getStickyEl = $dom.getFirstStickyPositionParent
 
 const dispatchPrimedChangeEvents = function (state) {
   // if we have a changeEvent, dispatch it
-  let changeEvent
-
-  changeEvent = state('changeEvent')
+  const changeEvent = state('changeEvent')
 
   if (changeEvent) {
     return changeEvent()
   }
 }
 
+// `top` and `bottom` only describe the block axis, so they leave `inline` at the
+// browser default the way `scrollIntoView(alignToTop)` does. The rest name a
+// position either axis can take, so they apply to both.
 const scrollBehaviorOptionsMap = {
-  top: 'start',
-  bottom: 'end',
-  center: 'center',
-  nearest: 'nearest',
+  top: { block: 'start' },
+  bottom: { block: 'end' },
+  start: { block: 'start', inline: 'start' },
+  end: { block: 'end', inline: 'end' },
+  center: { block: 'center', inline: 'center' },
+  nearest: { block: 'nearest', inline: 'nearest' },
+}
+
+// `scrollBehavior` is either one of the alignments above or an explicit per-axis
+// `{ block, inline }` using the same values as the native `scrollIntoView`. An
+// axis the caller left out is omitted so that `scrollIntoView` applies its own
+// default.
+const toScrollIntoViewOptions = (scrollBehavior) => {
+  return _.isPlainObject(scrollBehavior)
+    ? _.pick(scrollBehavior, ['block', 'inline'])
+    : scrollBehaviorOptionsMap[scrollBehavior]
 }
 
 const getPositionFromArguments = function (positionOrX, y, options) {
@@ -99,6 +114,7 @@ const ensureElIsNotAnimating = ($el, coords = [], threshold, name: string) => {
 
   // bail if we dont yet have two points
   if (lastTwo.length !== 2) {
+    debug('animation check for `%s` has %d coordinate sample(s); 2 are required', name, lastTwo.length)
     $errUtils.throwErrByPath('dom.animation_check_failed')
   }
 
@@ -107,8 +123,12 @@ const ensureElIsNotAnimating = ($el, coords = [], threshold, name: string) => {
   // verify that there is not a distance
   // greater than a default of '5' between
   // the points
-  if ($utils.getDistanceBetween(point1, point2) > threshold) {
+  const distance = $utils.getDistanceBetween(point1, point2)
+
+  if (distance > threshold) {
     const node = $dom.stringify($el)
+
+    debugVerbose('distance between coordinate samples %o and %o is %d with threshold %d for `%s` on %s', point1, point2, distance, threshold, name, node)
 
     $errUtils.throwErrByPath('dom.animating', {
       args: { cmd: name, node },
@@ -147,6 +167,8 @@ const ensureIsDescendent = ($el1, $el2, name: string, onFail) => {
       const element1 = $dom.stringify($el1)
       const element2 = $dom.stringify($el2)
 
+      debugVerbose('element at the checked coordinates is %s, which is not a descendent of %s, the target of `%s`', element2, element1, name)
+
       $errUtils.throwErrByPath('dom.covered', {
         onFail,
         args: { cmd: name, element1, element2 },
@@ -179,9 +201,7 @@ const ensureElIsNotCovered = function (cy, win, $el, fromElViewport, options, lo
   const getElementAtPointFromViewport = function (fromElViewport) {
     // get the element at point from the viewport based
     // on the desired x/y normalized coordinations
-    let elAtCoords
-
-    elAtCoords = $dom.getElementAtPointFromViewport(win.document, fromElViewport.x, fromElViewport.y)
+    const elAtCoords = $dom.getElementAtPointFromViewport(win.document, fromElViewport.x, fromElViewport.y)
 
     if (elAtCoords) {
       $elAtCoords = $dom.wrap(elAtCoords)
@@ -505,7 +525,7 @@ const verify = function (cy, $el, config, options, callbacks: VerifyCallbacks) {
   }
 
   return Promise.try(() => {
-    const coordsHistory: (ElViewportPostion | ElWindowPostion)[] = []
+    const coordsHistory: (ElViewportPosition | ElWindowPosition)[] = []
 
     const runAllChecks = function () {
       let $elAtCoords
@@ -522,11 +542,11 @@ const verify = function (cy, $el, config, options, callbacks: VerifyCallbacks) {
 
         if (options.scrollBehavior !== false) {
           // scroll the element into view
-          const scrollBehavior = scrollBehaviorOptionsMap[options.scrollBehavior]
+          const scrollIntoViewOptions = toScrollIntoViewOptions(options.scrollBehavior)
           const removeScrollBehaviorFix = addScrollBehaviorFix($el)
 
-          debug('scrollIntoView:', $el[0])
-          $el.get(0).scrollIntoView({ block: scrollBehavior })
+          debug('scrollIntoView:', $el[0], scrollIntoViewOptions)
+          $el.get(0).scrollIntoView(scrollIntoViewOptions)
 
           removeScrollBehaviorFix()
 
@@ -536,12 +556,15 @@ const verify = function (cy, $el, config, options, callbacks: VerifyCallbacks) {
         }
 
         if (options.ensure.visibility) {
-          // ensure element is visible but do not check if hidden by ancestors
-          // until nudging algorithm occurs
-          // https://whimsical.com/actionability-J38eY9K2Y3vA6uCMWtmLVA
-
-          // @ts-ignore
-          Cypress.ensure.isStrictlyVisible($el, name, _log)
+          // The legacy strategy checks visibility in two stages: the element here, then
+          // — after the covering/nudging algorithm below — whether it's hidden by ancestors.
+          // The modern strategy does it in one checkVisibility-based call here, so it has
+          // no second stage. https://whimsical.com/actionability-J38eY9K2Y3vA6uCMWtmLVA
+          if (Cypress.config('visibilityStrategy') === 'modern') {
+            Cypress.ensure.isVisible($el, name, _log)
+          } else {
+            Cypress.ensure.isStrictlyVisible($el, name, _log)
+          }
         }
 
         if (options.ensure.notReadonly) {
@@ -577,7 +600,13 @@ const verify = function (cy, $el, config, options, callbacks: VerifyCallbacks) {
         // this calculation is relative from the viewport so we
         // only care about fromElViewport coords
         $elAtCoords = options.ensure.notCovered && ensureElIsNotCovered(cy, win, $el, coords.fromElViewport, options, _log, onScroll)
-        Cypress.ensure.isNotHiddenByAncestors($el, name, _log)
+
+        // Only the legacy strategy runs this ancestor phase. The modern check above
+        // already covers ancestor display/visibility, and it intentionally omits the
+        // legacy overflow/out-of-bounds clipping check (matching modern `should('be.visible')`).
+        if (Cypress.config('visibilityStrategy') !== 'modern') {
+          Cypress.ensure.isNotHiddenByAncestors($el, name, _log)
+        }
       }
 
       // pass our final object into onReady
@@ -607,6 +636,8 @@ const verify = function (cy, $el, config, options, callbacks: VerifyCallbacks) {
           if ($el.length === 0 || $dom.isDetached($el)) {
             const current = cy.state('current')
             const subjectChain = cy.subjectChain(current.get('chainerId'))
+
+            debugVerbose('re-queried subject for `%s` has length %d, isDetached %o', current.get('name'), $el.length, $dom.isDetached($el))
 
             $errUtils.throwErrByPath('subject.detached_during_actionability', {
               args: { name: current.get('name'), subjectChain },

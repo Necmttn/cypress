@@ -1,4 +1,3 @@
-import Bluebird from 'bluebird'
 import Debug from 'debug'
 import fs from 'fs-extra'
 import _ from 'lodash'
@@ -8,7 +7,8 @@ import type {
   ResolvedFromConfig,
   ResolvedConfigurationOptionSource,
 } from '@packages/types'
-import errors, { ConfigValidationFailureInfo, CypressError } from '@packages/errors'
+import type { ConfigValidationFailureInfo, CypressError } from '@packages/errors'
+import errors from '@packages/errors'
 
 import type { Config } from './types'
 
@@ -22,8 +22,18 @@ import {
 } from '../browser'
 import { hideKeys, setUrls, coerce } from '../utils'
 import { options } from '../options'
+import { isPlainObject } from '../validation'
 
 const debug = Debug('cypress:config:project:utils')
+
+// In run mode we always force numTestsKeptInMemory to 0 because keeping tests
+// in memory prevents us from capturing snapshots properly when recording to
+// protocol. The CYPRESS_INTERNAL_HONOR_NUM_TESTS_KEPT_IN_MEMORY env var is an
+// escape hatch (used by the Cypress driver tests that exercise snapshotting)
+// to honor whatever value the user configured.
+export function shouldHonorNumTestsKeptInMemory () {
+  return process.env.CYPRESS_INTERNAL_HONOR_NUM_TESTS_KEPT_IN_MEMORY === 'true'
+}
 
 const hideSpecialVals = function (val: string, key: string) {
   if (_.includes(CYPRESS_SPECIAL_ENV_VARS, key)) {
@@ -33,64 +43,67 @@ const hideSpecialVals = function (val: string, key: string) {
   return val
 }
 
-// an object with a few utility methods for easy stubbing from unit tests
-export const utils = {
-  getProcessEnvVars (obj: NodeJS.ProcessEnv) {
-    return _.reduce(obj, (memo: Record<string, string>, value: string | undefined, key: string) => {
-      if (!value) {
-        return memo
-      }
-
-      if (isCypressEnvLike(key)) {
-        memo[removeEnvPrefix(key)] = coerce(value)
-      }
-
+export function getProcessEnvVars (obj: NodeJS.ProcessEnv) {
+  return _.reduce(obj, (memo: Record<string, string>, value: string | undefined, key: string) => {
+    if (!value) {
       return memo
-    }, {})
-  },
+    }
 
-  resolveModule (name: string) {
-    return require.resolve(name)
-  },
+    if (isCypressEnvLike(key)) {
+      memo[removeEnvPrefix(key)] = coerce(value)
+    }
 
-  // returns:
-  //   false - if the file should not be set
-  //   string - found filename
-  //   null - if there is an error finding the file
-  discoverModuleFile (options: {
-    filename: string
-    projectRoot: string
-  }) {
-    debug('discover module file %o', options)
-    const { filename } = options
+    return memo
+  }, {})
+}
 
-    // they have it explicitly set, so it should be there
-    return fs.pathExists(filename)
-    .then((found) => {
-      if (found) {
-        debug('file exists, assuming it will load')
+export function resolveModule (name: string) {
+  return require.resolve(name)
+}
 
-        return filename
-      }
+// returns:
+//   false - if the file should not be set
+//   string - found filename
+//   null - if there is an error finding the file
+function discoverModuleFile (options: {
+  filename: string
+  projectRoot: string
+}) {
+  debug('discover module file %o', options)
+  const { filename } = options
 
-      debug('could not find %o', { filename })
+  // they have it explicitly set, so it should be there
+  return fs.pathExists(filename)
+  .then((found) => {
+    if (found) {
+      debug('file exists, assuming it will load')
 
-      return null
-    })
-  },
+      return filename
+    }
+
+    debug('could not find %o', { filename })
+
+    return null
+  })
 }
 
 const CYPRESS_ENV_PREFIX = 'CYPRESS_'
 
 const CYPRESS_ENV_PREFIX_LENGTH = CYPRESS_ENV_PREFIX.length
 
-export const CYPRESS_RESERVED_ENV_VARS = [
+// Names the app reads itself, which are not settings for the project's tests
+const CYPRESS_RESERVED_ENV_VARS = [
   'CYPRESS_INTERNAL_ENV',
+  'CYPRESS_AGENT_MODE',
 ]
 
-export const CYPRESS_SPECIAL_ENV_VARS = [
+const CYPRESS_SPECIAL_ENV_VARS = [
   'RECORD_KEY',
 ]
+
+// CYPRESS_env and CYPRESS_expose must be JSON objects. Invalid strings are coerced
+// then spread via _.extend, producing indexed keys that pass isPlainObject validation.
+const PLAIN_OBJECT_CONFIG_KEYS_FROM_ENV = new Set(['env', 'expose'])
 
 const isCypressEnvLike = (key: string) => {
   return _.chain(key)
@@ -118,7 +131,8 @@ export function parseEnv (cfg: Record<string, any>, cliEnvs: Record<string, any>
 
   const configEnv = cfg.env != null ? cfg.env : {}
   const envFile = cfg.envFile != null ? cfg.envFile : {}
-  let processEnvs = utils.getProcessEnvVars(process.env) || {}
+
+  let processEnvs = getProcessEnvVars(process.env) || {}
 
   cliEnvs = cliEnvs != null ? cliEnvs : {}
 
@@ -126,6 +140,17 @@ export function parseEnv (cfg: Record<string, any>, cliEnvs: Record<string, any>
     const cfgKey = matchesConfigKey(key)
 
     if (cfgKey) {
+      if (PLAIN_OBJECT_CONFIG_KEYS_FROM_ENV.has(cfgKey)) {
+        const validationResult = isPlainObject(cfgKey, val)
+
+        if (validationResult !== true) {
+          errors.warning('INVALID_CYPRESS_ENV_OVERRIDE', cfgKey, val)
+          memo.push(key)
+
+          return memo
+        }
+      }
+
       // only change the value if it hasn't been
       // set by the CLI. override default + config
       if (resolved[cfgKey] !== 'cli') {
@@ -157,6 +182,30 @@ export function parseEnv (cfg: Record<string, any>, cliEnvs: Record<string, any>
   // processEnvs is from process env vars
   // cliEnvs is from CLI arguments
   return _.extend(configEnv, envFile, processEnvs, cliEnvs)
+}
+
+function parseExposed (cfg: Record<string, any>, cliExposeVars: Record<string, any>, resolved: Record<string, any> = {}) {
+  const exposeVars: any = (resolved.expose = {})
+
+  const resolveFrom = (from: string, obj = {}) => {
+    return _.each(obj, (val, key) => {
+      return exposeVars[key] = {
+        value: val,
+        from,
+      }
+    })
+  }
+
+  const configExpose = cfg.expose != null ? cfg.expose : {}
+
+  cliExposeVars = cliExposeVars != null ? cliExposeVars : {}
+
+  resolveFrom('config', configExpose)
+  resolveFrom('cli', cliExposeVars)
+
+  // configExpose is from cypress.config.{js,ts,mjs,cjs}
+  // cliExposedVars is from CLI arguments
+  return _.extend(configExpose, cliExposeVars)
 }
 
 // combines the default configuration object with values specified in the
@@ -268,7 +317,7 @@ export function relativeToProjectRoot (projectRoot: string, file: string) {
   }
 
   // captures leading slash(es), both forward slash and back slash
-  const leadingSlashRe = /^[\/|\\]*(?![\/|\\])/
+  const leadingSlashRe = /^[/|\\]*(?![/|\\])/
 
   return file.replace(projectRoot, '').replace(leadingSlashRe, '')
 }
@@ -276,7 +325,7 @@ export function relativeToProjectRoot (projectRoot: string, file: string) {
 // async function
 export async function setSupportFileAndFolder (obj: Config, getFilesByGlob: any) {
   if (!obj.supportFile) {
-    return Bluebird.resolve(obj)
+    return Promise.resolve(obj)
   }
 
   obj = _.clone(obj)
@@ -296,67 +345,64 @@ export async function setSupportFileAndFolder (obj: Config, getFilesByGlob: any)
   }
 
   // TODO move this logic to find support file into util/path_helpers
-  const sf: string = supportFilesByGlob[0]!
+  const originalSupportFilePath: string = supportFilesByGlob[0]!
 
-  debug(`setting support file ${sf}`)
-  debug(`for project root ${obj.projectRoot}`)
+  debug('setting support file %s for project root %s', originalSupportFilePath, obj.projectRoot)
 
-  return Bluebird
-  .try(() => {
-    // resolve full path with extension
-    obj.supportFile = utils.resolveModule(sf)
+  let resolvedPath: string
 
-    return debug('resolved support file %s', obj.supportFile)
-  }).then(() => {
-    if (!checkIfResolveChangedRootFolder(obj.supportFile, sf)) {
-      return
-    }
+  try {
+    resolvedPath = resolveModule(originalSupportFilePath)
+  } catch (err: unknown) {
+    const error = err as NodeJS.ErrnoException
 
-    debug('require.resolve switched support folder from %s to %s', sf, obj.supportFile)
-    // this means the path was probably symlinked, like
-    // /tmp/foo -> /private/tmp/foo
-    // which can confuse the rest of the code
-    // switch it back to "normal" file
-    const supportFileName = path.basename(obj.supportFile)
-    const base = sf?.endsWith(supportFileName) ? path.dirname(sf) : sf
+    if (error.code === 'MODULE_NOT_FOUND') {
+      debug('support JS module %s does not load', originalSupportFilePath)
 
-    obj.supportFile = path.join(base || '', supportFileName)
+      const discoveredPath = await discoverModuleFile({
+        filename: originalSupportFilePath,
+        projectRoot: obj.projectRoot,
+      })
 
-    return fs.pathExists(obj.supportFile)
-    .then((found) => {
-      if (!found) {
-        errors.throwErr('SUPPORT_FILE_NOT_FOUND', relativeToProjectRoot(obj.projectRoot, obj.supportFile))
+      if (discoveredPath === null) {
+        return errors.throwErr('SUPPORT_FILE_NOT_FOUND', relativeToProjectRoot(obj.projectRoot, originalSupportFilePath))
       }
 
-      return debug('switching to found file %s', obj.supportFile)
-    })
-  }).catch({ code: 'MODULE_NOT_FOUND' }, () => {
-    debug('support JS module %s does not load', sf)
-
-    return utils.discoverModuleFile({
-      filename: sf,
-      projectRoot: obj.projectRoot,
-    })
-    .then((result) => {
-      if (result === null) {
-        return errors.throwErr('SUPPORT_FILE_NOT_FOUND', relativeToProjectRoot(obj.projectRoot, sf))
-      }
-
-      debug('setting support file to %o', { result })
-      obj.supportFile = result
+      debug('setting support file to %o', { discoveredPath })
+      obj.supportFile = discoveredPath
+      obj.supportFolder = path.dirname(obj.supportFile)
+      debug('set support folder %s', obj.supportFolder)
 
       return obj
-    })
-  })
-  .then(() => {
-    if (obj.supportFile) {
-      // set config.supportFolder to its directory
-      obj.supportFolder = path.dirname(obj.supportFile)
-      debug(`set support folder ${obj.supportFolder}`)
     }
 
-    return obj
-  })
+    throw err
+  }
+
+  obj.supportFile = resolvedPath
+  debug('resolved support file %s', obj.supportFile)
+
+  // Handle symlink resolution: require.resolve may follow symlinks (e.g., /tmp/foo -> /private/tmp/foo on macOS)
+  // which can confuse the rest of the code. Switch back to the original path if it changed.
+  if (checkIfResolveChangedRootFolder(obj.supportFile, originalSupportFilePath)) {
+    debug('require.resolve switched support folder from %s to %s', originalSupportFilePath, obj.supportFile)
+
+    const correctedPath = correctSymlinkedPath(obj.supportFile, originalSupportFilePath)
+
+    const found = await fs.pathExists(correctedPath)
+
+    if (!found) {
+      errors.throwErr('SUPPORT_FILE_NOT_FOUND', relativeToProjectRoot(obj.projectRoot, correctedPath))
+    }
+
+    obj.supportFile = correctedPath
+    debug('switched to corrected file path %s', obj.supportFile)
+  }
+
+  obj.supportFolder = path.dirname(obj.supportFile)
+  debug('set support folder %s', obj.supportFolder)
+
+  return obj
 }
 
 export function mergeDefaults (
@@ -376,6 +422,7 @@ export function mergeDefaults (
   _
   .chain(allowed({ ...cliConfig, ...options }))
   .omit('env')
+  .omit('expose')
   .omit('browsers')
   .each((val: any, key) => {
     // If users pass in testing-type specific keys (eg, specPattern),
@@ -392,7 +439,7 @@ export function mergeDefaults (
     }
   }).value()
 
-  let url = config.baseUrl
+  const url = config.baseUrl
 
   if (url) {
     // replace multiple slashes at the end of string to single slash
@@ -423,6 +470,8 @@ export function mergeDefaults (
   // and delete envFile
   config.env = parseEnv(config, { ...cliConfig.env, ...options.env }, resolved)
 
+  config.expose = parseExposed(config, { ...cliConfig.expose, ...options.expose }, resolved)
+
   config.cypressEnv = process.env.CYPRESS_INTERNAL_ENV
   debug('using CYPRESS_INTERNAL_ENV %s', config.cypressEnv)
   if (!isValidCypressInternalEnvValue(config.cypressEnv)) {
@@ -436,9 +485,11 @@ export function mergeDefaults (
     // dont ever watch for file changes
     config.watchForFileChanges = false
 
-    // and forcibly reset numTestsKeptInMemory
-    // to zero
-    config.numTestsKeptInMemory = 0
+    // and forcibly reset numTestsKeptInMemory to zero unless the user has
+    // explicitly opted in to honoring the configured value via env var
+    if (!shouldHonorNumTestsKeptInMemory()) {
+      config.numTestsKeptInMemory = 0
+    }
   }
 
   config = setResolvedConfigValues(config, defaultsForRuntime, resolved)
@@ -457,6 +508,16 @@ export function mergeDefaults (
 
     return errors.throwErr('CONFIG_VALIDATION_ERROR', null, null, validationResult)
   }, testingType)
+
+  // `browsers` is omitted from the validation above because it is typically an empty
+  // array at this point and is populated with the list of detected browsers later (see
+  // buildBaseFullConfig). A non-array value still needs to be rejected here though,
+  // otherwise it slips through and crashes when the browser list is mapped over - e.g.
+  // a `CYPRESS_BROWSERS=chrome` env var coerces `browsers` to a string.
+  // https://github.com/cypress-io/cypress/issues/33198
+  if (config.browsers != null && !Array.isArray(config.browsers)) {
+    return errors.throwErr('CONFIG_BROWSERS_INVALID', config.browsers)
+  }
 
   config = setAbsolutePaths(config)
 
@@ -523,4 +584,14 @@ export const checkIfResolveChangedRootFolder = (resolved: string, initial: strin
   return path.isAbsolute(resolved) &&
   path.isAbsolute(initial) &&
   !resolved.startsWith(initial)
+}
+
+export function correctSymlinkedPath (resolvedPath: string, originalPath: string): string {
+  const fileName = path.basename(resolvedPath)
+
+  // If the original path ends with the filename, use its directory
+  // Otherwise, use the original path as-is (it might be a directory)
+  const basePath = originalPath.endsWith(fileName) ? path.dirname(originalPath) : originalPath
+
+  return path.join(basePath, fileName)
 }

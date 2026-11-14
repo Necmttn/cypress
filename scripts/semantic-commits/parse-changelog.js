@@ -3,8 +3,8 @@ const path = require('path')
 const { userFacingChanges } = require('./change-categories')
 const userFacingSections = Object.values(userFacingChanges).map(({ section }) => section)
 
-async function parseChangelog (pendingRelease = true) {
-  const changelog = fs.readFileSync(path.join(__dirname, '..', '..', 'cli', 'CHANGELOG.md'), 'utf8')
+async function parseChangelog ({ changelogContent = null } = {}) {
+  const changelog = changelogContent || fs.readFileSync(path.join(__dirname, '..', '..', 'cli', 'CHANGELOG.md'), 'utf8')
   const changeLogLines = changelog.split('\n')
 
   let parseChangelog = true
@@ -18,7 +18,6 @@ async function parseChangelog (pendingRelease = true) {
     index++
     if (index >= changeLogLines.length) {
       sections[currentSection] = content
-      parseChangelog = false
       break
     }
 
@@ -36,15 +35,6 @@ async function parseChangelog (pendingRelease = true) {
       }
 
       sections['version'] = line
-    } else if (index === 3) {
-      nextKnownLineBreak = index + 1
-      if (pendingRelease && !/_Released \d+\/\d+\/\d+ \(PENDING\)_/.test(line)) {
-        throw new Error(`Expected line number ${index + 1} to include "_Released xx/xx/xxxx (PENDING)_"`)
-      } else if (!pendingRelease && !/_Released \d+\/\d+\/\d+_/.test(line)) {
-        throw new Error(`Expected line number ${index + 1} to include "_Released xx/xx/xxxx_"`)
-      }
-
-      sections['releaseDate'] = line
     } else if (index === nextKnownLineBreak) {
       if (line !== '') {
         throw new Error(`Expected line number ${index + 1} to be a line break`)
@@ -63,7 +53,7 @@ async function parseChangelog (pendingRelease = true) {
           throw new Error(`Expected line number ${index + 1} to be a valid section header. Received ${section}. Expected one of ...\n  - ${userFacingSections.join('\n  - ')}`)
         }
 
-        if (result === currentSection || sections[section]) {
+        if (section === currentSection || sections[section]) {
           throw new Error(`Duplicate section header of "${section}" on line number ${index + 1}. Condense change content under a single section header.`)
         }
 

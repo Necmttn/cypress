@@ -17,7 +17,7 @@ Cypress.on('uncaught:exception', () => false)
 function verifyErrorOnlyCapturedOnce (err: string) {
   let count = 0
 
-  return cy.get('.command-message-text').each(($el) => {
+  return cy.reporter().find('.command-message-text').each(($el) => {
     if ($el.text().includes(err)) {
       count++
     }
@@ -37,21 +37,21 @@ function loadErrorSpec (options: Options): VerifyFunc {
   cy.startAppServer('component')
   cy.visitApp(`specs/runner?file=${filePath}`)
 
-  cy.get('.runnable-header', { log: false }).should('be.visible')
+  cy.reporter().find('.runnable-header', { log: false }).should('be.visible')
   // Extended timeout needed due to lengthy Angular bootstrap on Windows
-  cy.contains('Your tests are loading...', { timeout: 60000, log: false }).should('not.exist')
+  cy.reporter({ timeout: 60000 }).contains('Your tests are loading...', { timeout: 60000, log: false }).should('not.exist')
   // Then ensure the tests have finished
-  cy.get('[aria-label="Rerun all tests"]', { timeout: 30000 })
-  cy.findByLabelText('Stats').within(() => {
+  cy.reporter().find('[aria-label="Rerun all tests"]', { timeout: 30000 })
+  cy.reporter().find('.stats').within(() => {
     cy.get('.passed .num').should('have.text', `${passCount}`)
     cy.get('.failed .num').should('have.text', `${failCount}`)
   })
 
   // Return scoped verify function with spec options baked in
-  return createVerify({ fileName: Cypress._.last(filePath.split('/')), hasPreferredIde: false, mode: 'component' })
+  return createVerify({ fileName: Cypress._.last(filePath.split('/')), filePath, hasPreferredIde: false, mode: 'component' })
 }
 
-const reactVersions = [17, 18] as const
+const reactVersions = [18, 19] as const
 
 reactVersions.forEach((reactVersion) => {
   describe(`React ${reactVersion}`, {
@@ -136,62 +136,60 @@ describe('Next.js', {
   numTestsKeptInMemory: 1,
 }, () => {
   beforeEach(() => {
-    cy.scaffoldProject('next-12')
+    cy.scaffoldProject('next-16')
   })
 
   it('error conditions', () => {
     const verify = loadErrorSpec({
-      projectName: 'next-12',
+      projectName: 'next-16',
       configFile: 'cypress.config.js',
       filePath: 'cypress/Errors.cy.jsx',
       failCount: 4,
     })
 
+    // line/column omitted: Next.js 16 bundles React internally and the exact
+    // stack frame offsets vary across React versions; message is sufficient
+    // to validate error reporting behaviour.
+    // hasCodeFrame: false — code frames are not fully supported with Next.js 15/16.
+    // see: https://github.com/cypress-io/cypress/issues/30667
     verify('error on mount', {
-      line: 6,
-      column: 33,
       uncaught: true,
       uncaughtMessage: 'mount error',
+      hasCodeFrame: false,
       message: [
         'The following error originated from your application code',
         'mount error',
       ],
-      codeFrameText: 'Errors.cy.jsx',
     })
 
     verify('sync error', {
-      line: 13,
-      column: 19,
       uncaught: true,
       uncaughtMessage: 'sync error',
+      hasCodeFrame: false,
       message: [
         'The following error originated from your application code',
         'sync error',
       ],
-      codeFrameText: 'Errors.cy.jsx',
     }).then(() => {
       // TODO: ReactDOM seems to double throw.
       // verifyErrorOnlyCapturedOnce('Error: sync error')
     })
 
     verify('async error', {
-      line: 22,
-      column: 21,
       uncaught: true,
       uncaughtMessage: 'async error',
+      hasCodeFrame: false,
       message: [
         'The following error originated from your application code',
         'async error',
       ],
-      codeFrameText: 'Errors.cy.jsx',
     }).then(() => {
       verifyErrorOnlyCapturedOnce('Error: async error')
     })
 
     verify('command failure', {
-      line: 48,
-      column: 8,
       command: 'get',
+      hasCodeFrame: false,
       message: [
         'Timed out retrying',
         'element-that-does-not-exist',
@@ -208,21 +206,21 @@ describe('Vue', {
   numTestsKeptInMemory: 1,
 }, () => {
   beforeEach(() => {
-    cy.scaffoldProject('vuecli5-vue3')
+    cy.scaffoldProject('vue3-webpack-ts-configured')
   })
 
   it('error conditions', () => {
     const verify = loadErrorSpec({
-      projectName: 'vuecli5-vue3',
+      projectName: 'vue3-webpack-ts-configured',
       configFile: 'cypress.config.ts',
-      filePath: 'src/components/Errors.cy.js',
+      filePath: 'src/components/Errors.cy.ts',
       failCount: 4,
     })
 
     verify('error on mount', {
       fileName: 'Errors.vue',
-      line: 19,
-      column: 16,
+      line: 29,
+      column: 13,
       message: [
         'mount error',
       ],
@@ -231,8 +229,8 @@ describe('Vue', {
 
     verify('sync error', {
       fileName: 'Errors.vue',
-      line: 24,
-      column: 16,
+      line: 34,
+      column: 13,
       uncaught: true,
       uncaughtMessage: 'sync error',
       message: [
@@ -246,8 +244,8 @@ describe('Vue', {
 
     verify('async error', {
       fileName: 'Errors.vue',
-      line: 28,
-      column: 18,
+      line: 38,
+      column: 15,
       uncaught: true,
       uncaughtMessage: 'async error',
       message: [
@@ -265,81 +263,8 @@ describe('Vue', {
         'Timed out retrying',
         'element-that-does-not-exist',
       ],
-      codeFrameRegex: /Errors\.cy\.js:25/,
-      stackRegex: /Errors\.cy\.js:25/,
-    })
-  })
-})
-
-describe('Nuxt', {
-  viewportHeight: 768,
-  viewportWidth: 1024,
-  // Limiting tests kept in memory due to large memory cost
-  // of nested spec snapshots
-  numTestsKeptInMemory: 1,
-}, () => {
-  beforeEach(() => {
-    cy.scaffoldProject('nuxtjs-vue2-configured')
-  })
-
-  it('error conditions', () => {
-    const verify = loadErrorSpec({
-      projectName: 'nuxtjs-vue2-configured',
-      configFile: 'cypress.config.js',
-      filePath: 'components/Errors.cy.js',
-      failCount: 4,
-    })
-
-    verify('error on mount', {
-      fileName: 'Errors.vue',
-      line: 19,
-      uncaught: true,
-      uncaughtMessage: 'mount error',
-      message: [
-        'mount error',
-      ],
-      stackRegex: /Errors\.vue:19/,
-      codeFrameText: 'Errors.vue',
-    })
-
-    verify('sync error', {
-      fileName: 'Errors.vue',
-      line: 24,
-      uncaught: true,
-      uncaughtMessage: 'sync error',
-      message: [
-        'The following error originated from your application code',
-        'sync error',
-      ],
-      stackRegex: /Errors\.vue:24/,
-      codeFrameText: 'Errors.vue',
-    }).then(() => {
-      verifyErrorOnlyCapturedOnce('Error: sync error')
-    })
-
-    verify('async error', {
-      fileName: 'Errors.vue',
-      line: 28,
-      uncaught: true,
-      uncaughtMessage: 'async error',
-      message: [
-        'The following error originated from your application code',
-        'async error',
-      ],
-      stackRegex: /Errors\.vue:28/,
-      codeFrameText: 'Errors.vue',
-    }).then(() => {
-      verifyErrorOnlyCapturedOnce('Error: async error')
-    })
-
-    verify('command failure', {
-      command: 'get',
-      message: [
-        'Timed out retrying',
-        'element-that-does-not-exist',
-      ],
-      codeFrameRegex: /Errors\.cy\.js:25/,
-      stackRegex: /Errors\.cy\.js:25/,
+      codeFrameRegex: /Errors\.cy\.ts:32/,
+      stackRegex: /Errors\.cy\.ts:32/,
     })
   })
 })
@@ -354,12 +279,12 @@ describe.skip('Svelte', {
   numTestsKeptInMemory: 1,
 }, () => {
   beforeEach(() => {
-    cy.scaffoldProject('svelte-webpack')
+    cy.scaffoldProject('svelte-webpack-configured')
   })
 
   it('error conditions', () => {
     const verify = loadErrorSpec({
-      projectName: 'svelte-webpack',
+      projectName: 'svelte-webpack-configured',
       configFile: 'cypress.config.js',
       filePath: 'src/errors.cy.js',
       failCount: 4,
@@ -413,7 +338,7 @@ describe.skip('Svelte', {
   })
 })
 
-const angularVersions = [13, 14] as const
+const angularVersions = [21, 22] as const
 
 angularVersions.forEach((angularVersion) => {
   describe(`Angular ${angularVersion}`, {
@@ -424,7 +349,8 @@ angularVersions.forEach((angularVersion) => {
     numTestsKeptInMemory: 1,
   }, () => {
     beforeEach(() => {
-      cy.scaffoldProject(`angular-${angularVersion}`)
+      // A cold Angular install on Windows CI can exceed the default 60s
+      cy.scaffoldProject(`angular-${angularVersion}`, { timeout: 120000 })
     })
 
     it('error conditions', () => {
@@ -432,13 +358,12 @@ angularVersions.forEach((angularVersion) => {
         projectName: `angular-${angularVersion}`,
         configFile: 'cypress.config.ts',
         filePath: 'src/app/errors.cy.ts',
-        failCount: 3,
-        passCount: 1,
+        failCount: 4,
       })
 
       verify('sync error', {
         fileName: 'errors.ts',
-        line: 14,
+        line: 22,
         column: 11,
         uncaught: true,
         uncaughtMessage: 'sync error',
@@ -452,7 +377,7 @@ angularVersions.forEach((angularVersion) => {
 
       verify('async error', {
         fileName: 'errors.ts',
-        line: 19,
+        line: 27,
         column: 13,
         uncaught: true,
         uncaughtMessage: 'async error',
@@ -465,7 +390,7 @@ angularVersions.forEach((angularVersion) => {
       })
 
       verify('command failure', {
-        line: 20,
+        line: 21,
         column: 8,
         command: 'get',
         message: [

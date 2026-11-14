@@ -25,6 +25,7 @@ export class AppCaptureProtocol implements AppCaptureProtocolInterface {
     multipleNetworkRequestEventsForSameRequestId: false,
     exceptionThrown: false,
   }
+
   private idToUrlAndFrameMap = new Map<string, URLAndFrame>()
   private currentRequestWillBeSent: (event) => void
   private cdpClient: any
@@ -63,6 +64,8 @@ export class AppCaptureProtocol implements AppCaptureProtocolInterface {
       }
     }
 
+    await cdpClient.send('Network.enable')
+    await cdpClient.send('Runtime.enable')
     cdpClient.on('Network.requestWillBeSent', this.currentRequestWillBeSent)
     cdpClient.on('Runtime.exceptionThrown', (event) => {
       this.events.exceptionThrown = true

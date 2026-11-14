@@ -1,4 +1,3 @@
-import defaultMessages from '@packages/frontend-shared/src/locales/en-US.json'
 import path from 'path'
 import type { SinonSpy } from 'sinon'
 import { getPathForPlatform } from './support/getPathForPlatform'
@@ -10,15 +9,13 @@ describe('Launchpad: Global Mode', () => {
     it('shows global page when opened by --global flag', () => {
       cy.openGlobalMode()
       cy.visitLaunchpad()
-      cy.skipWelcome()
-      cy.get('h1').should('contain', defaultMessages.globalPage.empty.title)
+      cy.get('h1').should('contain', 'Add project')
     })
 
     it('shows global page when opened by global install', () => {
       cy.openGlobalMode({ byFlag: false })
       cy.visitLaunchpad()
-      cy.skipWelcome()
-      cy.get('h1').should('contain', defaultMessages.globalPage.empty.title)
+      cy.get('h1').should('contain', 'Add project')
     })
   })
 
@@ -26,10 +23,9 @@ describe('Launchpad: Global Mode', () => {
     it('shows "Add Project" view', () => {
       cy.openGlobalMode()
       cy.visitLaunchpad()
-      cy.skipWelcome()
-      cy.get('h1').should('contain', defaultMessages.globalPage.empty.title)
+      cy.get('h1').should('contain', 'Add project')
       cy.get('[data-cy="dropzone"]')
-      .should('contain', defaultMessages.globalPage.empty.dropText.split('{0}')[0])
+      .should('contain', 'Drag your project directory here or ')
       .find('button')
       .should('contain', 'browse manually')
     })
@@ -37,10 +33,9 @@ describe('Launchpad: Global Mode', () => {
     it('can add a project by dragging folder into project dropzone', () => {
       cy.openGlobalMode()
       cy.visitLaunchpad()
-      cy.skipWelcome()
-      cy.get('h1').should('contain', defaultMessages.globalPage.empty.title)
+      cy.get('h1').should('contain', 'Add project')
       cy.get('[data-cy="dropzone"]')
-      .should('contain', defaultMessages.globalPage.empty.dropText.split('{0}')[0])
+      .should('contain', 'Drag your project directory here or ')
 
       cy.scaffoldProject('todos')
       .then((projectPath) => {
@@ -49,7 +44,7 @@ describe('Launchpad: Global Mode', () => {
       })
 
       cy.contains('Welcome to Cypress!').should('be.visible')
-      cy.findByRole('link', { name: 'Projects' })
+      cy.getByRole('link', { name: 'Projects', native: false })
       .should('have.attr', 'aria-disabled', 'false')
       .click()
 
@@ -61,7 +56,6 @@ describe('Launchpad: Global Mode', () => {
     it('adds a project using electron native folder select', () => {
       cy.openGlobalMode()
       cy.visitLaunchpad()
-      cy.skipWelcome()
 
       cy.scaffoldProject('todos')
       .then((projectPath) => {
@@ -70,9 +64,9 @@ describe('Launchpad: Global Mode', () => {
         }, { projectPath })
       })
 
-      cy.get('h1').should('contain', defaultMessages.globalPage.empty.title)
+      cy.get('h1').should('contain', 'Add project')
       cy.get('[data-cy="dropzone"]')
-      .should('contain', defaultMessages.globalPage.empty.dropText.split('{0}')[0])
+      .should('contain', 'Drag your project directory here or ')
       .find('button')
       .should('contain', 'browse manually')
       .click()
@@ -99,10 +93,9 @@ describe('Launchpad: Global Mode', () => {
       })
 
       cy.visitLaunchpad()
-      cy.skipWelcome()
 
       cy.log('The recents list shows all projects that have been added')
-      cy.contains(defaultMessages.globalPage.recentProjectsHeader)
+      cy.contains('Recent projects')
       .should('be.visible')
 
       cy.get('[data-cy="project-card"]')
@@ -176,7 +169,7 @@ describe('Launchpad: Global Mode', () => {
     it('updates "Projects" link when a project is selected and allows navigating back', () => {
       const getBreadcrumbLink = (name: string, options: { disabled: boolean } = { disabled: false }) => {
         // The timeout is increased to account for variability in configuration load times in CI.
-        return cy.findByRole('link', { name, timeout: 10000 }).should('have.attr', 'aria-disabled', options.disabled ? 'true' : 'false')
+        return cy.getByRole('link', { name, timeout: 10000, native: false }).should('have.attr', 'aria-disabled', options.disabled ? 'true' : 'false')
       }
 
       const resetSpies = () => {
@@ -185,6 +178,12 @@ describe('Launchpad: Global Mode', () => {
           (ctx.actions.wizard.resetWizard as SinonSpy).resetHistory();
           (ctx.lifecycleManager.setAndLoadCurrentTestingType as SinonSpy).resetHistory()
         })
+      }
+
+      const waitForConfigLoad = () => {
+        cy.contains('Initializing config...').should('be.visible')
+        // ensure the config is fully loaded before clicking the breadcrumb back
+        cy.contains('Initializing config...').should('not.exist')
       }
 
       const projectList = ['todos']
@@ -200,6 +199,7 @@ describe('Launchpad: Global Mode', () => {
       // Component testing breadcrumbs
       cy.get('[data-cy="project-card"]').contains('todos').click()
       cy.get('[data-cy-testingtype="component"]').click()
+      waitForConfigLoad()
       resetSpies()
       getBreadcrumbLink('Projects').click()
       getBreadcrumbLink('Projects', { disabled: true })
@@ -212,6 +212,7 @@ describe('Launchpad: Global Mode', () => {
       cy.get('[data-cy="project-card"]').contains('todos').click()
       cy.get('[data-cy-testingtype="e2e"]').click()
       cy.contains('li', 'e2e testing', { matchCase: false }).should('not.have.attr', 'href')
+      waitForConfigLoad()
       resetSpies()
       getBreadcrumbLink('Projects').click()
       getBreadcrumbLink('Projects', { disabled: true })
@@ -226,9 +227,9 @@ describe('Launchpad: Global Mode', () => {
         setupAndValidateProjectsList(['todos'])
         cy.log('Project cards have a menu can be opened')
         cy.get('[aria-label="Project actions"]').click()
-        cy.get('[data-cy="Remove project"]').contains(defaultMessages.globalPage.removeProject)
-        cy.get('[data-cy="Open in IDE"]').contains(defaultMessages.globalPage.openInIDE)
-        cy.get('[data-cy="Open in Finder"]').contains(defaultMessages.globalPage.openInFinder)
+        cy.get('[data-cy="Remove project"]').contains('Remove project')
+        cy.get('[data-cy="Open in IDE"]').contains('Open in IDE')
+        cy.get('[data-cy="Open in Finder"]').contains('Open in Finder')
       })
 
       it('removes project from list when clicking "Remove project" menu item', () => {
@@ -263,7 +264,7 @@ describe('Launchpad: Global Mode', () => {
 
         cy.get('[data-cy="project-card"]').should('not.exist')
         cy.get('[data-cy="dropzone"]')
-        .should('contain', defaultMessages.globalPage.empty.dropText.split('{0}')[0])
+        .should('contain', 'Drag your project directory here or ')
       })
     })
 
@@ -285,40 +286,18 @@ describe('Launchpad: Global Mode', () => {
         .should('have.length', projectList.length)
       })
 
-      // FIXME: fix Search by project path logic - https://cypress-io.atlassian.net/browse/UNIFY-646
-      it.skip('filters project results when searching by project path', () => {
-        setupAndValidateProjectsList(projectList)
-        cy.get('#project-search').type('packages')
-        cy.get('[data-cy="project-card"')
-        .should('have.length', projectList.length)
-
-        cy.get('#project-search').type(`${path.sep}todos`)
-        cy.contains(defaultMessages.globalPage.noResultsMessage)
-      })
-
       it('shows "empty results" pages when searching for a non-existent name', () => {
         setupAndValidateProjectsList(projectList)
         cy.get('#project-search').type('hi')
         cy.get('[data-cy="project-card"]')
         .should('have.length', 0)
 
-        cy.contains(defaultMessages.globalPage.noResultsMessage)
+        cy.contains('No projects matched your search:')
 
         cy.log('Clicking "clear search" in the empty search results will clear the searchbar and restore the project list')
         cy.get('[data-cy="no-results-clear"]').click()
         cy.get('[data-cy="project-card"]')
         .should('have.length', projectList.length)
-      })
-
-      // FIXME: fix Search by project path logic - https://cypress-io.atlassian.net/browse/UNIFY-646
-      it.skip('shows "empty results" pages when searching for a non-existent path', () => {
-        setupAndValidateProjectsList(projectList)
-        cy.get('#project-search').type('packages')
-        cy.get('[data-cy="project-card"')
-        .should('have.length', projectList.length)
-
-        cy.get('#project-search').type(`${path.sep}random`)
-        cy.contains(defaultMessages.globalPage.noResultsMessage)
       })
     })
   })
@@ -329,7 +308,6 @@ describe('Launchpad: Global Mode', () => {
       cy.addProject('config-with-import-error')
       cy.addProject('todos')
       cy.visitLaunchpad()
-      cy.skipWelcome()
       cy.contains('[data-cy="project-card"]', 'todos').should('be.visible')
       cy.contains('[data-cy="project-card"]', 'config-with-import-error').should('be.visible').click()
       cy.get('h1').contains('Cypress configuration error')

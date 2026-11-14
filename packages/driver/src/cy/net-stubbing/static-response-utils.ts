@@ -5,30 +5,26 @@ import type {
   StaticResponseWithOptions,
   BackendStaticResponseWithArrayBuffer,
   FixtureOpts,
-} from '@packages/net-stubbing/lib/types'
+} from '@packages/network-interception'
 import {
   caseInsensitiveHas,
 } from '@packages/net-stubbing/lib/util'
 import $errUtils from '../../cypress/error_utils'
 
 // user-facing StaticResponse only
-export const STATIC_RESPONSE_KEYS: (keyof StaticResponse)[] = ['body', 'fixture', 'statusCode', 'headers', 'forceNetworkError', 'throttleKbps', 'delay', 'delayMs']
+export const STATIC_RESPONSE_KEYS: (keyof StaticResponse)[] = ['body', 'fixture', 'statusCode', 'headers', 'forceNetworkError', 'throttleKbps', 'delay']
 
-export const STATIC_RESPONSE_WITH_OPTIONS_KEYS: (keyof StaticResponseWithOptions)[] = [...STATIC_RESPONSE_KEYS, 'log']
+const STATIC_RESPONSE_WITH_OPTIONS_KEYS: (keyof StaticResponseWithOptions)[] = [...STATIC_RESPONSE_KEYS, 'log']
 
 export function validateStaticResponse (cmd: string, staticResponse: StaticResponse): void {
   const err = (message) => {
     $errUtils.throwErrByPath('net_stubbing.invalid_static_response', { args: { cmd, message, staticResponse } })
   }
 
-  const { body, fixture, statusCode, headers, forceNetworkError, throttleKbps, delay, delayMs } = staticResponse
+  const { body, fixture, statusCode, headers, forceNetworkError, throttleKbps, delay } = staticResponse
 
   if (forceNetworkError && (body || statusCode || headers)) {
     err('`forceNetworkError`, if passed, must be the only option in the StaticResponse.')
-  }
-
-  if (forceNetworkError && Cypress.isBrowser('webkit')) {
-    err('`forceNetworkError` was passed, but it is not currently supported in experimental WebKit.')
   }
 
   if (body && fixture) {
@@ -53,16 +49,16 @@ export function validateStaticResponse (cmd: string, staticResponse: StaticRespo
     err('`throttleKbps` must be a finite, positive number.')
   }
 
-  if (delayMs && delay) {
-    err('`delayMs` and `delay` cannot both be set.')
-  }
-
-  if (delayMs && (!_.isFinite(delayMs) || delayMs < 0)) {
-    err('`delayMs` must be a finite, positive number.')
-  }
-
   if (delay && (!_.isFinite(delay) || delay < 0)) {
     err('`delay` must be a finite, positive number.')
+  }
+
+  // setTimeout uses a 32-bit signed integer internally, so delays >= 2**31
+  // (about 24.8 days) are silently treated as 1ms and effectively ignored.
+  const MAX_TIMEOUT = 2147483647 // 2**31 - 1
+
+  if (delay && delay > MAX_TIMEOUT) {
+    err(`\`delay\` must be less than ${MAX_TIMEOUT + 1}ms (approximately 24.8 days). Larger values are silently ignored by the timer implementation.`)
   }
 }
 
@@ -106,12 +102,7 @@ function getFixtureOpts (fixture: string): FixtureOpts {
 }
 
 export function getBackendStaticResponse (staticResponse: Readonly<StaticResponseWithOptions>): BackendStaticResponseWithArrayBuffer {
-  const backendStaticResponse: BackendStaticResponseWithArrayBuffer = _.omit(staticResponse, 'body', 'fixture', 'delayMs', 'log')
-
-  if (staticResponse.delayMs) {
-    // support deprecated `delayMs` usage
-    backendStaticResponse.delay = staticResponse.delayMs
-  }
+  const backendStaticResponse: BackendStaticResponseWithArrayBuffer = _.omit(staticResponse, 'body', 'fixture', 'log')
 
   if (staticResponse.fixture) {
     backendStaticResponse.fixture = getFixtureOpts(staticResponse.fixture)
@@ -142,7 +133,7 @@ export function getBackendStaticResponse (staticResponse: Readonly<StaticRespons
   return backendStaticResponse
 }
 
-export function hasStaticResponseKeys (obj: any) {
+function hasStaticResponseKeys (obj: any) {
   return !_.isArray(obj) && (_.intersection(_.keys(obj), STATIC_RESPONSE_KEYS).length || _.isEmpty(obj))
 }
 

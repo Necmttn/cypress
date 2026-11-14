@@ -1,28 +1,45 @@
-/* eslint-disable no-dupe-class-members */
-import { CypressError, getError } from '@packages/errors'
-import type { FullConfig, TestingType } from '@packages/types'
-import { ChildProcess, fork, ForkOptions, spawn } from 'child_process'
+import { getError } from '@packages/errors'
+import type { CypressError } from '@packages/errors'
+import type { DebugData, FullConfig, TestingType } from '@packages/types'
+import { fork, spawn } from 'child_process'
+import type { ForkOptions, ChildProcess } from 'child_process'
 import EventEmitter from 'events'
-import fs from 'fs-extra'
+import fs from 'fs'
 import path from 'path'
 import inspector from 'inspector'
 import debugLib from 'debug'
-import { autoBindDebug, hasTypeScriptInstalled, toPosix } from '../util'
+import { getTsconfig } from 'get-tsconfig'
+import { autoBindDebug, hasTypeScriptInstalled, shouldLoadConfigAsEsm, toPosix } from '../util'
 import _ from 'lodash'
-import { pathToFileURL } from 'url'
 import os from 'os'
 import type { OTLPTraceExporterCloud } from '@packages/telemetry'
 import { telemetry, encodeTelemetryContext } from '@packages/telemetry'
+import { TagStream } from '@packages/stderr-filtering'
 
 const pkg = require('@packages/root')
 const debug = debugLib(`cypress:lifecycle:ProjectConfigIpc`)
+const debugVerbose = debugLib(`cypress-verbose:lifecycle:ProjectConfigIpc`)
 
-const CHILD_PROCESS_FILE_PATH = require.resolve('@packages/server/lib/plugins/child/require_async_child')
+// In dev the .ts source exists; in production only the compiled .js is present.
+const resolveRequireAsyncChildPath = (): string => {
+  const serverRoot = path.dirname(require.resolve('@packages/server/package.json'))
+  const tsPath = path.join(serverRoot, 'lib/plugins/child/require_async_child.ts')
 
-const tsNodeEsm = pathToFileURL(require.resolve('ts-node/esm/transpile-only')).href
-const tsNode = toPosix(require.resolve('@packages/server/lib/plugins/child/register_ts_node'))
+  if (fs.existsSync(tsPath)) {
+    return tsPath
+  }
 
-export type IpcHandler = (ipc: ProjectConfigIpc) => void
+  return require.resolve('@packages/server/lib/plugins/child/require_async_child.js')
+}
+
+const CHILD_PROCESS_FILE_PATH = resolveRequireAsyncChildPath()
+
+debugVerbose(' using child process file path: %s', CHILD_PROCESS_FILE_PATH)
+
+// NOTE: need the file:// prefix to avoid https://nodejs.org/api/errors.html#err_unsupported_esm_url_scheme on windows
+const tsx = os.platform() === 'win32' ? `file://${toPosix(require.resolve('tsx'))}` : toPosix(require.resolve('tsx'))
+
+export type PluginIpcHandler = (ipc: ProjectConfigIpc) => void
 
 /**
  * If running as root on Linux, no-sandbox must be passed or Chrome will not start
@@ -35,7 +52,7 @@ const isSandboxNeeded = () => {
 export interface SetupNodeEventsReply {
   setupConfig: Cypress.ConfigOptions | null
   requires: string[]
-  registrations: Array<{event: string, eventId: string}>
+  registrations: Array<{ event: string, eventId: string }>
 }
 
 export interface LoadConfigReply {
@@ -43,7 +60,7 @@ export interface LoadConfigReply {
   requires: string[]
 }
 
-export interface SerializedLoadConfigReply {
+interface SerializedLoadConfigReply {
   initialConfig: string // stringified Cypress.ConfigOptions
   requires: string[]
 }
@@ -55,6 +72,14 @@ export interface SerializedLoadConfigReply {
  */
 export class ProjectConfigIpc extends EventEmitter {
   private _childProcess: ChildProcess
+  private _exitIsExpected = false
+  private _setupComplete = false
+  private _testingType?: TestingType
+
+  /**
+   * Set if the child exited without a shutdown being requested.
+   */
+  unexpectedExit?: CypressError
 
   constructor (
     readonly nodePath: string | undefined | null,
@@ -63,19 +88,35 @@ export class ProjectConfigIpc extends EventEmitter {
     readonly configFile: string | false,
     readonly onError: (cypressError: CypressError, title?: string | undefined) => void,
     readonly onWarning: (cypressError: CypressError) => void,
+    readonly onDebugData: (debugData: DebugData) => void,
   ) {
     super()
     this._childProcess = this.forkConfigProcess()
-    this._childProcess.on('error', (err) => {
-      // this.emit('error', err)
+    this._childProcess.on('error', (err: any) => {
+      debug('child process error: %s', err)
     })
 
     this._childProcess.on('message', (msg: { event: string, args: any[] }) => {
+      debug('received %s message from child process %s with args %o', msg.event, this._childProcess.pid, msg.args)
       this.emit(msg.event, ...msg.args)
     })
 
     this._childProcess.once('disconnect', () => {
+      debug('received disconnect event from child process %s', this._childProcess.pid)
       this.emit('disconnect')
+    })
+
+    this._childProcess.on('exit', (code, signal) => {
+      debug('child process %s exited with code %s and signal %s', this._childProcess.pid, code, signal)
+      this.emit('exit', code, signal)
+
+      try {
+        if (!this._exitIsExpected) {
+          this.handleUnexpectedExit(code, signal)
+        }
+      } finally {
+        this.cleanupIpc()
+      }
     })
 
     // This forwards telemetry requests from the child process to the server
@@ -93,42 +134,57 @@ export class ProjectConfigIpc extends EventEmitter {
     return this._childProcess?.pid
   }
 
+  /**
+   * Declares that the child is about to exit on purpose, so its exit is not reported as an error.
+   */
+  expectExit () {
+    this._exitIsExpected = true
+  }
+
   // TODO: options => Cypress.TestingTypeOptions
-  send(event: 'execute:plugins', evt: string, ids: {eventId: string, invocationId: string}, args: any[]): boolean
-  send(event: 'setupTestingType', testingType: TestingType, options: Cypress.PluginConfigOptions): boolean
-  send(event: 'loadConfig'): boolean
-  send(event: 'main:process:will:disconnect'): void
+  send (event: 'execute:plugins', evt: string, ids: { eventId: string, invocationId: string }, args: any[]): boolean
+  send (event: 'setupTestingType', testingType: TestingType, options: Cypress.PluginConfigOptions): boolean
+  send (event: 'loadConfig'): boolean
+  send (event: 'main:process:will:disconnect'): boolean
   send (event: string, ...args: any[]) {
     if (this._childProcess.killed || !this._childProcess.connected) {
+      debug('not sending %s message to child process. Killed? %s, Connected? %s', event, this._childProcess.killed, this._childProcess.connected)
+
       return false
     }
+
+    debug('sending %s message to child process %s with args %o', event, this._childProcess.pid, args)
 
     return this._childProcess.send({ event, args })
   }
 
-  on(evt: 'childProcess:unhandledError', listener: (err: CypressError) => void): this
-  on(evt: 'export:telemetry', listener: (data: string) => void): void
-  on(evt: 'main:process:will:disconnect:ack', listener: () => void): void
-  on(evt: 'warning', listener: (warningErr: CypressError) => void): this
+  on (evt: 'childProcess:unhandledError', listener: (err: CypressError) => void): this
+  on (evt: 'export:telemetry', listener: (data: string) => void): void
+  on (evt: 'main:process:will:disconnect:ack', listener: () => void): void
+  on (evt: 'warning', listener: (warningErr: CypressError) => void): this
+  on (evt: 'disconnect', listener: () => void): this
+  on (evt: 'exit', listener: (code: number, signal: string) => void): this
   on (evt: string, listener: (...args: any[]) => void) {
     return super.on(evt, listener)
   }
 
-  once(evt: `promise:fulfilled:${string}`, listener: (err: any, value: any) => void): this
+  once (evt: 'exit:unexpected', listener: (err: CypressError) => void): this
+  once (evt: `promise:fulfilled:${string}`, listener: (err: any, value: any) => void): this
 
   /**
    * When the config is loaded, it comes back with either a "reply", or an "error" if there was a problem
    * sourcing the config (script error, etc.)
    */
-  once(evt: 'ready', listener: () => void): this
-  once(evt: 'loadConfig:reply', listener: (payload: SerializedLoadConfigReply) => void): this
-  once(evt: 'loadConfig:error', listener: (err: CypressError) => void): this
+  once (evt: 'ready', listener: () => void): this
+  once (evt: 'loadConfig:reply', listener: (payload: SerializedLoadConfigReply) => void): this
+  once (evt: 'loadConfig:error', listener: (err: CypressError) => void): this
 
   /**
    * When
    */
-  once(evt: 'setupTestingType:reply', listener: (payload: SetupNodeEventsReply) => void): this
-  once(evt: 'setupTestingType:error', listener: (error: CypressError) => void): this
+  once (evt: 'setupTestingType:reply', listener: (payload: SetupNodeEventsReply) => void): this
+  once (evt: 'setupTestingType:error', listener: (error: CypressError) => void): this
+  once (evt: 'file:preprocessor:overridden', listener: (payload: { handlerText: string }) => void): this
   once (evt: string, listener: (...args: any[]) => void) {
     return super.once(evt, listener)
   }
@@ -142,13 +198,22 @@ export class ProjectConfigIpc extends EventEmitter {
       if (this._childProcess.stdout && this._childProcess.stderr) {
         // manually pipe plugin stdout and stderr for Cypress Cloud capture
         // @see https://github.com/cypress-io/cypress/issues/7434
-        this._childProcess.stdout.on('data', (data) => process.stdout.write(data))
-        this._childProcess.stderr.on('data', (data) => process.stderr.write(data))
+        this._childProcess.stdout.pipe(process.stdout)
+        this._childProcess.stderr.pipe(new TagStream()).pipe(process.stderr)
       }
 
       let resolved = false
 
-      this._childProcess.on('error', (err) => {
+      this._childProcess.on('error', (err: NodeJS.ErrnoException) => {
+        if (err.code === 'EPIPE') {
+          debug('EPIPE error in loadConfig() of child process %s', err)
+
+          // @ts-expect-error - resolve() expects the config; this path settles the promise without one
+          resolve()
+
+          return
+        }
+
         debug('unhandled error in child process %s', err)
         this.handleChildProcessError(err, this, resolved, reject)
         reject(err)
@@ -165,6 +230,8 @@ export class ProjectConfigIpc extends EventEmitter {
         this.handleChildProcessError(err, this, resolved, reject)
         reject(err)
       })
+
+      this.rejectOnUnexpectedExit(reject)
 
       this.once('loadConfig:reply', (val) => {
         debug('loadConfig:reply')
@@ -185,10 +252,12 @@ export class ProjectConfigIpc extends EventEmitter {
     })
   }
 
-  async callSetupNodeEventsWithConfig (testingType: TestingType, config: FullConfig, handlers: IpcHandler[]): Promise<SetupNodeEventsReply> {
+  async callSetupNodeEventsWithConfig (testingType: TestingType, config: FullConfig, handlers: PluginIpcHandler[]): Promise<SetupNodeEventsReply> {
     for (const handler of handlers) {
       handler(this)
     }
+
+    this._testingType = testingType
 
     const promise = this.registerSetupIpcHandlers()
 
@@ -196,13 +265,11 @@ export class ProjectConfigIpc extends EventEmitter {
     const mergedConfig = { ...config, ...overrides }
 
     // alphabetize config by keys
-    let orderedConfig = {} as Cypress.PluginConfigOptions
+    const orderedConfig = {} as Cypress.PluginConfigOptions
 
     Object.keys(mergedConfig).sort().forEach((key) => {
-      const k = key as keyof typeof mergedConfig
-
-      // @ts-ignore
-      orderedConfig[k] = mergedConfig[k]
+      // Safe because `key` comes from `Object.keys(mergedConfig)`
+      Reflect.set(orderedConfig, key, mergedConfig[key as keyof typeof mergedConfig])
     })
 
     this.send('setupTestingType', testingType, {
@@ -220,20 +287,42 @@ export class ProjectConfigIpc extends EventEmitter {
     return new Promise((resolve, reject) => {
       let resolved = false
 
-      this._childProcess.on('error', (err) => {
+      this._childProcess.on('error', (err: NodeJS.ErrnoException) => {
+        if (err.code === 'EPIPE') {
+          debug('EPIPE error in registerSetupIpcHandlers() of child process %s', err)
+
+          // @ts-expect-error - resolve() expects the config; this path settles the promise without one
+          resolve()
+
+          return
+        }
+
         this.handleChildProcessError(err, this, resolved, reject)
         reject(err)
       })
 
+      this.rejectOnUnexpectedExit(reject)
+
       // For every registration event, we want to turn into an RPC with the child process
       this.once('setupTestingType:reply', (val) => {
         resolved = true
+        this._setupComplete = true
         resolve(val)
       })
 
       this.once('setupTestingType:error', (err) => {
+        // The child may exit right after reporting this, e.g. when the dev server finds no config file.
+        // That exit must not replace the error it just reported.
+        this.expectExit()
         this.onError(err)
         reject(err)
+      })
+
+      this.once('file:preprocessor:overridden', ({ handlerText }) => {
+        debug('file:preprocessor:overridden: %s', handlerText)
+        this.onDebugData({
+          filePreprocessorHandlerText: handlerText,
+        })
       })
 
       const handleWarning = (warningErr: CypressError) => {
@@ -246,14 +335,18 @@ export class ProjectConfigIpc extends EventEmitter {
     })
   }
 
-  private forkConfigProcess () {
-    const configProcessArgs = ['--projectRoot', this.projectRoot, '--file', this.configFilePath]
-    // allow the use of ts-node in subprocesses tests by removing the env constant from it
-    // without this line, packages/ts/register.js never registers the ts-node module for config and
-    // run_plugins can't use the config module.
-    const env = _.omit(process.env, 'CYPRESS_INTERNAL_E2E_TESTING_SELF')
+  private forkConfigProcess (): ChildProcess {
+    const shouldLoadAsEsm = shouldLoadConfigAsEsm(this.configFilePath)
+
+    debug('config file %s will load as %s', this.configFilePath, shouldLoadAsEsm ? 'esm' : 'cjs')
+
+    const configProcessArgs = ['--projectRoot', this.projectRoot, '--file', this.configFilePath, '--shouldLoadAsEsm', String(shouldLoadAsEsm)]
+    // we do NOT want telemetry enabled within our cy-in-cy tests as it isn't configured to handled it
+    const env = _.omit(process.env, 'CYPRESS_INTERNAL_E2E_TESTING_SELF', 'CYPRESS_INTERNAL_ENABLE_TELEMETRY', 'CYPRESS_INTERNAL_ORIGINAL_NODE_TLS_REJECT_UNAUTHORIZED')
 
     env.NODE_OPTIONS = process.env.ORIGINAL_NODE_OPTIONS || ''
+    // User code gets the user's value, not the server's '0'; fork leaves the variable unset when it's undefined
+    env.NODE_TLS_REJECT_UNAUTHORIZED = process.env.CYPRESS_INTERNAL_ORIGINAL_NODE_TLS_REJECT_UNAUTHORIZED
 
     const childOptions: ForkOptions = {
       stdio: 'pipe',
@@ -265,71 +358,76 @@ export class ProjectConfigIpc extends EventEmitter {
     if (inspector.url()) {
       childOptions.execArgv = _.chain(process.execArgv.slice(0))
       .remove('--inspect-brk')
+      // NOTE: The IDE in which you are working likely will not let attach to this process until it is running if using the --inspect option
+      // If needing to debug the child process (webpack-dev-server/vite-dev-server/webpack-preprocessor(s)/config loading), you may want to use --inspect-brk instead
+      // as it will NOT execute that process until you attach the debugger to it.
       .push(`--inspect=${process.debugPort + 1}`)
       .value()
     }
 
+    /**
+     * Before the introduction of tsx, Cypress used ts-node (@see https://github.com/TypeStrong/ts-node) with native node to try and load the user's cypress.config.ts file.
+     * This presented problems because the Cypress node runtime runs in commonjs, which may not be compatible with the user's cypress.config.ts and tsconfig.json.
+     * To mitigate the aforementioned runtime incompatibility, we used to force TypeScript options for the user in order to load their config inside the our node context
+     * via a child process, which lead to clashes and issues (outlined in the comments below).
+     * This is best explained historically in our docs which a screenshot can be see in @see https://github.com/cypress-io/cypress/issues/30426#issuecomment-2805204540 and can be seen
+     * in an older version of the Cypress codebase (@see https://github.com/cypress-io/cypress/blob/v14.3.0/packages/server/lib/plugins/child/ts_node.js#L24)
+     *
+     * Attempted workarounds with ts-node and node: @see https://github.com/cypress-io/cypress/pull/28709
+     * Example continued end user issues: @see https://github.com/cypress-io/cypress/issues/30954 and @see https://github.com/cypress-io/cypress/issues/30925
+     * Spike into ts-node alternatives (a lot of useful comments on tsx): @see https://github.com/cypress-io/cypress/issues/30426
+     * feature issue to replace ts-node as our end user TypeScript loader: @see https://github.com/cypress-io/cypress/issues/31185
+     *
+     * tsx (@see https://tsx.is/) is able to work with both CommonJS and ESM at the same time ( @see https://tsx.is/#seamless-cjs-%E2%86%94-esm-imports), which solves the problem of interoperability that
+     * Cypress faced with ts-node and really just node itself. We no longer need experimental node flags and ts-node permutations to load the user's config file.
+     * We can use tsx to load just about anything, including JavaScript files (@see https://github.com/privatenumber/ts-runtime-comparison)!
+     */
+
     debug('fork child process %o', { CHILD_PROCESS_FILE_PATH, configProcessArgs, childOptions: _.omit(childOptions, 'env') })
-
-    let isProjectUsingESModules = false
-
-    try {
-      // TODO: convert this to async FS methods
-      // eslint-disable-next-line no-restricted-syntax
-      const pkgJson = fs.readJsonSync(path.join(this.projectRoot, 'package.json'))
-
-      isProjectUsingESModules = pkgJson.type === 'module'
-    } catch (e) {
-      // project does not have `package.json` or it was not found
-      // reasonable to assume not using es modules
-    }
 
     if (!childOptions.env) {
       childOptions.env = {}
     }
 
-    // If they've got TypeScript installed, we can use
-    // ts-node for CommonJS
-    // ts-node/esm for ESM
-    if (hasTypeScriptInstalled(this.projectRoot)) {
+    /**
+     * use --import for node versions 20.6.0 and above
+     * NOTE: we need to use double quotes around the tsx path to account for paths with spaces or special characters.
+     * @see https://tsx.is/dev-api/node-cli#node-js-cli
+     */
+    const tsxLoader = `--import "${tsx}"`
+
+    // If they've got TypeScript installed, we can use tsx for CommonJS and ESM.
+    // @see https://tsx.is/dev-api/node-cli#node-js-cli
+    const userHasTypeScriptInstalled = hasTypeScriptInstalled(this.projectRoot)
+
+    if (userHasTypeScriptInstalled) {
       debug('found typescript in %s', this.projectRoot)
-      if (isProjectUsingESModules) {
-        debug(`using --experimental-specifier-resolution=node with --loader ${tsNodeEsm}`)
-        // Use the ts-node/esm loader so they can use TypeScript with `"type": "module".
-        // The loader API is experimental and will change.
-        // The same can be said for the other alternative, esbuild, so this is the
-        // best option that leverages the existing modules we bundle in the binary.
-        // @see ts-node esm loader https://typestrong.org/ts-node/docs/usage/#node-flags-and-other-tools
-        // @see Node.js Loader API https://nodejs.org/api/esm.html#customizing-esm-specifier-resolution-algorithm
-        const tsNodeEsmLoader = `--experimental-specifier-resolution=node --loader ${tsNodeEsm}`
 
-        if (childOptions.env.NODE_OPTIONS) {
-          childOptions.env.NODE_OPTIONS += ` ${tsNodeEsmLoader}`
-        } else {
-          childOptions.env.NODE_OPTIONS = tsNodeEsmLoader
-        }
+      // TODO: get the tsconfig.json that applies to the users cypress.config.ts file
+      // right now, we are just using the tsconfig.json we find in the project root
+      const tsConfig = getTsconfig(this.projectRoot)
+
+      if (tsConfig) {
+        debug(`tsconfig.json found at ${tsConfig.path}`)
+        childOptions.env.TSX_TSCONFIG_PATH = tsConfig.path
+
+        debugVerbose(`tsconfig.json parsed as follows: %o`, tsConfig.config)
       } else {
-        // Not using ES Modules (via "type": "module"),
-        // so we just register the standard ts-node module
-        // to handle TypeScript that is compiled to CommonJS.
-        // We do NOT use the `--loader` flag because we have some additional
-        // custom logic for ts-node when used with CommonJS that needs to be evaluated
-        // so we need to load and evaluate the hook first using the `--require` module API.
-        const tsNodeLoader = `--require "${tsNode}"`
-
-        debug(`using cjs with --require ${tsNode}`)
-
-        if (childOptions.env.NODE_OPTIONS) {
-          childOptions.env.NODE_OPTIONS += ` ${tsNodeLoader}`
-        } else {
-          childOptions.env.NODE_OPTIONS = tsNodeLoader
-        }
+        debug(`No tsconfig.json found! Attempting to parse file without tsconfig.json.`)
       }
-    } else {
-      // Just use Node's built-in ESM support.
-      // TODO: Consider using userland `esbuild` with Node's --loader API to handle ESM.
-      debug(`no typescript found, just use regular Node.js`)
     }
+
+    debug(`using generic ${tsxLoader} for esm and cjs ${userHasTypeScriptInstalled ? 'with TypeScript' : ''}.`)
+
+    if (childOptions.env.NODE_OPTIONS) {
+      childOptions.env.NODE_OPTIONS += ` ${tsxLoader}`
+    } else {
+      childOptions.env.NODE_OPTIONS = tsxLoader
+    }
+
+    // stripped from NODE_OPTIONS by require_async_child (https://github.com/cypress-io/cypress/issues/34076)
+    // =-form required: minimist parses a dash-leading value as a separate flag
+    configProcessArgs.push(`--tsxLoaderOptions=${tsxLoader}`)
 
     const telemetryCtx = encodeTelemetryContext({ context: telemetry.getActiveContextObject(), version: pkg.version })
 
@@ -350,6 +448,34 @@ export class ProjectConfigIpc extends EventEmitter {
     return fork(CHILD_PROCESS_FILE_PATH, configProcessArgs, childOptions)
   }
 
+  private handleUnexpectedExit (code: number | null, signal: string | null) {
+    const err = getError('CONFIG_PROCESS_EXITED_UNEXPECTEDLY', code, signal, this._testingType)
+
+    err.title = 'Config process error'
+    this.unexpectedExit = err
+    this.emit('exit:unexpected', err)
+
+    // No reply can arrive any more. Answering each pending node event with the error settles it and removes its listener.
+    for (const eventName of this.eventNames()) {
+      if (typeof eventName === 'string' && eventName.startsWith('promise:fulfilled:')) {
+        this.emit(eventName, err)
+      }
+    }
+
+    // Before setup completes the pending loadConfig/setupTestingType promises carry the error to their caller.
+    if (this._setupComplete) {
+      this.onError(err)
+    }
+  }
+
+  private rejectOnUnexpectedExit (reject: (err: CypressError) => void) {
+    if (this.unexpectedExit) {
+      reject(this.unexpectedExit)
+    } else {
+      this.once('exit:unexpected', reject)
+    }
+  }
+
   private handleChildProcessError (err: any, ipc: ProjectConfigIpc, resolved: boolean, reject: (reason?: any) => void) {
     debug('plugins process error:', err.stack)
 
@@ -368,14 +494,24 @@ export class ProjectConfigIpc extends EventEmitter {
   }
 
   cleanupIpc () {
+    debug('cleaning up IPC')
     this.killChildProcess()
     this.removeAllListeners()
   }
 
-  private killChildProcess () {
-    this._childProcess.kill()
+  private killChildProcess (): void {
+    this.expectExit()
     this._childProcess.stdout?.removeAllListeners()
     this._childProcess.stderr?.removeAllListeners()
     this._childProcess.removeAllListeners()
+
+    if (this._childProcess.killed || !this._childProcess.connected) {
+      debug('child process %s already killed', this._childProcess.pid)
+
+      return
+    }
+
+    debug('killing child process %s', this._childProcess.pid)
+    this._childProcess.kill()
   }
 }

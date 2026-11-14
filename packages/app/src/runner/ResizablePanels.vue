@@ -1,9 +1,10 @@
+<!-- Be careful with changing styles of the panels, it can impact our screenshot tests -->
 <template>
   <div
     id="resizable-panels-root"
     class="flex"
     :class="{
-      'select-none': panel1IsDragging || panel2IsDragging,
+      'select-none': panel1IsDragging || panel2IsDragging || panel4IsDragging,
     }"
     @mouseup="handleMouseup"
     @mousemove="handleMousemove"
@@ -13,11 +14,11 @@
       v-show="showPanel1"
       data-cy="specs-list-panel"
       class="h-full shrink-0 z-20 relative"
-      :style="{width: `${panel1Width}px`}"
+      :style="{ width: `${panel1Width}px` }"
     >
       <slot
         name="panel1"
-        :isDragging="panel1IsDragging"
+        :is-dragging="panel1IsDragging"
       />
 
       <div
@@ -31,9 +32,14 @@
       v-show="showPanel2"
       data-cy="reporter-panel"
       class="h-full shrink-0 z-10 relative"
-      :style="{width: `${panel2Width}px`}"
+      :style="{ width: `${panel2Width}px` }"
     >
-      <slot name="panel2" />
+      <!-- the reporter iframe swallows mousemove, so consumers disable pointer
+           events on the panel while dragging to let resize hits pass through -->
+      <slot
+        name="panel2"
+        :is-dragging="panel1IsDragging || panel2IsDragging || panel4IsDragging"
+      />
 
       <div
         data-cy="panel2ResizeHandle"
@@ -43,16 +49,30 @@
     </div>
 
     <div
+      id="aut-panel"
       data-cy="aut-panel"
       class="grow h-full bg-gray-100 relative"
-      :class="{'pointer-events-none':panel2IsDragging}"
-      :style="{
-        width: `${panel3width}px`
-      }"
+      :class="{ 'pointer-events-none': panel2IsDragging || panel4IsDragging }"
+      :style="{ width: `${panel3width}px` }"
     >
       <slot
         name="panel3"
         :width="panel3width"
+      />
+    </div>
+
+    <div
+      v-show="showPanel4"
+      data-cy="panel-4"
+      class="h-full shrink-0 z-10 bg-gray-1100 relative"
+      :style="{ width: `${panel4Width}px` }"
+    >
+      <slot name="panel4" />
+
+      <div
+        data-cy="panel4ResizeHandle"
+        class="cursor-ew-resize h-full top-0 left-[-5px] w-[10px] z-30 absolute"
+        @mousedown="handleMousedown('panel4', $event)"
       />
     </div>
   </div>
@@ -72,36 +92,46 @@ import type { DraggablePanel } from './useRunnerStyle'
 const props = withDefaults(defineProps<{
   showPanel1?: boolean // specsList in runner
   showPanel2?: boolean // reporter in runner
+  showPanel4?: boolean // studio in runner
   initialPanel1Width?: number
   initialPanel2Width?: number
+  initialPanel4Width?: number
   minPanel1Width?: number
   minPanel2Width?: number
   minPanel3Width?: number
+  minPanel4Width?: number
   maxTotalWidth?: number // windowWidth in runner
   offsetLeft?: number
 }>(), {
   showPanel1: true,
   showPanel2: true,
+  showPanel4: false,
   initialPanel1Width: runnerConstants.defaultSpecListWidth,
   initialPanel2Width: runnerConstants.defaultReporterWidth,
+  initialPanel4Width: runnerConstants.defaultStudioWidth,
   minPanel1Width: 200,
   minPanel2Width: 220,
   minPanel3Width: 100,
+  minPanel4Width: 340,
   maxTotalWidth: window.innerWidth,
   offsetLeft: 0,
 })
 
 const emit = defineEmits<{
   (e: 'resizeEnd', value: DraggablePanel): void
-  (e: 'panelWidthUpdated', value: {panel: DraggablePanel, width: number}): void
+  (e: 'panelWidthUpdated', value: { panel: DraggablePanel, width: number }): void
 }>()
 
 const panel1HandleX = ref(props.initialPanel1Width)
 const panel2HandleX = ref(props.initialPanel2Width + props.initialPanel1Width)
 const panel1IsDragging = ref(false)
 const panel2IsDragging = ref(false)
+const panel4IsDragging = ref(false)
 const cachedPanel1Width = ref<number>(props.initialPanel1Width) // because panel 1 (the inline specs list) can be opened and closed in the UI, we cache the width
+const cachedPanel4Width = ref(props.initialPanel4Width)
 const panel2Width = ref(props.initialPanel2Width)
+const panel4InitialMouseX = ref(0) // Initial mouse position when panel4 drag starts
+const panel4InitialWidth = ref(0) // Initial panel width when panel4 drag starts
 
 const handleMousedown = (panel: DraggablePanel, event: MouseEvent) => {
   if (panel === 'panel1') {
@@ -109,10 +139,15 @@ const handleMousedown = (panel: DraggablePanel, event: MouseEvent) => {
   } else if (panel === 'panel2') {
     panel2IsDragging.value = true
     panel2HandleX.value = event.clientX
+  } else if (panel === 'panel4') {
+    panel4IsDragging.value = true
+    panel4InitialMouseX.value = event.clientX
+    panel4InitialWidth.value = cachedPanel4Width.value
   }
 }
+
 const handleMousemove = (event: MouseEvent) => {
-  if (!panel1IsDragging.value && !panel2IsDragging.value) {
+  if (!panel1IsDragging.value && !panel2IsDragging.value && !panel4IsDragging.value) {
     // nothing is dragging, ignore mousemove
 
     return
@@ -126,6 +161,13 @@ const handleMousemove = (event: MouseEvent) => {
     panel2HandleX.value = event.clientX
     panel2Width.value = event.clientX - props.offsetLeft - panel1Width.value
     emit('panelWidthUpdated', { panel: 'panel2', width: panel2Width.value })
+  } else if (panel4IsDragging.value && isNewWidthAllowed(event.clientX, 'panel4')) {
+    // panel4 resizes from the right edge, so we calculate based on mouse movement from the initial position
+    const mouseDelta = event.clientX - panel4InitialMouseX.value
+    const newWidth = panel4InitialWidth.value - mouseDelta
+
+    cachedPanel4Width.value = newWidth
+    emit('panelWidthUpdated', { panel: 'panel4', width: panel4Width.value })
   }
 }
 const handleMouseup = () => {
@@ -136,12 +178,19 @@ const handleMouseup = () => {
     return
   }
 
-  handleResizeEnd('panel2')
-  panel2IsDragging.value = false
+  if (panel2IsDragging.value) {
+    handleResizeEnd('panel2')
+    panel2IsDragging.value = false
+  }
+
+  if (panel4IsDragging.value) {
+    handleResizeEnd('panel4')
+    panel4IsDragging.value = false
+  }
 }
 
 const maxPanel1Width = computed(() => {
-  const unavailableWidth = panel2Width.value + props.minPanel3Width
+  const unavailableWidth = panel2Width.value + props.minPanel3Width + panel4Width.value
 
   return props.maxTotalWidth - unavailableWidth
 })
@@ -154,14 +203,22 @@ const panel1Width = computed(() => {
   return cachedPanel1Width.value
 })
 
+const panel4Width = computed(() => {
+  if (!props.showPanel4) {
+    return 0
+  }
+
+  return cachedPanel4Width.value
+})
+
 const maxPanel2Width = computed(() => {
-  const unavailableWidth = panel1Width.value + props.minPanel3Width
+  const unavailableWidth = panel1Width.value + props.minPanel3Width + panel4Width.value
 
   return props.maxTotalWidth - unavailableWidth
 })
 
 const panel3width = computed(() => {
-  const panel3SpaceAvailable = props.maxTotalWidth - panel1Width.value - panel2Width.value
+  const panel3SpaceAvailable = props.maxTotalWidth - panel1Width.value - panel2Width.value - panel4Width.value
 
   // minimumWithMargin - if panel 3 would end up below the minimum allowed size
   // due to window resizing, forcing the minimum width will create a horizontal scroll
@@ -171,12 +228,18 @@ const panel3width = computed(() => {
   return panel3SpaceAvailable < props.minPanel3Width ? minimumWithBuffer : panel3SpaceAvailable
 })
 
+const maxPanel4Width = computed(() => {
+  const unavailableWidth = panel1Width.value + panel2Width.value + props.minPanel3Width
+
+  return props.maxTotalWidth - unavailableWidth
+})
+
 function handleResizeEnd (panel: DraggablePanel) {
   emit('resizeEnd', panel)
 }
 
 function isNewWidthAllowed (mouseClientX: number, panel: DraggablePanel) {
-  const isMaxWidthSmall = props.maxTotalWidth < (panel1Width.value + panel2Width.value + props.minPanel3Width)
+  const isMaxWidthSmall = props.maxTotalWidth < (panel1Width.value + panel2Width.value + props.minPanel3Width + panel4Width.value)
   const fallbackWidth = 50
 
   if (panel === 'panel1') {
@@ -191,13 +254,28 @@ function isNewWidthAllowed (mouseClientX: number, panel: DraggablePanel) {
     return result
   }
 
-  const newWidth = mouseClientX - props.offsetLeft - panel1Width.value
+  if (panel === 'panel2') {
+    const newWidth = mouseClientX - props.offsetLeft - panel1Width.value
 
-  if (isMaxWidthSmall && newWidth > fallbackWidth) {
-    return true
+    if (isMaxWidthSmall && newWidth > fallbackWidth) {
+      return true
+    }
+
+    return panel2IsDragging.value && newWidth >= props.minPanel2Width && newWidth <= maxPanel2Width.value
   }
 
-  return panel2IsDragging.value && newWidth >= props.minPanel2Width && newWidth <= maxPanel2Width.value
+  if (panel === 'panel4') {
+    const mouseDelta = mouseClientX - panel4InitialMouseX.value
+    const newWidth = panel4InitialWidth.value - mouseDelta
+
+    if (isMaxWidthSmall && newWidth >= props.minPanel4Width) {
+      return true
+    }
+
+    return panel4IsDragging.value && newWidth >= props.minPanel4Width && newWidth <= maxPanel4Width.value
+  }
+
+  return false
 }
 
 watchEffect(() => {
@@ -205,6 +283,12 @@ watchEffect(() => {
     emit('panelWidthUpdated', { panel: 'panel1', width: 0 })
   } else if (props.showPanel1) {
     emit('panelWidthUpdated', { panel: 'panel1', width: cachedPanel1Width.value })
+  }
+
+  if (!props.showPanel4) {
+    emit('panelWidthUpdated', { panel: 'panel4', width: 0 })
+  } else if (props.showPanel4) {
+    emit('panelWidthUpdated', { panel: 'panel4', width: cachedPanel4Width.value })
   }
 })
 

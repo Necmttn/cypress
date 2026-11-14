@@ -6,7 +6,6 @@
  */
 import chokidar from 'chokidar'
 import path from 'path'
-import pDefer from 'p-defer'
 import fs from 'fs-extra'
 import { DevActions } from '@packages/data-context/src/actions/DevActions'
 
@@ -14,7 +13,8 @@ import { monorepoPaths } from '../monorepoPaths'
 import { ENV_VARS } from '../gulpConstants'
 import { forked } from '../utils/childProcessUtils'
 import { exitAndRemoveProcess } from './gulpRegistry'
-import { ChildProcess, exec } from 'child_process'
+import type { ChildProcess } from 'child_process'
+import { exec } from 'child_process'
 
 const pathToCli = path.resolve(monorepoPaths.root, 'cli', 'bin', 'cypress')
 
@@ -26,7 +26,7 @@ const pathToCli = path.resolve(monorepoPaths.root, 'cli', 'bin', 'cypress')
  *------------------------------------------------------------------------**/
 
 export async function killExistingCypress () {
-  const dfd = pDefer()
+  const dfd = Promise.withResolvers()
   const child = exec('killall Cypress')
 
   child.on('error', dfd.resolve)
@@ -96,7 +96,6 @@ async function spawnCypressWithMode (
   const finalEnv: Record<string, string | undefined> = {
     ...process.env,
     ...env,
-    TS_NODE_COMPILER: 'typescript-cached-transpile',
   }
 
   return await forked(`cy:${mode}:${type}`, pathToCli, [mode, ...argv], {
@@ -114,7 +113,6 @@ async function spawnCypressWithMode (
  *------------------------------------------------------------------------**/
 
 export async function startCypressWatch () {
-  let isClosing = false
   let isRestarting = false
   let child: ChildProcess | null = null
 
@@ -122,7 +120,7 @@ export async function startCypressWatch () {
     child = await spawnCypressWithMode('open', 'dev', ENV_VARS.DEV)
 
     child.on('exit', (code) => {
-      if (isClosing) {
+      if (!isRestarting) {
         process.exit(code ?? 0)
       }
     })
@@ -151,7 +149,7 @@ export async function startCypressWatch () {
       return
     }
 
-    const dfd = pDefer()
+    const dfd = Promise.withResolvers()
 
     if (child) {
       isRestarting = true
@@ -184,7 +182,6 @@ export async function startCypressWatch () {
   watcher.on('change', signalRestart)
 
   process.on('beforeExit', () => {
-    isClosing = true
     watcher.close()
   })
 

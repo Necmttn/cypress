@@ -27,10 +27,3 @@ declare global {
     }
   }
 }
-
-import { initHighlighter } from '@cy/components/highlight'
-
-// Make sure highlighter is initialized before
-// we show any code to avoid jank at rendering
-// @ts-ignore
-initHighlighter()

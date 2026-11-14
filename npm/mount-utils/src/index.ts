@@ -15,18 +15,11 @@ export const getContainerEl = (): HTMLElement => {
   throw Error(`No element found that matches selector ${ROOT_SELECTOR}. Please add a root element with data-cy-root attribute to your "component-index.html" file so that Cypress can attach your component to the DOM.`)
 }
 
-export function checkForRemovedStyleOptions (mountingOptions: Record<string, any>) {
-  for (const key of ['cssFile', 'cssFiles', 'style', 'styles', 'stylesheet', 'stylesheets'] as const) {
-    if (mountingOptions[key]) {
-      Cypress.utils.throwErrByPath('mount.removed_style_mounting_options', key)
-    }
-  }
-}
-
 /**
  * Utility function to register CT side effects and run cleanup code during the "test:before:run" Cypress hook
  * @param optionalCallback Callback to be called before the next test runs
  */
+// eslint-disable-next-line @typescript-eslint/no-unsafe-function-type -- published API; narrowing the parameter would break callers that pass a `Function`
 export function setupHooks (optionalCallback?: Function) {
   // We don't want CT side effects to run when e2e
   // testing so we early return.
@@ -56,44 +49,7 @@ export function setupHooks (optionalCallback?: Function) {
     )
   })
 
-  // @ts-ignore
   Cypress.on('test:before:after:run:async', () => {
     optionalCallback?.()
   })
-}
-
-/**
- * Remove any style or extra link elements from the iframe placeholder
- * left from any previous test
- *
- * Removed as of Cypress 11.0.0
- * @see https://on.cypress.io/migration-11-0-0-component-testing-updates
- */
-export function cleanupStyles () {
-  Cypress.utils.throwErrByPath('mount.cleanup_styles')
-}
-
-/**
- * Additional styles to inject into the document.
- * A component might need 3rd party libraries from CDN,
- * local CSS files and custom styles.
- *
- * Removed as of Cypress 11.0.0.
- * @see https://on.cypress.io/migration-11-0-0-component-testing-updates
- */
-export type StyleOptions = unknown
-
-/**
- * Injects custom style text or CSS file or 3rd party style resources
- * into the given document.
- *
- * Removed as of Cypress 11.0.0.
- * @see https://on.cypress.io/migration-11-0-0-component-testing-updates
- */
-export const injectStylesBeforeElement = (
-  options: Partial<StyleOptions & { log: boolean }>,
-  document: Document,
-  el: HTMLElement | null,
-) => {
-  Cypress.utils.throwErrByPath('mount.inject_styles_before_element')
 }

@@ -1,18 +1,13 @@
 import path from 'path'
+import fs from 'fs-extra'
 
-let fs: typeof import('fs-extra')
-
-export type RunnerPkg = 'app' | 'runner'
-
-type FoldersWithDist = 'static' | 'driver' | RunnerPkg | 'launchpad'
+type FoldersWithDist = 'static' | 'driver' | 'app' | 'runner' | 'launchpad'
 
 export const resolveFromPackages = (...args: string[]) => {
   return path.join(...[__dirname, '..', '..', ...args])
 }
 
 const getRunnerContents = (filename: string) => {
-  fs ??= require('fs-extra') as typeof import('fs-extra')
-
   return fs.readFile(getPathToDist('runner', filename))
 }
 
@@ -26,10 +21,6 @@ export const getRunnerInjectionContents = () => {
 
 export const getRunnerCrossOriginInjectionContents = () => {
   return getRunnerContents('injection_cross_origin.js')
-}
-
-export const getPathToIndex = (pkg: RunnerPkg) => {
-  return getPathToDist(pkg, 'index.html')
 }
 
 export const getPathToDesktopIndex = (graphqlPort: number) => {

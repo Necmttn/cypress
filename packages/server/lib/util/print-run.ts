@@ -5,18 +5,23 @@ import chalk from 'chalk'
 import human from 'human-interval'
 import prettyBytes from 'pretty-bytes'
 import pkg from '@packages/root'
-import humanTime from './human_time'
-import duration from './duration'
-import newlines from './newlines'
-import env from './env'
-import terminal from './terminal'
+import * as humanTime from './human_time'
+import { format as durationFormat } from './duration'
+import { addNewlineAtEveryNChar } from './newlines'
+import * as env from './env'
+import * as terminal from './terminal'
 import { getIsCi } from './ci_provider'
 import * as experiments from '../experiments'
-import type { SpecFile } from '@packages/types'
+import { isDeprecatedBrowser } from '@packages/types'
+import type { SpecFile, ProtocolError } from '@packages/types'
+import * as errors from '@packages/errors'
 import type { Cfg } from '../project-base'
 import type { Browser } from '../browsers/types'
-import type { Table } from 'cli-table3'
+import type { HorizontalAlignment, Table } from 'cli-table3'
 import type { CypressRunResult } from '../modes/results'
+import type { IArtifact, ArtifactUploadResult } from '../cloud/artifacts/artifact'
+
+import { ArtifactKinds } from '../cloud/artifacts/artifact'
 
 type Screenshot = {
   width: number
@@ -26,10 +31,10 @@ type Screenshot = {
 }
 
 export const cloudRecommendationMessage = `
-  Having trouble debugging your CI failures?
+  Debug faster with full visibility.
 
-  Record your runs to Cypress Cloud to watch video recordings for each test,
-  debug failing and flaky tests, and integrate with your favorite tools.
+  Record to Cypress Cloud and get instant access to full test details and replays.
+  Inspect the DOM, network events, and console logs exactly as they ran in CI.
 `
 
 function color (val: any, c: string) {
@@ -66,6 +71,7 @@ function formatBrowser (browser: Browser) {
     browser.displayName,
     browser.majorVersion,
     browser.isHeadless && gray('(headless)'),
+    isDeprecatedBrowser(browser) && color('(deprecated)', 'yellow'),
   ]).join(' ')
 }
 
@@ -98,7 +104,7 @@ function formatFooterSummary (results: any) {
   return [
     isCanceled ? '-' : formatSymbolSummary(totalFailed),
     color(phrase, c),
-    gray(duration.format(results.totalDuration)),
+    gray(durationFormat(results.totalDuration)),
     colorIf(results.totalTests, 'reset'),
     colorIf(results.totalPassed, 'green'),
     colorIf(totalFailed, 'red'),
@@ -156,7 +162,7 @@ function formatPath (name: string, n: number | undefined, pathColor = 'reset') {
 
   // add newLines at each n char and colorize the path
   if (n) {
-    let nameWithNewLines = newlines.addNewlineAtEveryNChar(name, n)
+    const nameWithNewLines = addNewlineAtEveryNChar(name, n)
 
     return `${color(nameWithNewLines, pathColor)}`
   }
@@ -241,7 +247,6 @@ export function displayRunStarting (options: { browser: Browser, config: Cfg, gr
   .filter(_.property(1))
   .value()
 
-  // @ts-expect-error incorrect type in Table
   table.push(...data)
 
   const heading = table.toString()
@@ -249,6 +254,13 @@ export function displayRunStarting (options: { browser: Browser, config: Cfg, gr
   console.log(heading)
 
   console.log('')
+
+  // Surface the Electron deprecation alongside the run header. Emitted here so
+  // every code path that prints the run header (runSpecs and passWithNoTests)
+  // shows it; both call this only when not `--quiet`, so quiet runs stay quiet.
+  if (isDeprecatedBrowser(browser)) {
+    errors.warning('BROWSER_ELECTRON_DEPRECATED')
+  }
 
   return heading
 }
@@ -312,7 +324,7 @@ export function renderSummaryTable (runUrl: string | undefined, results: Cypress
   })
 
   if (runs && runs.length) {
-    const colAligns = ['left', 'left', 'right', 'right', 'right', 'right', 'right', 'right']
+    const colAligns: HorizontalAlignment[] = ['left', 'left', 'right', 'right', 'right', 'right', 'right', 'right']
     const colWidths = [3, 41, 11, 9, 9, 9, 9, 9]
 
     const table1 = terminal.table({
@@ -347,7 +359,7 @@ export function renderSummaryTable (runUrl: string | undefined, results: Cypress
     _.each(runs, (run) => {
       const { spec, stats } = run
 
-      const ms = duration.format(stats.wallClockDuration || 0)
+      const ms = durationFormat(stats.wallClockDuration || 0)
 
       const formattedSpec = formatPath(spec.relativeToCommonRoot, getWidth(table2, 1))
 
@@ -572,60 +584,81 @@ const formatFileSize = (bytes: number) => {
   return prettyBytes(bytes)
 }
 
-type ArtifactLike = {
-  reportKey: 'protocol' | 'screenshots' | 'video'
-  filePath?: string
-  fileSize?: number | BigInt
-  message?: string
-  skip?: boolean
-  error: string
-}
-
-export const printPendingArtifactUpload = <T extends ArtifactLike> (artifact: T, labels: Record<'protocol' | 'screenshots' | 'video', string>): void => {
+export const printPendingArtifactUpload = (artifact: IArtifact, labels: Record<'protocol' | 'screenshots' | 'video', string>): void => {
   process.stdout.write(`  - ${labels[artifact.reportKey]} `)
-
-  if (artifact.skip) {
-    if (artifact.reportKey === 'protocol' && artifact.error) {
-      process.stdout.write(`- Failed Capturing - ${artifact.error}`)
-    } else {
-      process.stdout.write('- Nothing to upload ')
-    }
-  }
-
-  if (artifact.reportKey === 'protocol' && artifact.message) {
-    process.stdout.write(`- ${artifact.message}`)
-  }
 
   if (artifact.fileSize) {
     process.stdout.write(`- ${formatFileSize(Number(artifact.fileSize))}`)
   }
 
-  if (artifact.filePath) {
+  if (artifact.filePath && artifact.reportKey !== 'protocol') {
     process.stdout.write(` ${formatPath(artifact.filePath, undefined, 'cyan')}`)
   }
 
   process.stdout.write('\n')
 }
 
-type ArtifactUploadResultLike = {
-  pathToFile?: string
-  key: string
-  fileSize?: number | BigInt
-  success: boolean
-  error?: string
-  skipped?: boolean
-  uploadDuration?: number
+export const printSkippedArtifact = (label: string, message: string = 'Nothing to upload', error?: string) => {
+  process.stdout.write(`  - ${label} - ${message} `)
+  if (error) {
+    process.stdout.write(`- ${error}`)
+  }
+
+  process.stdout.write('\n')
 }
 
-export const printCompletedArtifactUpload = <T extends ArtifactUploadResultLike> (artifactUploadResult: T, labels: Record<'protocol' | 'screenshots' | 'video', string>, num: string): void => {
-  const { pathToFile, key, fileSize, success, error, skipped, uploadDuration } = artifactUploadResult
+export const logUploadManifest = (artifacts: IArtifact[], protocolCaptureMeta: {
+  url?: string
+  disabledMessage?: string
+}, protocolFatalError?: ProtocolError) => {
+  const labels = {
+    [ArtifactKinds.VIDEO]: 'Video',
+    [ArtifactKinds.SCREENSHOTS]: 'Screenshot',
+    [ArtifactKinds.PROTOCOL]: 'Test Replay',
+  }
 
+  console.log('')
+  terminal.header('Uploading Cloud Artifacts', {
+    color: ['blue'],
+  })
+
+  console.log('')
+
+  const video = artifacts.find(({ reportKey }) => reportKey === ArtifactKinds.VIDEO)
+  const screenshots = artifacts.filter(({ reportKey }) => reportKey === ArtifactKinds.SCREENSHOTS)
+  const protocol = artifacts.find(({ reportKey }) => reportKey === ArtifactKinds.PROTOCOL)
+
+  if (video) {
+    printPendingArtifactUpload(video, labels)
+  } else {
+    printSkippedArtifact('Video')
+  }
+
+  if (screenshots.length) {
+    screenshots.forEach(((screenshot) => {
+      printPendingArtifactUpload(screenshot, labels)
+    }))
+  } else {
+    printSkippedArtifact('Screenshot')
+  }
+
+  // if protocolFatalError exists here, there is not a protocol artifact to attempt to upload
+  if (protocolFatalError) {
+    printSkippedArtifact('Test Replay', 'Failed Capturing', protocolFatalError.error.message)
+  } else if (protocol) {
+    if (!protocolFatalError) {
+      printPendingArtifactUpload(protocol, labels)
+    }
+  } else if (protocolCaptureMeta.disabledMessage) {
+    printSkippedArtifact('Test Replay', 'Nothing to upload', protocolCaptureMeta.disabledMessage)
+  }
+}
+
+export const printCompletedArtifactUpload = ({ pathToFile, key, fileSize, success, error, uploadDuration }: ArtifactUploadResult, labels: Record<'protocol' | 'screenshots' | 'video', string>, num: string): void => {
   process.stdout.write(`  - ${labels[key]} `)
 
   if (success) {
     process.stdout.write(`- Done Uploading ${formatFileSize(Number(fileSize))}`)
-  } else if (skipped) {
-    process.stdout.write(`- Nothing to Upload`)
   } else {
     process.stdout.write(`- Failed Uploading`)
   }
@@ -649,6 +682,30 @@ export const printCompletedArtifactUpload = <T extends ArtifactUploadResultLike>
   process.stdout.write('\n')
 }
 
+export const logUploadResults = (results: ArtifactUploadResult[], protocolFatalError: ProtocolError | undefined) => {
+  if (!results.length) {
+    return
+  }
+
+  const labels = {
+    [ArtifactKinds.VIDEO]: 'Video',
+    [ArtifactKinds.SCREENSHOTS]: 'Screenshot',
+    [ArtifactKinds.PROTOCOL]: 'Test Replay',
+  }
+
+  console.log('')
+
+  terminal.header('Uploaded Cloud Artifacts', {
+    color: ['blue'],
+  })
+
+  console.log('')
+
+  results.forEach(({ key, ...report }, i, { length }) => {
+    printCompletedArtifactUpload({ key, ...report }, labels, chalk.grey(`${i + 1}/${length}`))
+  })
+}
+
 const UPLOAD_ACTIVITY_INTERVAL = typeof env.get('CYPRESS_UPLOAD_ACTIVITY_INTERVAL') === 'undefined' ? 15000 : env.get('CYPRESS_UPLOAD_ACTIVITY_INTERVAL')
 
 export const beginUploadActivityOutput = () => {
@@ -657,7 +714,7 @@ export const beginUploadActivityOutput = () => {
   process.stdout.write(chalk.bold.blue('. '))
   const uploadActivityInterval = setInterval(() => {
     process.stdout.write(chalk.bold.blue('. '))
-  }, UPLOAD_ACTIVITY_INTERVAL)
+  }, Number(UPLOAD_ACTIVITY_INTERVAL))
 
   return () => {
     if (uploadActivityInterval) {

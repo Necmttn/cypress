@@ -5,6 +5,8 @@ const { promisify } = require('util')
 const minimist = require('minimist')
 
 const checkedInBinaryVersion = require('../package.json').version
+const SENTINEL_VERSION = '0.0.0-development'
+const isSentinelVersion = checkedInBinaryVersion === SENTINEL_VERSION
 const { changeCatagories } = require('./semantic-commits/change-categories')
 const { getCurrentReleaseData } = require('./semantic-commits/get-current-release-data')
 
@@ -12,7 +14,7 @@ const bump = promisify(bumpCb)
 const paths = ['packages', 'cli']
 
 const getNextVersionForPath = async (path) => {
-  const { version: releasedVersion } = await getCurrentReleaseData(false)
+  const { version: releasedVersion, isPreviousMajor } = await getCurrentReleaseData(false)
 
   let commits
   const whatBump = (foundCommits) => {
@@ -49,16 +51,19 @@ const getNextVersionForPath = async (path) => {
     path,
   })
 
-  let nextVersion = semver.inc(checkedInBinaryVersion, releaseType || 'patch')
-
-  const hasVersionBump = checkedInBinaryVersion !== releasedVersion
+  let nextVersion = semver.inc(releasedVersion, releaseType || 'patch')
 
   // See ../guides/next-version.md for documentation.
   // for the time being, honoring this ENV -- ideally this will be deleted to remove manually overriding without a PR
   if (process.env.NEXT_VERSION) {
     nextVersion = process.env.NEXT_VERSION
-  } else if (hasVersionBump) {
+  } else if (!isSentinelVersion && checkedInBinaryVersion !== releasedVersion) {
+    // honor a manually-set real version in package.json
     nextVersion = checkedInBinaryVersion
+  }
+
+  if (isPreviousMajor && semver.major(nextVersion) > semver.major(releasedVersion)) {
+    throw new Error(`The next version ${nextVersion} is outside the ${semver.major(releasedVersion)}.x line this branch releases.`)
   }
 
   return {

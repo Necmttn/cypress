@@ -1,4 +1,4 @@
-const { sinon } = require('@packages/https-proxy/test/spec_helper')
+const sinon = require('sinon')
 const { expect } = require('chai')
 const hasha = require('hasha')
 const fs = require('fs')
@@ -13,7 +13,6 @@ const upload = require('../../binary/upload')
 const uploadUtils = require('../../binary/util/upload')
 const { s3helpers } = require('../../binary/s3-api')
 
-/* eslint-env mocha */
 describe('upload-release-artifact', () => {
   describe('.getCDN', () => {
     it('returns CDN s3 url', () => {

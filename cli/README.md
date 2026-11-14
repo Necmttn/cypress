@@ -11,7 +11,7 @@ The CLI is used to build the [cypress npm module](https://www.npmjs.com/package/
 - Allow users to open Cypress in the interactive Test Runner.
 - Allow users to verify that Cypress is installed correctly and executable
 - Allow users to manages the Cypress binary cache
-- Allow users to pass in options that change way tests are ran or recorded (browsers used, specfiles ran, grouping, parallelization)
+- Allow users to pass in options that change the way tests are run or recorded (browsers used, specfiles ran, grouping, parallelization)
 
 ## Building
 
@@ -43,22 +43,25 @@ When testing with `dtslint`, you may need to remove existing typescript installa
 
 ### Manual
 
-To build and test an NPM package:
+To build and test an npm package, execute the following from the repo's root directory:
 
-- `yarn`
-- `yarn build`
+```shell
+yarn
+yarn build
+```
 
-This creates `build` folder.
+This creates the `cli/build` folder.
 
-- `cd build; yarn pack`
+```shell
+cd cli/build
+yarn pack
+```
 
 This creates an archive, usually named `cypress-v<version>.tgz`. You can install this archive from other projects, but because there is no corresponding binary yet (probably), skip binary download. For example from inside `cypress-example-kitchensink` folder
 
 ```shell
-yarn add ~/{your-dirs}/cypress/cli/build/cypress-3.3.1.tgz --ignore-scripts
+yarn add ~/{your-dirs}/cypress/cli/build/cypress-v13.13.2.tgz --ignore-scripts
 ```
-
-Which installs the `tgz` file we have just built from folder `Users/jane-lane/{your-dirs}/cypress/cli/build`.
 
 #### Sub-package API
 
@@ -95,7 +98,7 @@ There are a few steps when adding a new sub-package.
 3. Add the sub-package's name to the following locations:
   - **`cli/.gitignore`**
   - **`cli/scripts/post-build.js`**
-  - **`.eslintignore`** (under cli/sub-package)
+  - the `ignores` list in **`cli/eslint.config.ts`**
 4. DO NOT manually update the **package.json** file. Running `yarn build` will automate this process.
 5. Commit the changed files.
 

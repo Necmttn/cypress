@@ -1,21 +1,22 @@
 <template>
   <SettingsSection>
     <template #title>
-      {{ t('settingsPage.testingPreferences.title') }}
+      Testing preferences
     </template>
     <template #description>
-      {{ t('settingsPage.testingPreferences.description') }}
+      Configure your testing environment with these flags
     </template>
     <div
       class="divide-y border rounded divide-gray-200 border-gray-100 px-[16px]"
     >
       <div class="py-[16px]">
         <h4 class="flex text-gray-800 text-[16px] leading-[24px] items-center">
-          <label :for="autoScrollingPreference.id">{{ autoScrollingPreference.title }}</label>
+          <label :id="autoScrollingPreference.id">{{ autoScrollingPreference.title }}</label>
           <Switch
+            id="autoScrollingToggle"
             class="mx-[8px]"
             :value="props.gql.localSettings.preferences[autoScrollingPreference.id] ?? false"
-            :name="autoScrollingPreference.id"
+            :label-id="autoScrollingPreference.id"
             @update="(value) => updatePref(value)"
           />
         </h4>
@@ -29,13 +30,10 @@
 
 <script lang="ts" setup>
 import SettingsSection from '../SettingsSection.vue'
-import { useI18n } from '@cy/i18n'
 import Switch from '@packages/frontend-shared/src/components/Switch.vue'
 import { gql, useMutation } from '@urql/vue'
 import { SetTestingPreferencesDocument } from '../../generated/graphql'
 import type { TestingPreferencesFragment } from '../../generated/graphql'
-
-const { t } = useI18n()
 
 gql`
 fragment TestingPreferences on Query {
@@ -58,8 +56,8 @@ const setPreferences = useMutation(SetTestingPreferencesDocument)
 
 const autoScrollingPreference = {
   id: 'autoScrollingEnabled',
-  title: t('settingsPage.testingPreferences.autoScrollingEnabled.title'),
-  description: t('settingsPage.testingPreferences.autoScrollingEnabled.description'),
+  title: 'Auto scrolling enabled',
+  description: 'Scroll behavior when running tests.',
 } as const
 
 function updatePref (value: boolean) {

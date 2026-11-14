@@ -1,4 +1,4 @@
-import type { BannersState, Editor, MajorVersionWelcomeDismissed } from '.'
+import type { BannersState, Editor, MajorVersionWelcomeDismissed, Maybe } from '.'
 
 export const NotifyCompletionStatuses = ['passed', 'failed', 'cancelled', 'errored'] as const
 
@@ -7,11 +7,13 @@ export type NotifyWhenRunCompletes = typeof NotifyCompletionStatuses[number]
 export const defaultPreferences: AllowedState = {
   autoScrollingEnabled: true,
   isSpecsListOpen: false,
+  showFetchRequests: true,
   isSideNavigationOpen: true,
   desktopNotificationsEnabled: null,
   notifyWhenRunStarts: false,
   notifyWhenRunStartsFailing: true,
   notifyWhenRunCompletes: ['failed'],
+  codeEditorLineWrap: false,
 }
 
 export const allowedKeys: Readonly<Array<keyof AllowedState>> = [
@@ -29,11 +31,17 @@ export const allowedKeys: Readonly<Array<keyof AllowedState>> = [
   'isBrowserDevToolsOpen',
   'reporterWidth',
   'specListWidth',
+  'studioWidth',
+  // Written by Cypress 9 / early 10 and never pruned from state.json. They have
+  // no reader left, but `setPreferences` read-merges the whole on-disk state
+  // back through `normalizeAndAllowSet`, so dropping them here would warn on
+  // every preference save for anyone still carrying them.
   'showedNewProjectBanner',
   'firstOpenedCypress',
   'showedStudioModal',
   'preferredOpener',
   'isSpecsListOpen',
+  'showFetchRequests',
   'firstOpened',
   'lastOpened',
   'lastProjectId',
@@ -50,9 +58,9 @@ export const allowedKeys: Readonly<Array<keyof AllowedState>> = [
   'notifyWhenRunStarts',
   'notifyWhenRunStartsFailing',
   'notifyWhenRunCompletes',
+  'studioFirstUseInstructionsDismissed',
+  'codeEditorLineWrap',
 ] as const
-
-type Maybe<T> = T | null | undefined
 
 export type AllowedState = Partial<{
   appWidth: Maybe<number>
@@ -60,6 +68,7 @@ export type AllowedState = Partial<{
   appX: Maybe<number>
   appY: Maybe<number>
   isSpecsListOpen: Maybe<boolean>
+  showFetchRequests: Maybe<boolean>
   autoScrollingEnabled: Maybe<boolean>
   banners: Maybe<BannersState>
   browserWidth: Maybe<number>
@@ -70,6 +79,7 @@ export type AllowedState = Partial<{
   isBrowserDevToolsOpen: Maybe<boolean>
   reporterWidth: Maybe<number>
   specListWidth: Maybe<number>
+  studioWidth: Maybe<number>
   showedNewProjectBanner: Maybe<boolean>
   firstOpenedCypress: Maybe<number>
   showedStudioModal: Maybe<boolean>
@@ -91,4 +101,6 @@ export type AllowedState = Partial<{
   notifyWhenRunStarts: Maybe<boolean>
   notifyWhenRunStartsFailing: Maybe<boolean>
   notifyWhenRunCompletes: Maybe<NotifyWhenRunCompletes[]>
+  studioFirstUseInstructionsDismissed: Maybe<boolean>
+  codeEditorLineWrap: Maybe<boolean>
 }>

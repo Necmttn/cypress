@@ -3,16 +3,18 @@ import type { IncomingMessage } from 'http'
 import type { Readable } from 'stream'
 import type {
   CypressIncomingRequest,
-  CypressOutgoingResponse,
+  CypressOutgoingResponseLike,
 } from '@packages/proxy'
 import type {
   NetEvent,
   Subscription,
-} from '../types'
-import type { BackendRoute, NetStubbingState } from './types'
+  BackendStaticResponse,
+  BackendRoute } from '@packages/network-interception'
+import type { NetStubbingState } from './types'
+import { planSubscriptions } from '@packages/network-interception'
+import * as errors from '@packages/errors'
 import { emit, sendStaticResponse } from './util'
-import type CyServer from '@packages/server'
-import type { BackendStaticResponse } from '../internal-types'
+import type { SocketBroadcaster } from '@packages/socket'
 
 export class InterceptedRequest {
   id: string
@@ -21,6 +23,7 @@ export class InterceptedRequest {
     immediateStaticResponse?: BackendStaticResponse
     subscriptions: Subscription[]
   }> = []
+
   includeBodyInAfterResponse: boolean = false
   responseSent: boolean = false
   lastEvent?: string
@@ -28,7 +31,7 @@ export class InterceptedRequest {
   /**
    * A callback that can be used to make the request go outbound through the rest of the request proxy steps.
    */
-  continueRequest: Function
+  continueRequest: () => void
   /**
    * Finish the current request with a response.
    */
@@ -38,9 +41,9 @@ export class InterceptedRequest {
    */
   continueResponse?: (newResStream?: Readable) => void
   req: CypressIncomingRequest
-  res: CypressOutgoingResponse
+  res: CypressOutgoingResponseLike
   state: NetStubbingState
-  socket: CyServer.Socket
+  socket: SocketBroadcaster
 
   constructor (opts: Pick<InterceptedRequest, 'req' | 'res' | 'continueRequest' | 'onError' | 'onResponse' | 'state' | 'socket'>) {
     this.id = _.uniqueId('interceptedRequest')
@@ -51,8 +54,6 @@ export class InterceptedRequest {
     this._onResponse = opts.onResponse
     this.state = opts.state
     this.socket = opts.socket
-
-    this.addDefaultSubscriptions()
   }
 
   onResponse = (incomingRes: IncomingMessage, resStream: Readable) => {
@@ -65,7 +66,7 @@ export class InterceptedRequest {
     this._onResponse(incomingRes, resStream)
   }
 
-  private addDefaultSubscriptions () {
+  addDefaultSubscriptions () {
     if (this.subscriptionsByRoute.length) {
       throw new Error('cannot add default subscriptions to non-empty array')
     }
@@ -74,23 +75,14 @@ export class InterceptedRequest {
       return
     }
 
-    for (const route of this.req.matchingRoutes) {
-      const subscriptionsByRoute = {
-        routeId: route.id,
-        immediateStaticResponse: route.staticResponse,
-        subscriptions: [{
-          eventName: 'before:request',
-          await: !!route.hasInterceptor,
-          routeId: route.id,
-        },
-        ...(['response:callback', 'after:response', 'network:error'].map((eventName) => {
-          // notification-only default event
-          return { eventName, await: false, routeId: route.id }
-        }))],
-      }
-
-      this.subscriptionsByRoute.push(subscriptionsByRoute)
-    }
+    this.subscriptionsByRoute = planSubscriptions({
+      matchingRoutes: this.req.matchingRoutes,
+      isSyncRequest: this.req.isSyncRequest,
+      proxiedUrl: this.req.proxiedUrl,
+      onSyncInterceptSkipped: (url) => {
+        errors.warning('SYNCHRONOUS_XHR_REQUEST_NOT_INTERCEPTED', url)
+      },
+    })
   }
 
   static resolveEventHandler (state: NetStubbingState, options: { eventId: string, changedData: any, stopPropagation: boolean }) {

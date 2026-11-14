@@ -1,4 +1,5 @@
-import { isDependencyInstalled, WizardBundler } from './frameworks'
+import type { WizardBundler } from './frameworks'
+import { isDependencyInstalled } from './frameworks'
 import { WIZARD_BUNDLERS } from './dependencies'
 import path from 'path'
 import fs from 'fs'
@@ -25,7 +26,7 @@ export async function areAllDepsSatisfied (projectPath: string, framework: Cypre
   return true
 }
 
-// Detect the framework, which can either be a tool like Create React App,
+// Detect the framework, which can either be a tool like Next.js,
 // in which case we just return the framework. The user cannot change the
 // bundler.
 
@@ -38,7 +39,6 @@ export async function detectFramework (projectPath: string, frameworks: Cypress.
     const hasAllDeps = await areAllDepsSatisfied(projectPath, framework)
 
     // so far all the templates we support only have 1 bundler,
-    // for example CRA only works with webpack,
     // but we want to consider in the future, tools like Nuxt ship
     // both a webpack and vite dev-env.
     // if we support this, we will also need to attempt to infer the dev server of choice.
@@ -122,10 +122,9 @@ type DetectLanguageParams = {
   projectRoot: string
   customConfigFile?: string | null
   pkgJson: PkgJson
-  isMigrating?: boolean
 }
 
-export function detectLanguage ({ projectRoot, customConfigFile, pkgJson, isMigrating = false }: DetectLanguageParams): 'js' | 'ts' {
+export function detectLanguage ({ projectRoot, customConfigFile, pkgJson }: DetectLanguageParams): 'js' | 'ts' {
   try {
     if (customConfigFile) {
       debug('Evaluating custom Cypress config file \'%s\'', customConfigFile)
@@ -149,7 +148,7 @@ export function detectLanguage ({ projectRoot, customConfigFile, pkgJson, isMigr
 
     debug('Checking for default Cypress config file')
 
-    for (let extension of ['ts', 'mts']) {
+    for (const extension of ['ts', 'mts']) {
       if (fs.existsSync(path.join(projectRoot, `cypress.config.${extension}`))) {
         debug(`Detected cypress.config.${extension} - using TS`)
 
@@ -157,7 +156,7 @@ export function detectLanguage ({ projectRoot, customConfigFile, pkgJson, isMigr
       }
     }
 
-    for (let extension of ['js', 'cjs', 'mjs']) {
+    for (const extension of ['js', 'cjs', 'mjs']) {
       if (fs.existsSync(path.join(projectRoot, `cypress.config.${extension}`))) {
         debug(`Detected cypress.config.${extension} - using JS`)
 
@@ -172,6 +171,15 @@ export function detectLanguage ({ projectRoot, customConfigFile, pkgJson, isMigr
   // because it won't work on the next step of installation anyway
   try {
     const typescriptFile = require.resolve('typescript', { paths: [projectRoot] })
+
+    // sometimes require.resolve returns a path that does not exist but is cached by require.resolve()
+    const exists = fs.existsSync(typescriptFile)
+
+    if (!exists) {
+      debug('Resolved typescript from %s does not exist', typescriptFile)
+
+      return 'js'
+    }
 
     debug('Resolved typescript from %s', typescriptFile)
   } catch {
@@ -199,9 +207,7 @@ export function detectLanguage ({ projectRoot, customConfigFile, pkgJson, isMigr
     joinPosix('cypress', '**/*.{ts,tsx}'),
   ]
 
-  if (!isMigrating) {
-    globs.push(joinPosix('**/*tsconfig.json'))
-  }
+  globs.push(joinPosix('**/*tsconfig.json'))
 
   const tsFiles = globby.sync(globs, { onlyFiles: true, gitignore: true, cwd: projectRoot, ignore: ['node_modules'] })
 

@@ -11,6 +11,8 @@ For general contributor information, check out [`CONTRIBUTING.md`](../CONTRIBUTI
 ## Table of Contents
 
 * [App lifecycle](./app-lifecycle.md)
+* [App <--> Cloud Testing](./app-cloud-testing.md)
+* [CI](./continuous-integration.md)
 * [Building release artifacts](./building-release-artifacts.md)
 * [Code signing](./code-signing.md)
 * [Debug logs](./debug-logs.md)
@@ -19,8 +21,13 @@ For general contributor information, check out [`CONTRIBUTING.md`](../CONTRIBUTI
 * [Error handling](./error-handling.md)
 * [GraphQL Subscriptions - Overview and Test Guide](./graphql-subscriptions.md)
 * [Patching packages](./patch-package.md)
+* [Protocol development](./protocol-development.md)
+* [Purging Specific URLs from Cloudflare cache](./purging-cloudflare-cache.md)
 * [Release process](./release-process.md)
+* [Studio development](./studio-development.md)
 * [Testing other projects](./testing-other-projects.md)
 * [Testing strategy and style guide (draft)](./testing-strategy-and-styleguide.md)
+* [V8 Snapshots](./v8-snapshots.md)
 * [Writing cross-platform JavaScript](./writing-cross-platform-javascript.md)
 * [Writing the Cypress Changelog](./writing-the-cypress-changelog.md)
+* [Writing and Migrating To TypeScript](./typescript.md)

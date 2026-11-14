@@ -1,14 +1,14 @@
 import Debug from 'debug'
 import { notInstalledErr } from '../errors'
 import { utils } from '../utils'
-import * as fs from 'fs-extra'
-import * as path from 'path'
-import * as plist from 'plist'
+import fs from 'fs-extra'
+import path from 'path'
+import plist from 'plist'
 
 const debugVerbose = Debug('cypress-verbose:launcher:darwin:util')
 
 /** parses Info.plist file from given application and returns a property */
-export function parsePlist (p: string, property: string): Promise<string> {
+function parsePlist (p: string, property: string): Promise<string> {
   const pl = path.join(p, 'Contents', 'Info.plist')
 
   debugVerbose('reading property file "%s"', pl)
@@ -30,7 +30,7 @@ export function parsePlist (p: string, property: string): Promise<string> {
 }
 
 /** uses mdfind to find app using Ma app id like 'com.google.Chrome.canary' */
-export function mdfind (id: string): Promise<string> {
+function mdfind (id: string): Promise<string> {
   const cmd = `mdfind 'kMDItemCFBundleIdentifier=="${id}"' | head -1`
 
   debugVerbose('looking for bundle id %s using command: %s', id, cmd)
@@ -58,15 +58,19 @@ export function mdfind (id: string): Promise<string> {
   .catch(failedToFind)
 }
 
-export type AppInfo = {
+type AppInfo = {
   path: string
   version: string
 }
 
 export type FindAppParams = {
+  // The name of the application (e.g. 'Google Chrome.app')
   appName: string
+  // The path to the executable within the application (e.g. 'Contents/MacOS/Google Chrome')
   executable: string
-  appId: string
+  // The CFBundleIdentifier in the Info.plist (e.g. 'com.google.Chrome')
+  bundleId: string
+  // The key from the Info.plist to find the version (e.g. 'KSVersion')
   versionProperty: string
 }
 
@@ -75,8 +79,8 @@ function formApplicationPath (appName: string) {
 }
 
 /** finds an application and its version */
-export function findApp ({ appName, executable, appId, versionProperty }: FindAppParams): Promise<AppInfo> {
-  debugVerbose('looking for app %s id %s', executable, appId)
+export function findApp ({ appName, executable, bundleId, versionProperty }: FindAppParams): Promise<AppInfo> {
+  debugVerbose('looking for app %s bundle id %s', executable, bundleId)
 
   const findVersion = (foundPath: string) => {
     return parsePlist(foundPath, versionProperty).then((version) => {
@@ -90,7 +94,7 @@ export function findApp ({ appName, executable, appId, versionProperty }: FindAp
   }
 
   const tryMdFind = () => {
-    return mdfind(appId).then(findVersion)
+    return mdfind(bundleId).then(findVersion)
   }
 
   const tryFullApplicationFind = () => {

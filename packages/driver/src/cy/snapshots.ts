@@ -4,7 +4,7 @@ import type { $Cy } from '../cypress/cy'
 import type { StateFunc } from '../cypress/state'
 import $dom from '../dom'
 import { create as createSnapshotsCSS } from './snapshots_css'
-import { finder } from '@medv/finder'
+import type { Log } from '../cypress/log'
 
 export const HIGHLIGHT_ATTR = 'data-cypress-el'
 
@@ -232,7 +232,14 @@ export const create = ($$: $Cy['$$'], state: StateFunc) => {
     return $dom.isElement($el) && $dom.isJquery($el)
   }
 
-  const createSnapshot = (name, $elToHighlight, preprocessedSnapshot) => {
+  // Test Replay NOTE: the `importNode` clone within `createSnapshotBody` copies the entire
+  // <body> for every command that snapshots. During a headless run recorded
+  // with Test Replay (`numTestsKeptInMemory === 0`) `Log.snapshot()` reaches
+  // here for every command, but the resulting `body`/`htmlAttrs` are not
+  // consumed by Test Replay — they are dropped at ingestion and the replayed
+  // DOM is built separately
+  // Protocol capture replaces `cy.createSnapshot` outright in that mode.
+  const createSnapshot = (name?, $elToHighlight?, preprocessedSnapshot?, relatedLog?: Log) => {
     Cypress.action('cy:snapshot', name)
     // when using cy.origin() and in a transitionary state, state('document')
     // can be undefined, resulting in a bizarre snapshot of the entire Cypress
@@ -245,49 +252,6 @@ export const create = ($$: $Cy['$$'], state: StateFunc) => {
     }
 
     const timestamp = performance.now() + performance.timeOrigin
-
-    // if the protocol has been enabled, our snapshot is just the name, timestamp, and highlighted elements,
-    // also make sure numTestsKeptInMemory is 0, otherwise we will want the full snapshot
-    // (the driver test's set numTestsKeptInMemory to 1 in run mode to verify the snapshots)
-    if (Cypress.config('protocolEnabled') && Cypress.config('numTestsKeptInMemory') === 0) {
-      const snapshot: {
-        name: string
-        timestamp: number
-        elementsToHighlight?: {
-          selector: string
-          frameId: string
-        }[]
-      } = { name, timestamp }
-
-      if (isJqueryElement($elToHighlight)) {
-        snapshot.elementsToHighlight = $dom.unwrap($elToHighlight).flatMap((el: HTMLElement) => {
-          try {
-            const ownerDoc = el.ownerDocument
-            const elWindow = ownerDoc.defaultView
-
-            if (elWindow === null) {
-              return []
-            }
-
-            // finder tries to find the shortest unique selector to an element,
-            // but since we are more concerned with speed, we set the threshold to 1 and maxNumberOfTries to 0
-            // @ts-expect-error because 'root' can be either Document or Element but is defined as Element
-            // @see https://github.com/antonmedv/finder/issues/75
-            const selector = finder(el, { root: ownerDoc, threshold: 1, maxNumberOfTries: 0 })
-            const frameId = elWindow['__cypressProtocolMetadata']?.frameId
-
-            return [{ selector, frameId }]
-          } catch {
-            // the element may not always be found since it's possible for the element to be removed from the DOM
-            return []
-          }
-        })
-      }
-
-      Cypress.action('cy:protocol-snapshot')
-
-      return snapshot
-    }
 
     try {
       const {
@@ -370,4 +334,4 @@ export const create = ($$: $Cy['$$'], state: StateFunc) => {
   }
 }
 
-export interface ISnapshots extends ReturnType<typeof create> {}
+export type ISnapshots = ReturnType<typeof create>

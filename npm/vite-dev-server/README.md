@@ -12,7 +12,7 @@ import { defineConfig } from 'cypress'
 export default defineConfig({
   component: {
     devServer: {
-      framework: 'create-react-app',
+      framework: 'react',
       bundler: 'vite',
       // viteConfig?: Will try to infer, if passed it will be used as is
     }
@@ -23,8 +23,13 @@ export default defineConfig({
 Function syntax:
 
 ```ts
+import { fileURLToPath } from 'node:url'
 import { devServer } from '@cypress/vite-dev-server'
 import { defineConfig } from 'cypress'
+
+function resolvePackage (specifier) {
+  return fileURLToPath(import.meta.resolve(specifier))
+}
 
 export default defineConfig({
   component: {
@@ -32,7 +37,7 @@ export default defineConfig({
       return devServer({
         ...devServerConfig,
         framework: 'react',
-        viteConfig: require('./vite.config.js')
+        viteConfig: resolvePackage('vite.config.mjs')
       })
     }
   }
@@ -51,10 +56,28 @@ We then merge the sourced config with the user's vite config, and layer on our o
 
 ## Compatibility
 
-| @cypress/vite-dev-server | cypress |
-| ------------------------ | ------- |
-| <= v2                    | <= v9   |
-| >= v3                    | >= v10  |
+| @cypress/vite-dev-server | cypress       |
+| ------------------------ | ------------- |
+| <= v2                    | <= v9         |
+| >= v3 <= v5              | >= v10 <= v13 |
+| >= v6                    | >= v14        |
+| >= v7 (esm only)         | >= v15        |
+| >= v8 (esm only)         | >= v16        |
+
+#### `devServerPublicPathRoute` for Vite v5+
+
+If using Vite version 5, setting `devServerPublicPathRoute` may be needed if directly referencing public path url assets in components under test. This is due to Cypress using its own public path, `/__cypress/src`, when running component tests. This can be configured within the `component` namespace below if you wish you set your public path to be the same as your app:
+
+```ts
+import { defineConfig } from 'cypress'
+
+export default defineConfig({
+  component: {
+    // If wanting a publicPath the same as the default in Vite 5
+    devServerPublicPathRoute: ''
+  }
+})
+```
 
 ## License
 

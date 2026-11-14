@@ -2,9 +2,8 @@ import util from 'util'
 
 import type { AddressInfo } from 'net'
 import type { Server } from 'http'
-import type { SocketIONamespace, SocketIOServer } from '@packages/socket'
+import type { SocketIONamespace, SocketIOServer, CDPSocketServer } from '@packages/socket'
 import type { DataContext } from '..'
-import type { CDPSocketServer } from '@packages/socket/lib/cdp-socket'
 
 export class ServersActions {
   constructor (private ctx: DataContext) {}
@@ -42,8 +41,25 @@ export class ServersActions {
     })
   }
 
+  setGqlGraphqlWsDispose (dispose: (() => Promise<void>) | undefined) {
+    this.ctx.update((d) => {
+      d.servers.gqlGraphqlWsDispose = dispose
+    })
+  }
+
   async destroyGqlServer () {
-    const destroy = this.ctx.coreData.servers.gqlServer?.destroy
+    const { gqlGraphqlWsDispose, gqlSocketServer, gqlServer } = this.ctx.coreData.servers
+
+    if (gqlGraphqlWsDispose) {
+      await gqlGraphqlWsDispose().catch(this.ctx.logTraceError)
+      this.ctx.update((d) => {
+        d.servers.gqlGraphqlWsDispose = undefined
+      })
+    }
+
+    gqlSocketServer?.disconnectSockets(true)
+
+    const destroy = gqlServer?.destroy
 
     if (!destroy) {
       return

@@ -1,46 +1,49 @@
 <template>
-  <StudioInstructionsModal
-    :open="studioStore.instructionModalIsOpen"
-    @close="studioStore.closeInstructionModal"
+  <PromptGetCodeModal
+    v-if="promptStore.getCodeModalIsOpen"
+    :is-open="promptStore.getCodeModalIsOpen"
+    @close="promptStore.closeGetCodeModal"
   />
-  <StudioSaveModal
-    :open="studioStore.saveModalIsOpen"
-    @close="studioStore.closeSaveModal"
+  <PromptMoreInfoNeededModal
+    v-if="promptStore.moreInfoNeededModalIsOpen"
+    :is-open="promptStore.moreInfoNeededModalIsOpen"
+    @close="promptStore.closeMoreInfoNeededModal"
   />
   <AdjustRunnerStyleDuringScreenshot
     id="main-pane"
     class="flex"
   >
     <AutomationElement />
-    <AutomationDisconnected
-      v-if="runnerUiStore.automationStatus === 'DISCONNECTED'"
-    />
+    <AutomationDisconnected v-if="runnerUiStore.automationStatus === 'DISCONNECTED'" />
     <AutomationMissing
       v-else-if="runnerUiStore.automationStatus === 'MISSING'"
       :gql="props.gql.currentProject"
     />
     <ResizablePanels
       v-else
-      :style="{width: `calc(100vw - ${screenshotStore.isScreenshotting ? 0 : collapsedNavBarWidth}px)`}"
+      :style="{ width: `calc(100vw - ${screenshotStore.isScreenshotting ? 0 : collapsedNavBarWidth}px)` }"
       :offset-left="collapsedNavBarWidth"
       :max-total-width="windowWidth - collapsedNavBarWidth"
       :initial-panel1-width="specsListWidthPreferences"
       :initial-panel2-width="reporterWidthPreferences"
+      :initial-panel4-width="studioWidthPreferences"
       :min-panel1-width="minWidths.specsList"
       :min-panel2-width="minWidths.reporter"
       :min-panel3-width="minWidths.aut"
+      :min-panel4-width="minWidths.studio"
       :show-panel1="runnerUiStore.isSpecsListOpen && !screenshotStore.isScreenshotting"
       :show-panel2="!screenshotStore.isScreenshotting && !hideCommandLog"
+      :show-panel4="shouldShowStudioPanel"
       @resize-end="handleResizeEnd"
       @panel-width-updated="handlePanelWidthUpdated"
     >
-      <template #panel1="{isDragging}">
+      <template #panel1="{ isDragging }">
         <HideDuringScreenshot
           v-if="props.gql.currentProject"
           v-show="runnerUiStore.isSpecsListOpen"
           id="inline-spec-list"
           class="h-full bg-gray-1000 border-gray-900 border-r force-dark"
-          :class="{'pointer-events-none': isDragging}"
+          :class="{ 'pointer-events-none': isDragging }"
         >
           <InlineSpecList
             id="reporter-inline-specs-list"
@@ -54,9 +57,10 @@
           />
         </HideDuringScreenshot>
       </template>
-      <template #panel2>
+      <template #panel2="{ isDragging }">
         <HideDuringScreenshot
           class="h-full"
+          :class="{ 'pointer-events-none': isDragging }"
         >
           <div
             v-if="!hideCommandLog"
@@ -73,12 +77,11 @@
             :gql="props.gql.currentProject"
             :event-manager="eventManager"
             :get-aut-iframe="getAutIframeModel"
+            :should-show-studio-button="shouldShowStudioButton"
           />
         </HideDuringScreenshot>
 
-        <RemoveClassesDuringScreenshotting
-          class="h-0 p-[16px]"
-        >
+        <RemoveClassesDuringScreenshotting class="h-0 p-[16px]">
           <ScriptError
             v-if="autStore.scriptError"
             :error="autStore.scriptError.error"
@@ -96,12 +99,34 @@
         />
         <ScreenshotHelperPixels />
       </template>
+      <template #panel4>
+        <HideDuringScreenshot>
+          <StudioPanel
+            v-if="shouldShowStudioPanel"
+            data-cy="studio-panel"
+            :cloud-studio-session-id="studioStore.sessionId"
+            :can-access-studio-a-i="studioStore.canAccessStudioAI"
+            :on-studio-panel-close="handleStudioPanelClose"
+            :event-manager="eventManager"
+            :studio-status="studioStatus"
+            :is-cert-error="isCertError"
+            :aut-url-selector="autUrlSelector"
+            :user-project-status-store="userProjectStatusStore"
+            :has-requested-project-access="hasRequestedProjectAccess"
+            :request-project-access-mutation="requestProjectAccessMutation"
+            :spec-dirty-data-store="specDirtyDataStore"
+            :aut-snapshot-store="snapshotStore"
+            :pending-navigation-resume="pendingNavigationResume"
+          />
+        </HideDuringScreenshot>
+      </template>
     </ResizablePanels>
   </AdjustRunnerStyleDuringScreenshot>
 </template>
 
 <script lang="ts" setup>
-import { computed, onBeforeUnmount, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { REPORTER_ID, RUNNER_ID } from './utils'
 import InlineSpecList from '../specs/InlineSpecList.vue'
 import { getAutIframeModel, getEventManager } from '.'
@@ -116,7 +141,7 @@ import ScreenshotHelperPixels from './screenshot/ScreenshotHelperPixels.vue'
 import { useScreenshotStore } from '../store/screenshot-store'
 import ChooseExternalEditorModal from '@packages/frontend-shared/src/gql-components/ChooseExternalEditorModal.vue'
 import { useMutation, gql } from '@urql/vue'
-import { SpecRunnerOpenMode_OpenFileInIdeDocument } from '../generated/graphql'
+import { SpecRunnerOpenMode_OpenFileInIdeDocument, StudioStatus_ChangeDocument, SpecRunner_Studio_RequestAccessDocument } from '../generated/graphql'
 import type { SpecRunnerFragment } from '../generated/graphql'
 import { usePreferences } from '../composables/usePreferences'
 import ScriptError from './ScriptError.vue'
@@ -127,17 +152,32 @@ import { useEventManager } from './useEventManager'
 import AutomationDisconnected from './automation/AutomationDisconnected.vue'
 import AutomationMissing from './automation/AutomationMissing.vue'
 import { runnerConstants } from './runner-constants'
-import StudioInstructionsModal from './studio/StudioInstructionsModal.vue'
-import StudioSaveModal from './studio/StudioSaveModal.vue'
 import { useStudioStore } from '../store/studio-store'
+import StudioPanel from '../studio/StudioPanel.vue'
+import { useSubscription } from '../graphql'
+import PromptGetCodeModal from '../prompt/PromptGetCodeModal.vue'
+import PromptMoreInfoNeededModal from '../prompt/PromptMoreInfoNeededModal.vue'
+import { usePromptStore } from '../store/prompt-store'
+import { useUserProjectStatusStore } from '@packages/frontend-shared/src/store/user-project-status-store'
+import { useSpecDirtyDataStore } from '../store/spec-dirty-data-store'
+import { useSnapshotStore } from './snapshot-store'
+import { setUnsavedChangesCallback } from './studio-unsaved-changes-guard'
+
+// this is used by the StudioPanel to access the AUT URL input
+const autUrlSelector = '.aut-url-input'
 
 const {
   preferredMinimumPanelWidth,
   absoluteAutMinimum,
   absoluteSpecListMinimum,
   absoluteReporterMinimum,
+  absoluteStudioMinimum,
   collapsedNavBarWidth,
 } = runnerConstants
+
+const userProjectStatusStore = useUserProjectStatusStore()
+const specDirtyDataStore = useSpecDirtyDataStore()
+const snapshotStore = useSnapshotStore()
 
 gql`
 fragment SpecRunner_Preferences on Query {
@@ -146,8 +186,42 @@ fragment SpecRunner_Preferences on Query {
       isSideNavigationOpen
       isSpecsListOpen
       autoScrollingEnabled
+      showFetchRequests
+      codeEditorLineWrap
       reporterWidth
       specListWidth
+      studioWidth
+    }
+  }
+}
+`
+
+gql`
+fragment SpecRunner_Studio on Query {
+  currentProject {
+    id
+    projectId
+    cloudProject {
+      __typename
+      ... on CloudProjectUnauthorized {
+        message
+        hasRequestedAccess
+      }
+      ... on CloudProject {
+        id
+      }
+    }
+  }
+}
+`
+
+gql`
+mutation SpecRunner_Studio_RequestAccess( $projectId: String! ) {
+  cloudProjectRequestAccess(projectSlug: $projectId) {
+    __typename
+    ... on CloudProjectUnauthorized {
+      message
+      hasRequestedAccess
     }
   }
 }
@@ -165,12 +239,14 @@ fragment SpecRunner on Query {
   ...Specs_InlineSpecList
   currentProject {
     id
+    currentTestingType
     ...SpecRunner_Config
     ...SpecRunnerHeader
     ...AutomationMissing
   }
   ...ChooseExternalEditor
   ...SpecRunner_Preferences
+  ...SpecRunner_Studio
 }
 `
 
@@ -180,10 +256,21 @@ mutation SpecRunnerOpenMode_OpenFileInIDE ($input: FileDetailsInput!) {
 }
 `
 
+gql`
+subscription StudioStatus_Change {
+  studioStatusChange {
+    status
+    isCertError
+    canAccessStudioAI
+  }
+}
+`
+
 const props = defineProps<{
   gql: SpecRunnerFragment
 }>()
 
+const route = useRoute()
 const eventManager = getEventManager()
 
 const autStore = useAutStore()
@@ -202,6 +289,27 @@ const {
 } = useEventManager()
 
 const studioStore = useStudioStore()
+const promptStore = usePromptStore()
+
+const hasRequestedProjectAccess = computed(() => {
+  return (props.gql.currentProject?.cloudProject?.__typename === 'CloudProjectUnauthorized' && props.gql.currentProject?.cloudProject?.hasRequestedAccess) ?? false
+})
+
+const requestProjectAccessMutation = useMutation(SpecRunner_Studio_RequestAccessDocument)
+
+const handleStudioPanelClose = () => {
+  eventManager.emit('studio:cancel', undefined)
+}
+
+const pendingNavigationResume = ref<(() => void) | null>(null)
+
+setUnsavedChangesCallback((resume) => {
+  pendingNavigationResume.value = resume
+})
+
+onBeforeUnmount(() => {
+  setUnsavedChangesCallback(null)
+})
 
 const specsListWidthPreferences = computed(() => {
   return props.gql.localSettings.preferences.specListWidth ?? runnerUiStore.specListWidth
@@ -211,8 +319,40 @@ const reporterWidthPreferences = computed(() => {
   return props.gql.localSettings.preferences.reporterWidth ?? runnerUiStore.reporterWidth
 })
 
+const studioWidthPreferences = computed(() => {
+  return props.gql.localSettings.preferences.studioWidth ?? runnerUiStore.studioWidth
+})
+
 const isSpecsListOpenPreferences = computed(() => {
   return props.gql.localSettings.preferences.isSpecsListOpen ?? false
+})
+
+// Initialize and wait for subscription to update
+const studioStatus = ref<string | null>(null)
+const isCertError = ref<boolean | null>(null)
+
+useSubscription({ query: StudioStatus_ChangeDocument }, (_, data) => {
+  if (data?.studioStatusChange) {
+    studioStatus.value = data.studioStatusChange.status
+    isCertError.value = data.studioStatusChange.isCertError
+    studioStore.setCanAccessStudioAI(data.studioStatusChange.canAccessStudioAI)
+  }
+
+  return data
+})
+
+const shouldShowStudioButton = computed(() => {
+  // Check if we're running all specs by looking at the route query
+  const isRunningAllSpecs = route.query.file === '__all'
+
+  // Studio is only available for e2e testing (always cloud-delivered)
+  const isE2ETesting = props.gql.currentProject?.currentTestingType === 'e2e'
+
+  return !studioStore.isOpen && !isRunningAllSpecs && isE2ETesting
+})
+
+const shouldShowStudioPanel = computed(() => {
+  return (studioStore.isLoading || studioStore.isActive) && !screenshotStore.isScreenshotting
 })
 
 const hideCommandLog = runnerUiStore.hideCommandLog
@@ -225,6 +365,8 @@ onMounted(() => {
 })
 
 preferences.update('autoScrollingEnabled', props.gql.localSettings.preferences.autoScrollingEnabled ?? true)
+preferences.update('codeEditorLineWrap', props.gql.localSettings.preferences.codeEditorLineWrap ?? false)
+preferences.update('showFetchRequests', props.gql.localSettings.preferences.showFetchRequests ?? true)
 
 // if the CYPRESS_NO_COMMAND_LOG environment variable is set,
 // don't use the widths or the open status of specs list from GraphQL
@@ -232,6 +374,7 @@ if (!hideCommandLog) {
   preferences.update('isSpecsListOpen', isSpecsListOpenPreferences.value)
   preferences.update('reporterWidth', reporterWidthPreferences.value)
   preferences.update('specListWidth', specsListWidthPreferences.value)
+  preferences.update('studioWidth', studioWidthPreferences.value)
   // 👆 we must update these preferences before calling useRunnerStyle, to make sure that values from GQL
   // will be available during the initial calculation that useRunnerStyle does
 }
@@ -263,6 +406,7 @@ const minWidths = computed(() => {
     aut: getMinimum(absoluteAutMinimum, doesContentFit),
     specsList: getMinimum(absoluteSpecListMinimum, doesContentFit),
     reporter: getMinimum(absoluteReporterMinimum, doesContentFit),
+    studio: absoluteStudioMinimum,
   }
 })
 
@@ -286,6 +430,7 @@ function openFile () {
     },
   })
 }
+
 onMounted(() => {
   const eventManager = getEventManager()
 
@@ -305,6 +450,15 @@ onMounted(() => {
   eventManager.on('save:app:state', (state) => {
     preferences.update('isSpecsListOpen', state.isSpecsListOpen)
     preferences.update('autoScrollingEnabled', state.autoScrollingEnabled)
+    preferences.update('showFetchRequests', state.showFetchRequests)
+    preferences.update('codeEditorLineWrap', state.codeEditorLineWrap)
+  })
+
+  eventManager.on('open:login:connect:modal', ({ utmMedium, utmContent }) => {
+    userProjectStatusStore.openLoginConnectModal({
+      utmMedium,
+      utmContent,
+    })
   })
 })
 
@@ -321,5 +475,5 @@ onBeforeUnmount(() => {
 </route>
 
 <style scoped lang="scss">
-@import "./spec-runner-scoped.scss";
+@use "./spec-runner-scoped.scss";
 </style>

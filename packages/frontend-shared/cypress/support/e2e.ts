@@ -1,24 +1,25 @@
 import '@testing-library/cypress/add-commands'
 import { knownBrowsers } from '@packages/launcher/lib/known-browsers'
 import { configure } from '@testing-library/cypress'
-import { fixtureDirs, ProjectFixtureDir } from '@tooling/system-tests'
+import { fixtureDirs } from '@tooling/system-tests'
+import type { ProjectFixtureDir } from '@tooling/system-tests'
 import type { DataContext } from '@packages/data-context'
 import type { AuthenticatedUserShape } from '@packages/data-context/src/data'
 import type { DocumentNode, ExecutionResult } from 'graphql'
-import type { Browser, FoundBrowser, OpenModeOptions } from '@packages/types'
+import { GET_MAJOR_VERSION_FOR_CONTENT, type Browser, type FoundBrowser, type OpenModeOptions } from '@packages/types'
 
 import type { SinonStub } from 'sinon'
 import type sinon from 'sinon'
-import type pDefer from 'p-defer'
 import 'cypress-plugin-tab'
 import type { Response } from 'cross-fetch'
+import type nock from 'nock'
 
 import type { E2ETaskMap } from '../e2e/e2ePluginSetup'
 import { installCustomPercyCommand } from './customPercyCommand'
-import i18n from '../../src/locales/en-US.json'
 import { addNetworkCommands } from './onlineNetwork'
 import { logInternal } from './utils'
 import { tabUntil } from './tab-until'
+import './browserIconCommands'
 
 configure({ testIdAttribute: 'data-cy' })
 
@@ -38,7 +39,6 @@ export interface WithCtxInjected extends WithCtxOptions {
   require: typeof require
   process: typeof process
   sinon: typeof sinon
-  pDefer: typeof pDefer
   testState: Record<string, any>
   projectDir(projectName: ProjectFixtureDir): string
 }
@@ -61,7 +61,7 @@ export interface RemoteGraphQLBatchInterceptPayload<T> {
   result: T
 }
 
-export type RemoteGraphQLInterceptor <T = {[key: string]: any}> = (
+export type RemoteGraphQLInterceptor<T = { [key: string]: any }> = (
   obj: RemoteGraphQLInterceptPayload, testState: Record<string, any>, options: Record<string, any>) => ExecutionResult<T> | Promise<ExecutionResult<T>> | Response
 
 export type RemoteGraphQLBatchInterceptor<T = any> = (obj: RemoteGraphQLBatchInterceptPayload<T>, testState: Record<string, any>) => T | Promise<T>
@@ -79,6 +79,19 @@ export interface FindBrowsersOptions {
   filter?(browser: Browser): boolean
 }
 
+export interface MockNodeCloudRequestOptions {
+  url: string
+  method: string
+  body: nock.Body
+  persist?: boolean
+}
+
+export interface MockNodeCloudStreamingRequestOptions {
+  url: string
+  method: string
+  body: nock.Body
+}
+
 export interface ValidateExternalLinkOptions {
   /**
    * The user-visible descriptor for the link. If omitted, the href
@@ -94,10 +107,6 @@ export interface ValidateExternalLinkOptions {
 declare global {
   namespace Cypress {
     interface Chainable {
-      /**
-       * The i18n strings, provided for convenience when testing string values in e2e tests
-       */
-      i18n: typeof i18n
       /**
        * Calls a function block with the "ctx" object from the server,
        * and an object containing any options passed into the server context
@@ -159,9 +168,13 @@ declare global {
        */
       visitApp(href?: string, opts?: Partial<Cypress.VisitOptions>): Chainable<AUTWindow>
       /**
+       * Verifies the specs page is visible (list, no specs, or create spec page)
+       */
+      specsPageIsVisible(specsSetup?: 'new-project' | 'no-specs'): Chainable<any>
+      /**
        * Visits the Cypress launchpad
        */
-      visitLaunchpad(href?: string): Chainable<AUTWindow>
+      visitLaunchpad: typeof visitLaunchpad
       /**
        * Skips the welcome screen of the launchpad
        */
@@ -179,24 +192,42 @@ declare global {
        * Get the AUT <iframe>. Useful for Cypress in Cypress tests.
        */
       getAutIframe(): Chainable<JQuery<HTMLIFrameElement>>
+      /**
+       * Mocks a studio full snapshot as if it were captured in the inner Cypress's protocol.
+       * This is necessary because protocol does not capture things properly in the inner Cypress
+       * when running in Cypress in Cypress.
+       */
+      mockStudioFullSnapshot(fullSnapshot: Record<string, any>): void
+      /**
+       * Mocks a node cloud request
+       */
+      mockNodeCloudRequest(options: { url: string, method: string, body: nock.Body, persist?: boolean }): void
+      /**
+       * Mocks a node cloud streaming request
+       */
+      mockNodeCloudStreamingRequest(options: { url: string, method: string, body: nock.Body }): void
     }
 
   }
 }
 
-cy.i18n = i18n
-
 before(() => {
-  Cypress.env('e2e_launchpadPort', undefined)
-  taskInternal('__internal__before', undefined).then(({ launchpadPort }) => {
-    Cypress.env('e2e_launchpadPort', launchpadPort)
+  cy.task('setCyInCyVariables', { 'e2e_launchpadPort': undefined }).then(() => {
+    taskInternal('__internal__before', undefined).then(({ launchpadPort }) => {
+      cy.task('setCyInCyVariables', { 'e2e_launchpadPort': launchpadPort })
+    })
   })
 })
 
 beforeEach(() => {
   // Reset the ports so we know we need to call "openProject" before each test
-  Cypress.env('e2e_serverPort', undefined)
-  taskInternal('__internal__beforeEach', undefined)
+  cy.task('setCyInCyVariables', { 'e2e_serverPort': undefined }).then(() => {
+    taskInternal('__internal__beforeEach', undefined)
+  })
+})
+
+afterEach(() => {
+  taskInternal('__internal__afterEach', undefined)
 })
 
 after(() => {
@@ -229,13 +260,13 @@ function openGlobalMode (options: OpenGlobalModeOptions = {}) {
   return logInternal({ name: 'openGlobalMode', message: '' }, () => {
     return taskInternal('__internal_openGlobal', options)
   }).then((obj) => {
-    Cypress.env('e2e_serverPort', obj.e2eServerPort)
-
-    return obj.modeOptions
+    return cy.task('setCyInCyVariables', { 'e2e_serverPort': obj.e2eServerPort }).then(() => {
+      return obj.modeOptions
+    })
   })
 }
 
-type WithPrefix<T extends string> = `${T}${string}`;
+type WithPrefix<T extends string> = `${T}${string}`
 
 function openProject (projectName: WithPrefix<ProjectFixtureDir>, argv: string[] = []) {
   if (!fixtureDirs.some((dir) => projectName.startsWith(dir))) {
@@ -245,9 +276,27 @@ function openProject (projectName: WithPrefix<ProjectFixtureDir>, argv: string[]
   return logInternal({ name: 'openProject', message: argv.join(' ') }, () => {
     return taskInternal('__internal_openProject', { projectName, argv })
   }).then((obj) => {
-    Cypress.env('e2e_serverPort', obj.e2eServerPort)
+    return cy.task('setCyInCyVariables', { 'e2e_serverPort': obj.e2eServerPort }).then(() => {
+      return obj.modeOptions
+    })
+  })
+}
 
-    return obj.modeOptions
+function mockStudioFullSnapshot (fullSnapshot: Record<string, any>) {
+  return logInternal({ name: 'mockStudioFullSnapshot' }, () => {
+    return taskInternal('__internal_mockStudioFullSnapshot', fullSnapshot)
+  })
+}
+
+function mockNodeCloudRequest (options: MockNodeCloudRequestOptions) {
+  return logInternal({ name: 'mockNodeCloudRequest' }, () => {
+    return taskInternal('__internal_mockNodeCloudRequest', options)
+  })
+}
+
+function mockNodeCloudStreamingRequest (options: MockNodeCloudStreamingRequestOptions) {
+  return logInternal({ name: 'mockNodeCloudStreamingRequest' }, () => {
+    return taskInternal('__internal_mockNodeCloudStreamingRequest', options)
   })
 }
 
@@ -263,7 +312,7 @@ function startAppServer (mode: 'component' | 'e2e' = 'e2e', options: { skipMocki
       return cy.withCtx(async (ctx, o) => {
         await ctx.lifecycleManager.waitForInitializeSuccess()
         ctx.actions.project.setAndLoadCurrentTestingType(o.mode)
-        const isInitialized = o.pDefer()
+        const isInitialized = Promise.withResolvers()
         const initializeActive = ctx.actions.project.initializeActiveProject
         const onErrorStub = o.sinon.stub(ctx, 'onError')
         const onLoadErrorStub = o.sinon.stub(ctx.lifecycleManager, 'onLoadError')
@@ -278,7 +327,7 @@ function startAppServer (mode: 'component' | 'e2e' = 'e2e', options: { skipMocki
         // Used to format a Cypress error in a way that makes sense to the cy-in-cy
         // open mode reporter. Typically we'll see all the details we need in the
         // terminal or in the Cypress UI components, but in the reporter we need to format it a bit
-        function formatError (e: Error & {messageMarkdown?: string, originalError?: Error}) {
+        function formatError (e: Error & { messageMarkdown?: string, originalError?: Error }) {
           if (e.messageMarkdown) {
             e.message = e.messageMarkdown
             if (e.originalError) {
@@ -337,42 +386,78 @@ function startAppServer (mode: 'component' | 'e2e' = 'e2e', options: { skipMocki
         return ctx.coreData.servers.appServerPort
       }, { log: false, mode, url: win.top ? win.top.location.href : undefined, ...options }).then((serverPort) => {
         log?.set({ message: `port: ${serverPort}` })
-        Cypress.env('e2e_serverPort', serverPort)
+        cy.task('setCyInCyVariables', { 'e2e_serverPort': serverPort })
       })
     })
   })
 }
 
 function visitApp (href?: string, opts?: Partial<Cypress.VisitOptions>) {
-  const { e2e_serverPort } = Cypress.env()
-
-  if (!e2e_serverPort) {
-    throw new Error(`
+  cy.task<{ e2e_serverPort: number }>('getCyInCyVariables', ['e2e_serverPort']).then(({ e2e_serverPort }) => {
+    if (!e2e_serverPort) {
+      throw new Error(`
       Missing serverPort, app was not initialized.
       Make sure you're adding args to openModeSystemTest which will launch the browser, such as:
       ['--e2e', '--browser', 'electron']
     `)
-  }
+    }
 
-  return logInternal('visitApp', () => {
-    return cy.withCtx(async (ctx) => {
-      const config = await ctx.lifecycleManager.getFullInitialConfig()
+    return logInternal('visitApp', () => {
+      return cy.withCtx(async (ctx) => {
+        const config = await ctx.lifecycleManager.getFullInitialConfig()
 
-      return config.clientRoute
-    }).then((clientRoute) => {
-      return cy.visit(`http://localhost:${e2e_serverPort}${clientRoute || '/__/'}#${href || ''}`, opts)
+        return config.clientRoute
+      }).then((clientRoute) => {
+        return cy.visit(`http://localhost:${e2e_serverPort}${clientRoute || '/__/'}#${href || ''}`, opts)
+      })
     })
   })
 }
 
-function visitLaunchpad () {
-  return logInternal(`visitLaunchpad ${Cypress.env('e2e_launchpadPort')}`, () => {
-    return cy.visit(`/__launchpad/index.html`, { log: false }).then((val) => {
-      return cy.get('[data-e2e]', { timeout: 10000, log: false }).then(() => {
-        return cy.get('.spinner', { timeout: 10000, log: false }).should('not.exist').then(() => {
-          return val
+function specsPageIsVisible (specsSetup) {
+  if (specsSetup === 'new-project') {
+    // if this is a new project, we'll be on the create spec page
+    return cy.get('[data-cy=create-spec-page-cards]').should('be.visible')
+  }
+
+  if (specsSetup === 'no-specs') {
+    // if this is an existing project with no specs, we'll be on the no specs found page
+    return cy.get('[data-cy=create-spec-page-description]').should('be.visible')
+  }
+
+  // if our tests seeded specs, we'll be on the specs list page
+  return cy.get('[data-cy=spec-list-container]').should('be.visible')
+}
+
+function visitLaunchpad (options: { showWelcome?: boolean, spinnerTimeout?: number } = { showWelcome: false }) {
+  cy.task<{ e2e_launchpadPort: number }>('getCyInCyVariables', ['e2e_launchpadPort']).then(({ e2e_launchpadPort }) => {
+    function launchpadVisit () {
+      return cy.visit(`/__launchpad/index.html`, { log: false }).then((val) => {
+        return cy.get('[data-e2e]', { timeout: 10000, log: false }).then(() => {
+          return cy.get('.spinner', { timeout: options.spinnerTimeout ?? 10000, log: false }).should('not.exist').then(() => {
+            return val
+          })
         })
       })
+    }
+
+    return logInternal(`visitLaunchpad ${e2e_launchpadPort}`, () => {
+      if (!options.showWelcome) {
+        return cy.withCtx(async (ctx, o) => {
+          // avoid re-stubbing already stubbed prompts in case we call getPreferences multiple times
+          if ((ctx._apis.localSettingsApi.getPreferences as any).wrappedMethod === undefined) {
+            o.sinon.stub(ctx._apis.localSettingsApi, 'getPreferences').resolves({ majorVersionWelcomeDismissed: {
+              [o.MAJOR_VERSION_FOR_CONTENT]: Date.now(),
+            } })
+          }
+        }, {
+          MAJOR_VERSION_FOR_CONTENT: GET_MAJOR_VERSION_FOR_CONTENT(),
+        }).then(() => {
+          return launchpadVisit()
+        })
+      }
+
+      return launchpadVisit()
     })
   })
 }
@@ -388,8 +473,8 @@ function skipWelcome () {
 type UnwrapPromise<R> = R extends PromiseLike<infer U> ? U : R
 
 export type CyTaskResult<R> =
-  {value?: never, error: {name: string, message: string, stack?: string}} |
-  {value: UnwrapPromise<R>, error?: never}
+  { value?: never, error: { name: string, message: string, stack?: string } } |
+  { value: UnwrapPromise<R>, error?: never }
 
 function withRetryableCtx<T extends Partial<WithCtxOptions>, R> (fn: (ctx: DataContext, o: T & WithCtxInjected) => R | Promise<R>, opts: T = {} as T): Cypress.Chainable<UnwrapPromise<R>> {
   return withCtx(fn, { ...opts, retry: true })
@@ -410,22 +495,24 @@ function withCtx<T extends Partial<WithCtxOptions>, R> (fn: (ctx: DataContext, o
     },
   })
 
-  return cy.task<CyTaskResult<R>>('__internal_withCtx', {
-    fn: fn.toString(),
-    options: rest,
-  }, { timeout: timeout ?? Cypress.env('e2e_isDebugging') ? NO_TIMEOUT : SIXTY_SECONDS, log: Boolean(Cypress.env('e2e_isDebugging')) }).then((result) => {
-    _log?.set('result', result)
-    _log?.end()
+  return cy.task<{ e2e_isDebugging: boolean }>('getCyInCyVariables', ['e2e_isDebugging']).then(({ e2e_isDebugging }) => {
+    return cy.task<CyTaskResult<R>>('__internal_withCtx', {
+      fn: fn.toString(),
+      options: rest,
+    }, { timeout: timeout ?? e2e_isDebugging ? NO_TIMEOUT : SIXTY_SECONDS, log: Boolean(e2e_isDebugging) }).then((result) => {
+      _log?.set('result', result)
+      _log?.end()
 
-    if (result.error) {
-      const err = new Error(result.error.message)
+      if (result.error) {
+        const err = new Error(result.error.message)
 
-      err.name = result.error.name
-      err.stack = result.error.stack
-      throw err
-    }
+        err.name = result.error.name
+        err.stack = result.error.stack
+        throw err
+      }
 
-    return result.value as Cypress.Chainable<UnwrapPromise<R>>
+      return result.value as Cypress.Chainable<UnwrapPromise<R>>
+    })
   })
 }
 
@@ -478,7 +565,7 @@ function findBrowsers (options: FindBrowsersOptions = {}) {
   })
 }
 
-function remoteGraphQLIntercept <T = any> (fn: RemoteGraphQLInterceptor<T>, remoteGraphQLOptions?: Record<string, any>) {
+function remoteGraphQLIntercept<T = any> (fn: RemoteGraphQLInterceptor<T>, remoteGraphQLOptions?: Record<string, any>) {
   return logInternal('remoteGraphQLIntercept', () => {
     return taskInternal('__internal_remoteGraphQLIntercept', {
       fn: fn.toString(),
@@ -487,7 +574,7 @@ function remoteGraphQLIntercept <T = any> (fn: RemoteGraphQLInterceptor<T>, remo
   })
 }
 
-function remoteGraphQLInterceptBatched <T = any> (fn: RemoteGraphQLBatchInterceptor<T>) {
+function remoteGraphQLInterceptBatched<T = any> (fn: RemoteGraphQLBatchInterceptor<T>) {
   return logInternal('remoteGraphQLInterceptBatched', () => {
     return taskInternal('__internal_remoteGraphQLInterceptBatched', fn.toString())
   })
@@ -500,9 +587,9 @@ type Resolved<V> = V extends Promise<infer U> ? U : V
  *
  */
 function taskInternal<T extends keyof E2ETaskMap> (name: T, arg: Parameters<E2ETaskMap[T]>[0], options: { timeout?: number } = {}): Cypress.Chainable<Resolved<ReturnType<E2ETaskMap[T]>>> {
-  const isDebugging = Boolean(Cypress.env('e2e_isDebugging'))
-
-  return cy.task<Resolved<ReturnType<E2ETaskMap[T]>>>(name, arg, { log: isDebugging, timeout: options.timeout ?? (isDebugging ? NO_TIMEOUT : TEN_SECONDS) })
+  return cy.task<{ e2e_isDebugging: boolean }>('getCyInCyVariables', ['e2e_isDebugging']).then(({ e2e_isDebugging }) => {
+    return cy.task<Resolved<ReturnType<E2ETaskMap[T]>>>(name, arg, { log: e2e_isDebugging, timeout: options.timeout ?? (e2e_isDebugging ? NO_TIMEOUT : TEN_SECONDS) })
+  })
 }
 
 /**
@@ -520,7 +607,7 @@ function validateExternalLink (subject, options: ValidateExternalLinkOptions | s
   }
 
   return logInternal('validateExternalLink', () => {
-    cy.wrap(subject, { log: false }).findByRole('link', { name: name || href }).as('Link')
+    cy.wrap(subject, { log: false }).getByRole('link', { name: name || href }).as('Link')
     .should('have.attr', 'href', href)
     .click()
 
@@ -535,10 +622,10 @@ function validateExternalLink (subject, options: ValidateExternalLinkOptions | s
 }
 
 function getAutIframe () {
-  return cy.get('iframe.aut-iframe').its('0.contentDocument.documentElement').then(cy.wrap) as Cypress.Chainable<JQuery<HTMLIFrameElement>>
+  return cy.get('iframe.aut-iframe').its('0.contentDocument.documentElement').should('not.be.empty').then(cy.wrap) as Cypress.Chainable<JQuery<HTMLIFrameElement>>
 }
 
-Cypress.on('uncaught:exception', (err) => !err.message.includes('ResizeObserver loop limit exceeded'))
+Cypress.on('uncaught:exception', (err) => !err.message.includes('ResizeObserver loop completed with undelivered notifications.'))
 
 Cypress.Commands.add('scaffoldProject', scaffoldProject)
 
@@ -546,6 +633,7 @@ Cypress.Commands.add('getAutIframe', getAutIframe)
 Cypress.Commands.add('addProject', addProject)
 Cypress.Commands.add('openGlobalMode', openGlobalMode)
 Cypress.Commands.add('visitApp', visitApp)
+Cypress.Commands.add('specsPageIsVisible', specsPageIsVisible)
 Cypress.Commands.add('loginUser', loginUser)
 Cypress.Commands.add('visitLaunchpad', visitLaunchpad)
 Cypress.Commands.add('skipWelcome', skipWelcome)
@@ -558,6 +646,9 @@ Cypress.Commands.add('remoteGraphQLInterceptBatched', remoteGraphQLInterceptBatc
 Cypress.Commands.add('findBrowsers', findBrowsers)
 Cypress.Commands.add('tabUntil', tabUntil)
 Cypress.Commands.add('validateExternalLink', { prevSubject: ['optional', 'element'] }, validateExternalLink)
+Cypress.Commands.add('mockStudioFullSnapshot', mockStudioFullSnapshot)
+Cypress.Commands.add('mockNodeCloudRequest', mockNodeCloudRequest)
+Cypress.Commands.add('mockNodeCloudStreamingRequest', mockNodeCloudStreamingRequest)
 
 installCustomPercyCommand({
   elementOverrides: {

@@ -1,27 +1,25 @@
 import path from 'path'
 import type { SourceRelativeWebpackResult } from '../../src/helpers/sourceRelativeWebpackModules'
 
-type ModulesDef = {[K in keyof ModuleMatrixResultOptions]: Record<ModuleMatrixResultOptions[K], string>}
+type ModulesDef = { [K in keyof ModuleMatrixResultOptions]: Record<ModuleMatrixResultOptions[K], string> }
 
 const moduleSources: ModulesDef = {
   webpack: {
-    4: 'webpack-4',
     5: 'webpack',
   },
   webpackDevServer: {
-    3: 'webpack-dev-server-3',
-    4: 'webpack-dev-server',
+    5: 'webpack-dev-server',
+    6: 'webpack-dev-server-6',
   },
   htmlWebpackPlugin: {
-    4: 'html-webpack-plugin-4',
     5: 'html-webpack-plugin-5',
   },
 }
 
 export interface ModuleMatrixResultOptions {
-  webpack: 4 | 5
-  webpackDevServer: 3 | 4
-  htmlWebpackPlugin?: 4 | 5
+  webpack: 5
+  webpackDevServer: 5 | 6
+  htmlWebpackPlugin?: 5
 }
 
 /**

@@ -44,8 +44,8 @@
 </template>
 
 <script lang="ts" setup>
-import type { FunctionalComponent, SVGAttributes } from 'vue'
-import { ref, ComponentPublicInstance, computed, watchEffect, nextTick } from 'vue'
+import type { FunctionalComponent, SVGAttributes, ComponentPublicInstance } from 'vue'
+import { ref, computed, watchEffect, nextTick } from 'vue'
 import Collapsible from '@cy/components/Collapsible.vue'
 import ListRowHeader from '@cy/components/ListRowHeader.vue'
 import { useRoute } from 'vue-router'
@@ -54,7 +54,7 @@ const props = defineProps<{
   title: string
   name?: string
   description: string
-  icon: FunctionalComponent<SVGAttributes, {}>
+  icon: FunctionalComponent<SVGAttributes>
   maxHeight: string
 }>()
 
@@ -113,7 +113,7 @@ function maybeScrollToAnchor () {
   }
 
   // Get the root HTML element, then query for the desired anchor element.
-  // Finally, if we found it, scroll into into view!
+  // Finally, if we found it, scroll into view!
   const $el = root.value.$el as HTMLDivElement
   const $anchor = $el.querySelector(`#${route.query.anchor}`)
 

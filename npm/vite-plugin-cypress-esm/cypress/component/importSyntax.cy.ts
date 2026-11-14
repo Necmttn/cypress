@@ -1,6 +1,5 @@
 /// <reference types="cypress" />
 
-/* eslint-disable @typescript-eslint/no-duplicate-imports */
 import defaultExport1 from './fixtures/kitchenSink'
 import * as name1 from './fixtures/kitchenSink'
 import { export1 } from './fixtures/kitchenSink'
@@ -9,6 +8,17 @@ import { default as alias } from './fixtures/kitchenSink'
 import defaultExport2, { export2 } from './fixtures/kitchenSink'
 import defaultExport3, * as name2 from './fixtures/kitchenSink'
 import { export1 as e1, export2 as e2 } from './fixtures/kitchenSink'
+import {
+  export3,
+  export4,
+} from './fixtures/kitchenSink'
+import {
+  export3 as alias3,
+  export4 as alias4,
+} from './fixtures/kitchenSink'
+import defaultExport4, {
+  export5,
+} from './fixtures/kitchenSink'
 import './fixtures/kitchenSink'
 
 // Examples for all syntax
@@ -19,6 +29,9 @@ describe('supports every combination of import syntax in a single file', () => {
     expect(defaultExport1).to.deep.eq({
       export1: 'export1',
       export2: 'export2',
+      export3: 'export3',
+      export4: 'export4',
+      export5: 'export5',
       default: {
         export1: 'export1',
         export2: 'export2',
@@ -30,6 +43,9 @@ describe('supports every combination of import syntax in a single file', () => {
     expect(name1).to.deep.eq({
       export1: 'export1',
       export2: 'export2',
+      export3: 'export3',
+      export4: 'export4',
+      export5: 'export5',
       default: {
         export1: 'export1',
         export2: 'export2',
@@ -38,7 +54,7 @@ describe('supports every combination of import syntax in a single file', () => {
   })
 
   it('Import { export1 } from "./kitchenSink"', () => {
-    expect(export1).to.deep.eq(export1)
+    expect(export1).to.eq('export1')
   })
 
   it('Import { export1 as alias1 } from "./kitchenSink"', () => {
@@ -56,19 +72,25 @@ describe('supports every combination of import syntax in a single file', () => {
     expect(defaultExport2).to.deep.eq({
       export1: 'export1',
       export2: 'export2',
+      export3: 'export3',
+      export4: 'export4',
+      export5: 'export5',
       default: {
         export1: 'export1',
         export2: 'export2',
       },
     })
 
-    expect(export2).to.eq(export2)
+    expect(export2).to.eq('export2')
   })
 
   it('Import defaultExport3, * as name2 from "./kitchenSink"', () => {
     expect(defaultExport3).to.deep.eq({
       export1: 'export1',
       export2: 'export2',
+      export3: 'export3',
+      export4: 'export4',
+      export5: 'export5',
       default: {
         export1: 'export1',
         export2: 'export2',
@@ -80,6 +102,9 @@ describe('supports every combination of import syntax in a single file', () => {
     expect(name2).to.deep.eq({
       export1: 'export1',
       export2: 'export2',
+      export3: 'export3',
+      export4: 'export4',
+      export5: 'export5',
       default: {
         export1: 'export1',
         export2: 'export2',
@@ -92,8 +117,43 @@ describe('supports every combination of import syntax in a single file', () => {
     expect(e2).to.deep.eq(export2)
   })
 
+  it(`import {
+  export3,
+  export4,
+} from './fixtures/kitchenSink'`, () => {
+    expect(export3).to.deep.eq('export3')
+    expect(export4).to.deep.eq('export4')
+  })
+
+  it(`import {
+  export3 as alias3,
+  export4 as alias4,
+} from './fixtures/kitchenSink'`, () => {
+    expect(alias3).to.deep.eq(export3)
+    expect(alias4).to.deep.eq(export4)
+  })
+
+  it(`import defaultExport4, {
+  export5,
+} from './fixtures/kitchenSink'`, () => {
+    console.log(defaultExport4)
+    expect(defaultExport4).to.deep.eq({
+      export1: 'export1',
+      export2: 'export2',
+      export3: 'export3',
+      export4: 'export4',
+      export5: 'export5',
+      default: {
+        export1: 'export1',
+        export2: 'export2',
+      },
+    })
+
+    expect(export5).to.eq('export5')
+  })
+
   it('Import "./kitchenSink"', () => {
-    // @ts-expect-error
+    // @ts-expect-error - kitchenSink sets sideEffect on window, which Window does not declare
     expect(window.sideEffect).to.eq('Side Effect')
   })
 

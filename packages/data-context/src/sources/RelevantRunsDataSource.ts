@@ -5,7 +5,7 @@ import { isEqual, take, takeWhile } from 'lodash'
 import type { DataContext } from '../DataContext'
 import type { Query, RelevantRun, RelevantRunInfo, RelevantRunLocationEnum } from '../gen/graphcache-config.gen'
 import { Poller } from '../polling'
-import type { CloudRun } from '@packages/graphql/src/gen/cloud-source-types.gen'
+import type { CloudRun } from '../gen/cloud-source-types.gen'
 
 const debug = debugLib('cypress:data-context:sources:RelevantRunsDataSource')
 
@@ -35,7 +35,7 @@ const RELEVANT_RUN_OPERATION_DOC = gql`
   }
 `
 
-export const RUNS_EMPTY_RETURN: RelevantRun = { commitsAhead: -1, all: [], latest: [] }
+const RUNS_EMPTY_RETURN: RelevantRun = { commitsAhead: -1, all: [], latest: [] }
 
 /**
  * DataSource to encapsulate querying Cypress Cloud for runs that match a list of local Git commit shas
@@ -44,7 +44,7 @@ export class RelevantRunsDataSource {
   #pollingInterval: number = 30
   #cached: RelevantRun = RUNS_EMPTY_RETURN
 
-  #runsPoller?: Poller<'relevantRunChange', RelevantRun, { name: RelevantRunLocationEnum}>
+  #runsPoller?: Poller<'relevantRunChange', RelevantRun, { name: RelevantRunLocationEnum }>
 
   constructor (private ctx: DataContext) {}
 
@@ -114,11 +114,12 @@ export class RelevantRunsDataSource {
     const runs = cloudProject.runsByCommitShas?.filter((run): run is CloudRun => {
       return run != null && !!run.runNumber && !!run.status && !!run.commitInfo?.sha
     }).map((run): RelevantRunInfo => {
+      // Safe because the filter above only keeps runs with these fields set
       return {
         runId: run.id,
         runNumber: run.runNumber!,
         status: run.status!,
-        sha: run.commitInfo?.sha!,
+        sha: run.commitInfo!.sha!,
         totalFailed: run.totalFailed || 0,
       }
     }) || []

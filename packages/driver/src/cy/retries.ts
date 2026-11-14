@@ -1,7 +1,9 @@
 import _ from 'lodash'
 import Promise from 'bluebird'
+import Debug from 'debug'
 
-import $errUtils, { CypressError } from '../cypress/error_utils'
+import type { CypressError } from '../cypress/error_utils'
+import $errUtils from '../cypress/error_utils'
 import type { ICypress } from '../cypress'
 import type { $Cy } from '../cypress/cy'
 import type { StateFunc } from '../cypress/state'
@@ -9,9 +11,12 @@ import type { Log } from '../cypress/log'
 
 const { errByPath, modifyErrMsg, throwErr, mergeErrProps } = $errUtils
 
+const debug = Debug('cypress:driver:retries')
+
 type retryOptions = {
   _interval?: number
   _log?: Log
+  _name?: string
   _retries?: number
   _runnable?: any
   _runnableTimeout?: number
@@ -19,14 +24,14 @@ type retryOptions = {
   error?: CypressError
   interval: number
   log: boolean
-  onFail?: Function
+  onFail?: (err: Error) => Error
   timeout: number
   total?: number
 }
 
 // eslint-disable-next-line @cypress/dev/arrow-body-multiline-braces
 export const create = (Cypress: ICypress, state: StateFunc, timeout: $Cy['timeout'], clearTimeout: $Cy['clearTimeout'], whenStable: $Cy['whenStable'], finishAssertions: (err?: Error) => void) => ({
-  retry (fn, options: retryOptions, log?) {
+  retry (fn, options: retryOptions) {
     // remove the runnables timeout because we are now in retry
     // mode and should be handling timing out ourselves and dont
     // want to accidentally time out via mocha
@@ -39,12 +44,6 @@ export const create = (Cypress: ICypress, state: StateFunc, timeout: $Cy['timeou
 
     const current = state('current')
 
-    // use the log if passed in, else fallback to options._log
-    // else fall back to just grabbing the last log per our current command
-    if (!log) {
-      log = options._log ?? current?.getLastLog()
-    }
-
     _.defaults(options, {
       _runnable: state('runnable'),
       _runnableTimeout: runnableTimeout,
@@ -53,8 +52,6 @@ export const create = (Cypress: ICypress, state: StateFunc, timeout: $Cy['timeou
       _start: new Date,
       _name: current?.get('name'),
     })
-
-    let { error } = options
 
     const interval = options.interval ?? options._interval
 
@@ -70,9 +67,7 @@ export const create = (Cypress: ICypress, state: StateFunc, timeout: $Cy['timeou
     // if our total exceeds the timeout OR the total + the interval
     // exceed the runnables timeout, then bail
     if ((total + interval) >= options._runnableTimeout!) {
-      let onFail
-
-      ({ error, onFail } = options)
+      const { error, onFail } = options
 
       const prependMsg = error?.retry === false ? '' : errByPath('miscellaneous.retry_timed_out', {
         ms: options._runnableTimeout,
@@ -105,8 +100,7 @@ export const create = (Cypress: ICypress, state: StateFunc, timeout: $Cy['timeou
     const ended = () => {
       // we should NOT retry if
       // 1. our promise has been canceled
-      // 2. or we have an error
-      // 3. or if the runnables has changed
+      // 2. or if the runnables has changed
 
       // although bluebird SHOULD cancel these retries
       // since they're all connected - apparently they
@@ -116,7 +110,24 @@ export const create = (Cypress: ICypress, state: StateFunc, timeout: $Cy['timeou
       // bug in bluebird with not propagating cancellations
       // fast enough in a series of promises
       // https://github.com/petkaantonov/bluebird/issues/1424
-      return state('canceled') || state('error') || runnableHasChanged()
+
+      // reaching this code at all after cancellation or after the runnable
+      // has changed means bluebird did not cancel this retry's promise chain
+      // in time, so log it to make any resulting cross-test contamination
+      // diagnosable
+      if (state('canceled')) {
+        debug('retry #%d of `%s` ran while state(\'canceled\') was true; not retrying', options._retries, options._name)
+
+        return true
+      }
+
+      if (runnableHasChanged()) {
+        debug('retry #%d of `%s` ran after the runnable changed from %o to %o; not retrying', options._retries, options._name, options._runnable?.title, state('runnable')?.title)
+
+        return true
+      }
+
+      return false
     }
 
     return Promise
@@ -155,7 +166,7 @@ export const create = (Cypress: ICypress, state: StateFunc, timeout: $Cy['timeou
       return Promise
       .try(() => {
         // If command is not same origin, this will throw an error. also, in this instance, this is cy
-        // @ts-ignore
+        // @ts-expect-error - cy is typed as the public cy, not $Cy
         Cypress.ensure.commandCanCommunicateWithAUT(cy)
       })
       .catch((err) => {
@@ -171,4 +182,4 @@ export const create = (Cypress: ICypress, state: StateFunc, timeout: $Cy['timeou
   },
 })
 
-export interface IRetries extends ReturnType<typeof create> {}
+export type IRetries = ReturnType<typeof create>

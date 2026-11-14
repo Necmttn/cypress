@@ -1,3 +1,102 @@
+# [@[secure]/webpack-preprocessor-v8.0.0](https://github.com/[secure]-io/[secure]/compare/@[secure]/webpack-preprocessor-v7.1.2...@[secure]/webpack-preprocessor-v8.0.0) (2026-08-26)
+
+
+### breaking
+
+* release version 8.0.0 of @[secure]/webpack-preprocessor ([1ef1dbb](https://github.com/[secure]-io/[secure]/commit/1ef1dbba308f751f7ebc0c7e8b67ced5d0b0eafa))
+* remove built-in CoffeeScript support ([#33654](https://github.com/[secure]-io/[secure]/issues/33654)) ([0b7017d](https://github.com/[secure]-io/[secure]/commit/0b7017d15ed1647b82a092fd69fba56dba42db08))
+
+
+### BREAKING CHANGES
+
+* updates the build target of @[secure]/webpack-preprocessor from es5 to es2022
+* - **Cypress (semver: major, e.g. 16.0.0):** `cy.fixture()` no longer treats `.coffee` as executable CoffeeScript; those files are handled like other non-specialized extensions (e.g. raw UTF-8) unless you use encoding options.
+- **Cypress (semver: major):** The default `@[secure]/webpack-batteries-included-preprocessor` no longer registers `coffee-loader` or ships `coffeescript`. `.coffee` specs/support files will not compile unless users add their own webpack config via `@[secure]/webpack-preprocessor`.
+- **`@[secure]/webpack-batteries-included-preprocessor` (semver: minor → treat as breaking for consumers, e.g. 4.2.0):** Removed `coffee-loader` and `coffeescript` dependencies and the `/\.coffee$/` rule from default webpack options.
+
+Migration:
+- Use JavaScript or TypeScript for specs, support files, and object fixtures (`.json` / `.js`).
+- For CoffeeScript specs, use `@[secure]/webpack-preprocessor` with a custom webpack config that includes `coffee-loader` and `coffeescript`.
+
+Also:
+- Rename system-tests fixture `coffee-react-interop` → `react-webpack-interop` and update `es_modules_spec` / `typescript_spec_support_spec`.
+- Update errors copy, CLI types examples, app settings tests, driver stack/location tests, v8 snapshot cache workflow Node version, and related docs/changelogs.
+
+* fix failing test
+
+* remove date in CLI
+
+* fix changelog entry
+
+* remove screenshots from some system-test snapshots
+
+* fix snapshot
+
+* remove coffeescript import
+
+* remove webpack-batteries..changelog
+
+* remove migration specific comment
+
+* remove debugger
+
+* revert to pending test
+
+* remove other callbacks
+
+# [@cypress/webpack-preprocessor-v7.1.2](https://github.com/cypress-io/cypress/compare/@cypress/webpack-preprocessor-v7.1.1...@cypress/webpack-preprocessor-v7.1.2) (2026-08-10)
+
+# [@cypress/webpack-preprocessor-v7.1.1](https://github.com/cypress-io/cypress/compare/@cypress/webpack-preprocessor-v7.1.0...@cypress/webpack-preprocessor-v7.1.1) (2026-05-31)
+
+# [@cypress/webpack-preprocessor-v7.1.0](https://github.com/cypress-io/cypress/compare/@cypress/webpack-preprocessor-v7.0.2...@cypress/webpack-preprocessor-v7.1.0) (2026-04-13)
+
+
+### Features
+
+* TypeScript 6 compatibility for webpack preprocessor and CT wizard ([#33575](https://github.com/cypress-io/cypress/issues/33575)) ([8eaedab](https://github.com/cypress-io/cypress/commit/8eaedab0d8679a0ae595dc7711b1be2cc784f707))
+
+# [@cypress/webpack-preprocessor-v7.0.2](https://github.com/cypress-io/cypress/compare/@cypress/webpack-preprocessor-v7.0.1...@cypress/webpack-preprocessor-v7.0.2) (2025-11-07)
+
+# [@cypress/webpack-preprocessor-v7.0.1](https://github.com/cypress-io/cypress/compare/@cypress/webpack-preprocessor-v7.0.0...@cypress/webpack-preprocessor-v7.0.1) (2025-08-19)
+
+
+### Bug Fixes
+
+* ts-loader detection (false positive) ([#32266](https://github.com/cypress-io/cypress/issues/32266)) ([f7c9847](https://github.com/cypress-io/cypress/commit/f7c98473f53ecfd944a1aace10ea888a62a01e8f))
+
+# [@cypress/webpack-preprocessor-v7.0.0](https://github.com/cypress-io/cypress/compare/@cypress/webpack-preprocessor-v6.0.4...@cypress/webpack-preprocessor-v7.0.0) (2025-08-08)
+
+
+### breaking
+
+* release version 7.0.0 of @cypress/webpack-preprocessor. ([ddac377](https://github.com/cypress-io/cypress/commit/ddac37779c2d1e03afd2e5d2e038926a2dcbb587))
+
+
+### BREAKING CHANGES
+
+* release major version of @cypress/webpack-preprocessor as webpack 4 is no longer supported
+
+# [@cypress/webpack-preprocessor-v6.0.4](https://github.com/cypress-io/cypress/compare/@cypress/webpack-preprocessor-v6.0.3...@cypress/webpack-preprocessor-v6.0.4) (2025-03-26)
+
+
+### Bug Fixes
+
+* allow version 10 of the babel-loader peer dependency ([#31218](https://github.com/cypress-io/cypress/issues/31218)) ([33cf18e](https://github.com/cypress-io/cypress/commit/33cf18e409a25573566b033f50b03d824e32cef1))
+
+# [@cypress/webpack-preprocessor-v6.0.3](https://github.com/cypress-io/cypress/compare/@cypress/webpack-preprocessor-v6.0.2...@cypress/webpack-preprocessor-v6.0.3) (2025-03-25)
+
+
+### Bug Fixes
+
+* change default options for sourceMaps inside WBIP ([#31270](https://github.com/cypress-io/cypress/issues/31270)) ([7bdf1e9](https://github.com/cypress-io/cypress/commit/7bdf1e98707329157c7149b5b26fcb5bf799b8bc))
+
+# [@cypress/webpack-preprocessor-v6.0.2](https://github.com/cypress-io/cypress/compare/@cypress/webpack-preprocessor-v6.0.1...@cypress/webpack-preprocessor-v6.0.2) (2024-06-07)
+
+
+### Bug Fixes
+
+* update cypress to Typescript 5 ([#29568](https://github.com/cypress-io/cypress/issues/29568)) ([f3b6766](https://github.com/cypress-io/cypress/commit/f3b67666a5db0438594339c379cf27e1fd1e4abc))
+
 # [@cypress/webpack-preprocessor-v6.0.1](https://github.com/cypress-io/cypress/compare/@cypress/webpack-preprocessor-v6.0.0...@cypress/webpack-preprocessor-v6.0.1) (2023-12-26)
 
 # [@cypress/webpack-preprocessor-v6.0.0](https://github.com/cypress-io/cypress/compare/@cypress/webpack-preprocessor-v5.17.1...@cypress/webpack-preprocessor-v6.0.0) (2023-08-29)

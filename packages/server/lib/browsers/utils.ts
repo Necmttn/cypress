@@ -1,14 +1,21 @@
-/* eslint-disable no-redeclare */
-import Bluebird from 'bluebird'
 import _ from 'lodash'
-import type { BrowserLaunchOpts, FoundBrowser } from '@packages/types'
+import type { FoundBrowser } from '@packages/types'
 import * as errors from '../errors'
 import * as plugins from '../plugins'
-import { getError } from '@packages/errors'
+import { mergeLaunchOptions } from '../plugins/merge_plugin_results'
 import * as launcher from '@packages/launcher'
 import type { Automation } from '../automation'
 import type { Browser } from './types'
-import type { CriClient } from './cri-client'
+import type { CriClient } from './cdp-protocol/cri-client'
+import * as profileCleaner from '../util/profile_cleaner'
+import * as appData from '../util/app_data'
+import path from 'path'
+import Debug from 'debug'
+import { telemetry } from '@packages/telemetry'
+import { fs } from '../util/fs'
+import * as extension from '@packages/extension'
+import getPort from 'get-port'
+import { DISABLE_NAVIGATION_PRELOAD_WINDOW_EXPRESSION } from '@packages/proxy/lib/http/util/disable-navigation-preload'
 
 declare global {
   interface Window {
@@ -19,14 +26,7 @@ declare global {
   }
 }
 
-const path = require('path')
-const debug = require('debug')('cypress:server:browsers:utils')
-const getPort = require('get-port')
-const { fs } = require('../util/fs')
-const extension = require('@packages/extension')
-const appData = require('../util/app_data')
-const profileCleaner = require('../util/profile_cleaner')
-const { telemetry } = require('@packages/telemetry')
+const debug = Debug('cypress:server:browsers:utils')
 
 const pathToBrowsers = appData.path('browsers')
 const legacyProfilesWildcard = path.join(pathToBrowsers, '*')
@@ -56,10 +56,10 @@ const getMajorVersion = (version) => {
 }
 
 const defaultLaunchOptions: {
-  preferences: {[key: string]: any}
+  preferences: { [key: string]: any }
   extensions: string[]
   args: string[]
-  env: {[key: string]: any}
+  env: { [key: string]: any }
 } = {
   preferences: {},
   extensions: [],
@@ -73,8 +73,36 @@ const getDefaultLaunchOptions = (options) => {
   return _.defaultsDeep(options, defaultLaunchOptions)
 }
 
-const copyExtension = (src, dest) => {
-  return fs.copyAsync(src, dest)
+// When Cypress is installed in a read-only location (e.g. the Nix store), the
+// source extension files and directories are read-only. fs.copy preserves those
+// permissions on the copied extension, which later prevents Cypress from removing
+// the browser profile directory on exit (EACCES/EPERM when unlinking files inside
+// a read-only directory). Recursively granting owner write access ensures the
+// profile can be cleaned up. See https://github.com/cypress-io/cypress/issues/31300
+const ensureWritable = async (entryPath: string) => {
+  const stats = await fs.stat(entryPath)
+
+  // chmod(path, mode) sets the file's permission bits to `mode`.
+  // `stats.mode` is the current mode (e.g. 0o555 for a read-only dir, 0o444 for a
+  // read-only file). 0o200 is the octal bit for "owner write" (the `w` in `-w-`
+  // under `rwx` triplets owner/group/other). OR-ing them (`stats.mode | 0o200`)
+  // turns on the owner write bit while leaving every other bit untouched — so
+  // 0o555 -> 0o755 and 0o444 -> 0o644. We only grant owner write (not group/other)
+  // because the Cypress process owns these copies and that's all it needs to
+  // remove them later.
+  await fs.chmod(entryPath, stats.mode | 0o200)
+
+  if (stats.isDirectory()) {
+    const entries = await fs.readdir(entryPath)
+
+    await Promise.all(entries.map((entry) => ensureWritable(path.join(entryPath, entry))))
+  }
+}
+
+const copyExtension = async (src, dest) => {
+  await fs.copyAsync(src, dest)
+
+  await ensureWritable(dest)
 }
 
 const getPartition = function (isTextTerminal) {
@@ -126,7 +154,7 @@ const removeOldProfiles = function (browser) {
   // no longer active, or isnt a cypress related process
   const pathToPartitions = appData.electronPartitionsPath()
 
-  return Bluebird.all([
+  return Promise.all([
     removeLegacyProfiles(),
     profileCleaner.removeInactiveByPid(getProfileWildcard(browser), 'run-'),
     profileCleaner.removeInactiveByPid(pathToPartitions, 'run-'),
@@ -139,7 +167,7 @@ async function executeBeforeBrowserLaunch (browser, launchOptions: typeof defaul
   if (plugins.has('before:browser:launch')) {
     const span = telemetry.startSpan({ name: 'lifecycle:before:browser:launch' })
 
-    span?.setAttribute({
+    span?.setAttributes({
       name: browser.name,
       channel: browser.channel,
       version: browser.version,
@@ -166,7 +194,7 @@ async function executeAfterBrowserLaunch (browser: Browser, options: AfterBrowse
   if (plugins.has('after:browser:launch')) {
     const span = telemetry.startSpan({ name: 'lifecycle:after:browser:launch' })
 
-    span?.setAttribute({
+    span?.setAttributes({
       name: browser.name,
       channel: browser.channel,
       version: browser.version,
@@ -179,71 +207,51 @@ async function executeAfterBrowserLaunch (browser: Browser, options: AfterBrowse
   }
 }
 
-function extendLaunchOptionsFromPlugins (launchOptions, pluginConfigResult, options: BrowserLaunchOpts) {
-  // if we returned an array from the plugin
-  // then we know the user is using the deprecated
-  // interface and we need to warn them
-  // TODO: remove this logic in >= v5.0.0
-  if (pluginConfigResult[0]) {
-    // eslint-disable-next-line no-console
-    (options.onWarning || console.warn)(getError(
-      'DEPRECATED_BEFORE_BROWSER_LAUNCH_ARGS',
-    ))
+function extendLaunchOptionsFromPlugins (launchOptions, pluginConfigResult, options) {
+  // strip out all the known launch option properties from the resulting object
+  const unexpectedProperties: string[] = _
+  .chain(pluginConfigResult)
+  .omit(KNOWN_LAUNCH_OPTION_PROPERTIES)
+  .keys()
+  .value()
 
-    _.extend(pluginConfigResult, {
-      args: _.filter(pluginConfigResult, (_val, key) => {
-        return _.isNumber(key)
-      }),
-      extensions: [],
-    })
-  } else {
-    // either warn about the array or potentially error on invalid props, but not both
-
-    // strip out all the known launch option properties from the resulting object
-    const unexpectedProperties: string[] = _
-    .chain(pluginConfigResult)
-    .omit(KNOWN_LAUNCH_OPTION_PROPERTIES)
-    .keys()
-    .value()
-
-    if (unexpectedProperties.length) {
-      errors.throwErr('UNEXPECTED_BEFORE_BROWSER_LAUNCH_PROPERTIES', unexpectedProperties, KNOWN_LAUNCH_OPTION_PROPERTIES)
-    }
+  if (unexpectedProperties.length) {
+    // error on invalid props
+    errors.throwErr('UNEXPECTED_BEFORE_BROWSER_LAUNCH_PROPERTIES', unexpectedProperties, KNOWN_LAUNCH_OPTION_PROPERTIES)
   }
 
-  _.forEach(launchOptions, (val, key) => {
-    const pluginResultValue = pluginConfigResult[key]
-
-    if (pluginResultValue) {
-      if (_.isPlainObject(val)) {
-        launchOptions[key] = _.extend({}, launchOptions[key], pluginResultValue)
-
-        return
-      }
-
-      launchOptions[key] = pluginResultValue
-
-      return
-    }
-  })
+  Object.assign(launchOptions, mergeLaunchOptions(launchOptions, pluginConfigResult))
 
   return launchOptions
 }
 
-const wkBrowserVersionRe = /BROWSER_VERSION = \'(?<version>[^']+)\'/gm
-
-const getWebKitBrowserVersion = async () => {
+const getWebKitBrowserVersion = async (pwWebkitModulePath?: string) => {
   try {
-    // this seems to be the only way to accurately capture the WebKit version - it's not exported, and invoking the webkit binary with `--version` does not give the correct result
-    // after launching the browser, this is available at browser.version(), but we don't have a browser instance til later
-    const pwCorePath = path.dirname(require.resolve('playwright-core', { paths: [process.cwd()] }))
-    const wkBrowserPath = path.join(pwCorePath, 'lib', 'server', 'webkit', 'wkBrowser.js')
-    const wkBrowserContents = await fs.readFile(wkBrowserPath)
-    const result = wkBrowserVersionRe.exec(wkBrowserContents)
+    // Resolve `playwright-core` relative to the resolved `playwright-webkit`
+    // module first, then fall back to the project's working directory.
+    //
+    // In system tests the project runs from a temp dir outside the monorepo
+    // where only `playwright-webkit` is symlinked into `node_modules` (see
+    // `scaffoldCommonNodeModules`). Its transitive `playwright-core` dependency
+    // is not resolvable from `process.cwd()`, so detection used to fall back to
+    // '0' and display "WebKit 0". Since `playwright-webkit` always depends on
+    // `playwright-core`, resolving from the webkit module's location finds the
+    // correct `browsers.json`.
+    const paths = pwWebkitModulePath ? [path.dirname(pwWebkitModulePath), process.cwd()] : [process.cwd()]
+    // eslint-disable-next-line n/no-extraneous-require -- playwright-webkit owns the playwright-core version
+    const pwCorePath = path.dirname(require.resolve('playwright-core', { paths }))
+    const browsersJsonPath = path.join(pwCorePath, 'browsers.json')
+    const browsersJsonContents = await fs.readFile(browsersJsonPath, 'utf8')
+    const browsersJson = JSON.parse(browsersJsonContents)
+    const webkitEntry = browsersJson.browsers.find((b) => b.name === 'webkit')
 
-    if (!result || !result.groups!.version) return '0'
+    if (!webkitEntry || !webkitEntry.browserVersion) {
+      debug('Could not find webkit browserVersion in playwright-core browsers.json %o', { webkitEntry })
 
-    return result.groups!.version
+      return '0'
+    }
+
+    return webkitEntry.browserVersion
   } catch (err) {
     debug('Error detecting WebKit browser version %o', err)
 
@@ -255,7 +263,7 @@ async function getWebKitBrowser () {
   try {
     const modulePath = require.resolve('playwright-webkit', { paths: [process.cwd()] })
     const mod = await import(modulePath) as typeof import('playwright-webkit')
-    const version = await getWebKitBrowserVersion()
+    const version = await getWebKitBrowserVersion(modulePath)
 
     const browser: FoundBrowser = {
       name: 'webkit',
@@ -270,7 +278,7 @@ async function getWebKitBrowser () {
 
     return browser
   } catch (err) {
-    debug('WebKit is enabled, but there was an error constructing the WebKit browser: %o', { err })
+    debug('There was an error constructing the WebKit browser: %o', { err })
 
     return
   }
@@ -317,7 +325,7 @@ const getBrowsers = async () => {
 }
 
 const isValidPathToBrowser = (str) => {
-  return path.basename(str) !== str
+  return typeof str === 'string' && path.basename(str) !== str
 }
 
 const parseBrowserOption = (opt) => {
@@ -338,8 +346,9 @@ const parseBrowserOption = (opt) => {
   }
 }
 
-function ensureAndGetByNameOrPath(nameOrPath: string, returnAll: false, browsers?: FoundBrowser[]): Bluebird<FoundBrowser>
-function ensureAndGetByNameOrPath(nameOrPath: string, returnAll: true, browsers?: FoundBrowser[]): Bluebird<FoundBrowser[]>
+function ensureAndGetByNameOrPath (nameOrPath: string, returnAll: false, browsers?: FoundBrowser[]): Promise<FoundBrowser>
+
+function ensureAndGetByNameOrPath (nameOrPath: string, returnAll: true, browsers?: FoundBrowser[]): Promise<FoundBrowser[]>
 
 async function ensureAndGetByNameOrPath (nameOrPath: string, returnAll = false, prevKnownBrowsers: FoundBrowser[] = []) {
   const browsers = prevKnownBrowsers.length ? prevKnownBrowsers : (await getBrowsers())
@@ -395,7 +404,7 @@ const throwBrowserNotFound = function (browserName, browsers: FoundBrowser[] = [
   return errors.throwErr('BROWSER_NOT_FOUND_BY_NAME', browserName, formatBrowsersToOptions(browsers))
 }
 
-const initializeCDP = async (criClient: CriClient, automation: Automation) => {
+const initializeCDP = async (criClient: CriClient, automation: Automation, useBrowserNetworkInterception: boolean) => {
   await criClient.send('Runtime.enable')
   await criClient.send('Runtime.addBinding', {
     name: 'cypressUtilityBinding',
@@ -423,8 +432,28 @@ const initializeCDP = async (criClient: CriClient, automation: Automation) => {
     }
   })
 
+  // Window-realm half of the #34652 fix. The worker-realm half, the shared
+  // mechanism, and its limits are documented in disable-navigation-preload.ts.
+  //
+  // This neutralizes navigationPreload.enable() called from page JS, and
+  // best-effort disables preload on registrations persisted from an earlier
+  // run (whose scripts the worker-realm half never sees).
+  //
+  // It is placed first in the bootstrap source, try/caught, and shares no
+  // bindings with the blocks after it, so nothing later in the script can
+  // prevent it from running.
+  //
+  // Gated on useBrowserNetworkInterception (resolved from isBrowserNetworkMode
+  // at launch): navigation preload bypasses CDP Fetch, but the MITM path still
+  // intercepts it at the network layer, so only the browser network path needs
+  // this.
+  const disableNavigationPreloadInWindow = useBrowserNetworkInterception
+    ? `;${DISABLE_NAVIGATION_PRELOAD_WINDOW_EXPRESSION};`
+    : ''
+
   await criClient.send('Page.addScriptToEvaluateOnNewDocument', {
     source: `
+    ${disableNavigationPreloadInWindow}
     const binding = window['cypressUtilityBinding']
     delete window['cypressUtilityBinding']
     ;(${listenForDownload.toString()})(binding)
@@ -500,7 +529,9 @@ const listenForDownload = (binding) => {
   }
 }
 
-export = {
+const browserUtils = {
+
+  getWebKitBrowserVersion,
 
   extendLaunchOptionsFromPlugins,
 
@@ -562,7 +593,9 @@ export = {
         // and overwrite background.js with the final string bytes
         return fs.writeFileAsync(extensionBg, str)
       })
-      .return(extensionDest)
+      .then(() => extensionDest)
     })
   },
 }
+
+export default browserUtils

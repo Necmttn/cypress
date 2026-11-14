@@ -3,15 +3,16 @@ import _ from 'lodash'
 import si from 'systeminformation'
 import os from 'os'
 import fs from 'fs-extra'
-import { performance } from 'perf_hooks'
 import path from 'path'
 import pid from 'pidusage'
-import { groupCyProcesses, Process } from '../../util/process_profiler'
+import type { Process } from '../../util/process_profiler'
+import { groupCyProcesses } from '../../util/process_profiler'
 import browsers from '..'
 import { telemetry } from '@packages/telemetry'
 
 import type { Automation } from '../../automation'
 import type { BrowserInstance } from '../types'
+import type { MemoryLog } from './cgroup-util'
 
 const debug = debugModule('cypress:server:browsers:memory')
 const debugVerbose = debugModule('cypress-verbose:server:browsers:memory')
@@ -41,7 +42,7 @@ let gcLog: { [key: string]: any } = {}
 
 export type MemoryHandler = {
   getTotalMemoryLimit: () => Promise<number>
-  getAvailableMemory: (totalMemoryLimit: number, log?: { [key: string]: any }) => Promise<number>
+  getAvailableMemory: (totalMemoryLimit: number, log?: MemoryLog) => Promise<number>
 }
 
 /**
@@ -98,7 +99,7 @@ const measure = (func: (...args) => any, opts: { name?: string, save?: boolean }
  * @returns the JS heap size limit in bytes for the browser. If not available, returns a default of four gibibytes.
  */
 export const getJsHeapSizeLimit: (automation: Automation) => Promise<number> = measure(async (automation: Automation) => {
-  let heapLimit: Number
+  let heapLimit: number
 
   try {
     heapLimit = (await automation.request('get:heap:size:limit', null, null)).result.value
@@ -117,12 +118,25 @@ export const getJsHeapSizeLimit: (automation: Automation) => Promise<number> = m
 export const getMemoryHandler = async (): Promise<MemoryHandler> => {
   if (os.platform() === 'linux') {
     if (await fs.pathExists('/sys/fs/cgroup/cgroup.controllers')) {
-      // cgroup v2 can use the default handler so just pass through
-    } else {
-      debug('using cgroup v1 memory handler')
+      const cgroupV2 = (await import('./cgroup-v2')).default
 
-      return (await import('./cgroup-v1')).default
+      // on a non-containerized cgroup v2 host the memory interface files may not
+      // be exposed; fall back to the default handler rather than silently
+      // disabling memory management
+      if (await cgroupV2.isAvailable()) {
+        debug('using cgroup v2 memory handler')
+
+        return cgroupV2
+      }
+
+      debug('cgroup v2 memory files unavailable, using default memory handler')
+
+      return (await import('./default')).default
     }
+
+    debug('using cgroup v1 memory handler')
+
+    return (await import('./cgroup-v1')).default
   }
 
   debug('using default memory handler')
@@ -166,7 +180,6 @@ export const getRendererMemoryUsage: () => Promise<number | null> = measure(asyn
   // if we don't have a renderer process yet, find it.
   // this is done once since the renderer process will not change
   if (!rendererProcess) {
-    let process: Process | null = null
     let processes: si.Systeminformation.ProcessesData
 
     try {
@@ -177,7 +190,7 @@ export const getRendererMemoryUsage: () => Promise<number | null> = measure(asyn
       return null
     }
 
-    process = findRendererProcess(processes)
+    const process = findRendererProcess(processes)
 
     if (!process) return null
 
@@ -252,7 +265,7 @@ export const calculateMemoryStats: () => Promise<void> = measure(async () => {
  * @param automation - the automation client used to collect garbage
  * @param test - the current test
  */
-const checkMemoryPressureAndLog = async ({ automation, test }: { automation: Automation, test: { title: string, order: number, currentRetry: number }}) => {
+const checkMemoryPressureAndLog = async ({ automation, test }: { automation: Automation, test: { title: string, order: number, currentRetry: number } }) => {
   await checkMemoryPressure(automation)
 
   gcLog.testTitle = test.title

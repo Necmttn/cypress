@@ -6,6 +6,10 @@ const onServer = function (app) {
   })
 
   app.get('/req', (req, res) => {
+    // without this an allowed cross-origin request fails on CORS and reports the same
+    // zero status as a blocked one, so the test would pass even when nothing is blocked
+    res.header('Access-Control-Allow-Origin', '*')
+
     return res.sendStatus(200)
   })
 
@@ -31,10 +35,11 @@ describe('e2e blockHosts', () => {
     },
   })
 
-  it('passes', function () {
-    return systemTests.exec(this, {
-      spec: 'block_hosts.cy.js',
-      snapshot: true,
-    })
+  // Chrome enforces blockHosts on the browser network (CDP Fetch) path.
+  // Electron enforces it on the MITM proxy. Cover both.
+  systemTests.it('passes', {
+    browser: ['chrome', 'electron'],
+    spec: 'block_hosts.cy.js',
+    snapshot: true,
   })
 })

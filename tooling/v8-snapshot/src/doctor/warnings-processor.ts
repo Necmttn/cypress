@@ -7,7 +7,7 @@ import path from 'path'
  * includes to indicate that rewriting the module's code resulted in invalid JavaScript.
  * @category snapshot
  */
-export const SNAPSHOT_REWRITE_FAILURE = '[SNAPSHOT_REWRITE_FAILURE]'
+const SNAPSHOT_REWRITE_FAILURE = '[SNAPSHOT_REWRITE_FAILURE]'
 
 /**
  * Marker that the
@@ -16,13 +16,13 @@ export const SNAPSHOT_REWRITE_FAILURE = '[SNAPSHOT_REWRITE_FAILURE]'
  * during snapshot generation and thus needs to be deferred.
  * @category snapshot
  */
-export const SNAPSHOT_CACHE_FAILURE = '[SNAPSHOT_CACHE_FAILURE]'
+const SNAPSHOT_CACHE_FAILURE = '[SNAPSHOT_CACHE_FAILURE]'
 
 /**
  * This error is raised for missing Node.js globals like Buffer
  * @category snapshot
  */
-export const REFERENCE_ERROR_DEFER =
+const REFERENCE_ERROR_DEFER =
   /^(Reference|Type)?Error: (.+ is not defined|Cannot read property|Cannot read properties)/i
 
 /**
@@ -31,7 +31,7 @@ export const REFERENCE_ERROR_DEFER =
  * replacement to be used before defined or similar
  * @category snapshot
  */
-export const REFERENCE_ERROR_NOREWRITE =
+const REFERENCE_ERROR_NOREWRITE =
   /^(Reference|Type)?Error: (.+ is not a function|__.+__ is not defined)/i
 
 /**
@@ -39,7 +39,7 @@ export const REFERENCE_ERROR_NOREWRITE =
  * We keep it in order to avoid logging the same warning over and over
  * @category snapshot
  */
-export type WarningsProcessHistory = {
+type WarningsProcessHistory = {
   deferred: Set<string>
   norewrite: Set<string>
 }
@@ -48,13 +48,13 @@ export type WarningsProcessHistory = {
  * The consequence of a specific type of warning.
  *
  * - Defer: we need to defer the module in order to prevent it from loading
- * - NoRewrite: we should not rewrite the module as it results in invalid code
+ * - Norewrite: we should not rewrite the module as it results in invalid code
  * - None: no consequence, i.e. a light weight warning for informative purposes only
  * @category snapshot
  */
 export enum WarningConsequence {
   Defer,
-  NoRewrite,
+  Norewrite,
   None,
 }
 
@@ -70,7 +70,7 @@ export type Warning = CreateBundleResult['warnings'][number]
  * file that triggered the warning as well as the consequence.
  * @category snapshot
  */
-export type ProcessedWarning = {
+type ProcessedWarning = {
   location: Warning['location'] & { fullPath: string }
   consequence: WarningConsequence
   text: Warning['text']
@@ -157,7 +157,7 @@ export class WarningsProcessor {
     // prettier-ignore
     const consequence =
            text.includes(SNAPSHOT_REWRITE_FAILURE)
-        || REFERENCE_ERROR_NOREWRITE.test(text) ? WarningConsequence.NoRewrite
+        || REFERENCE_ERROR_NOREWRITE.test(text) ? WarningConsequence.Norewrite
              : text.includes(SNAPSHOT_CACHE_FAILURE)
         || REFERENCE_ERROR_DEFER.test(text) ? WarningConsequence.Defer
                : WarningConsequence.None
@@ -185,7 +185,7 @@ export class WarningsProcessor {
 
         return x
       }
-      case WarningConsequence.NoRewrite: {
+      case WarningConsequence.Norewrite: {
         if (norewrite.has(x.location.file)) return null
 
         return x
@@ -214,7 +214,7 @@ export class WarningsProcessor {
    * @category snapshot
    */
   warningFromError (err: Error, file: string, hist: WarningsProcessHistory) {
-    let location: Warning['location'] = {
+    const location: Warning['location'] = {
       file,
       namespace: 'file:',
       line: 1,
@@ -223,9 +223,9 @@ export class WarningsProcessor {
       lineText: '<unknown>',
       suggestion: '',
     }
-    let text = err.toString()
+    const text = err.toString()
 
-    let warning: Omit<Warning, 'detail' | 'notes' | 'pluginName' | 'id'> = {
+    const warning: Omit<Warning, 'detail' | 'notes' | 'pluginName' | 'id'> = {
       location,
       text,
     }

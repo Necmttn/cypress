@@ -1,6 +1,8 @@
 import { gql, useMutation, useQuery } from '@urql/vue'
-import { Ref, computed, onMounted, onUnmounted } from 'vue'
-import { RunsDocument, RunsContainer_FetchNewerRunsDocument, RunCardFragment } from '../generated/graphql'
+import { computed, onMounted, onUnmounted } from 'vue'
+import type { Ref } from 'vue'
+import { RunsDocument, RunsContainer_FetchNewerRunsDocument } from '../generated/graphql'
+import type { RunCardFragment } from '../generated/graphql'
 import type { RunsComposable } from './RunsComposable'
 
 gql`
@@ -90,6 +92,7 @@ export const useProjectRuns = (online: Ref<boolean>): RunsComposable => {
   function startPolling () {
     timeout = window.setTimeout(function fetchNewerRuns () {
       if (variables.value && online.value) {
+        // tslint:disable:no-floating-promises
         refetcher.executeMutation(variables.value)
         .then(() => {
           startPolling()
@@ -100,10 +103,10 @@ export const useProjectRuns = (online: Ref<boolean>): RunsComposable => {
     }, POLL_FOR_LATEST)
   }
 
-  onMounted(() => {
+  onMounted(async () => {
     // Always fetch when the component mounts, and we're not already fetching
     if (online.value && !refetcher.fetching) {
-      refetcher.executeMutation(variables.value)
+      await refetcher.executeMutation(variables.value)
     }
 
     startPolling()

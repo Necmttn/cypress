@@ -1,6 +1,6 @@
 import fs from 'fs-extra'
 import * as dependencies from './dependencies'
-import componentIndexHtmlGenerator from './component-index-template'
+import { componentIndexHtmlGenerator } from './component-index-template'
 import debugLib from 'debug'
 import semver from 'semver'
 import { isThirdPartyDefinition } from './ct-detect-third-party'
@@ -14,7 +14,7 @@ export type WizardBundler = typeof dependencies.WIZARD_BUNDLERS[number]
 
 export type CodeGenFramework = Cypress.ResolvedComponentFrameworkDefinition['codeGenFramework']
 
-export async function isDependencyInstalledByName (packageName: string, projectPath: string): Promise<{dependency: string, detectedVersion: string | null}> {
+export async function isDependencyInstalledByName (packageName: string, projectPath: string): Promise<{ dependency: string, detectedVersion: string | null }> {
   let detectedVersion: string | null = null
 
   try {
@@ -101,77 +101,9 @@ export function getBundler (bundler: WizardBundler['type']): WizardBundler {
 
 const mountModule = <T extends string>(mountModule: T) => (projectPath: string) => Promise.resolve(mountModule)
 
-const reactMountModule = async (projectPath: string) => {
-  const reactPkg = await isDependencyInstalled(dependencies.WIZARD_DEPENDENCY_REACT, projectPath)
-
-  if (!reactPkg.detectedVersion || !semver.valid(reactPkg.detectedVersion)) {
-    return 'cypress/react'
-  }
-
-  return semver.major(reactPkg.detectedVersion) === 18 ? 'cypress/react18' : 'cypress/react'
-}
-
 export const SUPPORT_STATUSES: Readonly<Cypress.ResolvedComponentFrameworkDefinition['supportStatus'][]> = ['alpha', 'beta', 'full', 'community'] as const
 
 export const CT_FRAMEWORKS: Cypress.ComponentFrameworkDefinition[] = [
-  {
-    type: 'reactscripts',
-    configFramework: 'create-react-app',
-    category: 'template',
-    name: 'Create React App',
-    supportedBundlers: ['webpack'],
-    detectors: [dependencies.WIZARD_DEPENDENCY_REACT_SCRIPTS],
-    dependencies: (bundler: WizardBundler['type']): Cypress.CypressComponentDependency[] => {
-      return [
-        dependencies.WIZARD_DEPENDENCY_REACT_SCRIPTS,
-        dependencies.WIZARD_DEPENDENCY_REACT_DOM,
-        dependencies.WIZARD_DEPENDENCY_REACT,
-      ]
-    },
-    codeGenFramework: 'react',
-    glob: '*.{js,jsx,tsx}',
-    mountModule: reactMountModule,
-    supportStatus: 'full',
-    componentIndexHtml: componentIndexHtmlGenerator(),
-  },
-  {
-    type: 'vueclivue2',
-    configFramework: 'vue-cli',
-    category: 'template',
-    name: 'Vue CLI (Vue 2)',
-    detectors: [dependencies.WIZARD_DEPENDENCY_VUE_CLI_SERVICE, dependencies.WIZARD_DEPENDENCY_VUE_2],
-    supportedBundlers: ['webpack'],
-    dependencies: (bundler: WizardBundler['type']): Cypress.CypressComponentDependency[] => {
-      return [
-        dependencies.WIZARD_DEPENDENCY_VUE_CLI_SERVICE,
-        dependencies.WIZARD_DEPENDENCY_VUE_2,
-      ]
-    },
-    codeGenFramework: 'vue',
-    glob: '*.vue',
-    mountModule: mountModule('cypress/vue2'),
-    supportStatus: 'full',
-    componentIndexHtml: componentIndexHtmlGenerator(),
-  },
-  {
-    type: 'vueclivue3',
-    configFramework: 'vue-cli',
-    category: 'template',
-    name: 'Vue CLI (Vue 3)',
-    supportedBundlers: ['webpack'],
-    detectors: [dependencies.WIZARD_DEPENDENCY_VUE_CLI_SERVICE, dependencies.WIZARD_DEPENDENCY_VUE_3],
-    dependencies: (bundler: WizardBundler['type']): Cypress.CypressComponentDependency[] => {
-      return [
-        dependencies.WIZARD_DEPENDENCY_VUE_CLI_SERVICE,
-        dependencies.WIZARD_DEPENDENCY_VUE_3,
-      ]
-    },
-    codeGenFramework: 'vue',
-    glob: '*.vue',
-    mountModule: mountModule('cypress/vue'),
-    supportStatus: 'full',
-    componentIndexHtml: componentIndexHtmlGenerator(),
-  },
   {
     type: 'nextjs',
     category: 'template',
@@ -188,7 +120,7 @@ export const CT_FRAMEWORKS: Cypress.ComponentFrameworkDefinition[] = [
     },
     codeGenFramework: 'react',
     glob: '*.{js,jsx,tsx}',
-    mountModule: reactMountModule,
+    mountModule: mountModule('cypress/react'),
     supportStatus: 'full',
     /**
      * Next.js uses style-loader to inject CSS and requires this element to exist in the HTML.
@@ -198,44 +130,6 @@ export const CT_FRAMEWORKS: Cypress.ComponentFrameworkDefinition[] = [
       `<!-- Used by Next.js to inject CSS. -->\n`,
       `<div id="__next_css__DO_NOT_USE__"></div>`,
     ].join(' '.repeat(8))),
-  },
-  {
-    type: 'nuxtjs',
-    configFramework: 'nuxt',
-    category: 'template',
-    name: 'Nuxt.js (v2)',
-    detectors: [dependencies.WIZARD_DEPENDENCY_NUXT],
-    supportedBundlers: ['webpack'],
-    dependencies: (bundler: WizardBundler['type']): Cypress.CypressComponentDependency[] => {
-      return [
-        dependencies.WIZARD_DEPENDENCY_NUXT,
-        dependencies.WIZARD_DEPENDENCY_VUE_2,
-      ]
-    },
-    codeGenFramework: 'vue',
-    glob: '*.vue',
-    mountModule: mountModule('cypress/vue2'),
-    supportStatus: 'alpha',
-    componentIndexHtml: componentIndexHtmlGenerator(),
-  },
-  {
-    type: 'vue2',
-    configFramework: 'vue',
-    category: 'library',
-    name: 'Vue.js 2',
-    detectors: [dependencies.WIZARD_DEPENDENCY_VUE_2],
-    supportedBundlers: ['webpack', 'vite'],
-    dependencies: (bundler: WizardBundler['type']): Cypress.CypressComponentDependency[] => {
-      return [
-        getBundler(bundler),
-        dependencies.WIZARD_DEPENDENCY_VUE_2,
-      ]
-    },
-    codeGenFramework: 'vue',
-    glob: '*.vue',
-    mountModule: mountModule('cypress/vue2'),
-    supportStatus: 'full',
-    componentIndexHtml: componentIndexHtmlGenerator(),
   },
   {
     type: 'vue3',
@@ -272,7 +166,7 @@ export const CT_FRAMEWORKS: Cypress.ComponentFrameworkDefinition[] = [
     },
     codeGenFramework: 'react',
     glob: '*.{js,jsx,tsx}',
-    mountModule: reactMountModule,
+    mountModule: mountModule('cypress/react'),
     supportStatus: 'full',
     componentIndexHtml: componentIndexHtmlGenerator(),
   },
@@ -289,7 +183,7 @@ export const CT_FRAMEWORKS: Cypress.ComponentFrameworkDefinition[] = [
         dependencies.WIZARD_DEPENDENCY_ANGULAR_DEVKIT_BUILD_ANGULAR,
         dependencies.WIZARD_DEPENDENCY_ANGULAR_CORE,
         dependencies.WIZARD_DEPENDENCY_ANGULAR_COMMON,
-        dependencies.WIZARD_DEPENDENCY_ANGULAR_PLATFORM_BROWSER_DYNAMIC,
+        dependencies.WIZARD_DEPENDENCY_ANGULAR_PLATFORM_BROWSER,
       ]
     },
     codeGenFramework: 'angular',

@@ -23,9 +23,9 @@ describe('<BaseError />', () => {
     .should('contain.text', cy.gqlStub.ErrorWrapper.title)
 
     cy.findAllByTestId('collapsible').should('be.visible')
-    cy.contains('h3', 'OriginalError')
+    cy.contains('h2', 'OriginalError')
     .get(messageSelector)
-    .should('contain.text', cy.gqlStub.ErrorWrapper.errorMessage.replace(/\`/g, '').slice(0, 10))
+    .should('contain.text', cy.gqlStub.ErrorWrapper.errorMessage.replace(/`/g, '').slice(0, 10))
     .get(retryButtonSelector)
     .should('not.exist')
 
@@ -33,8 +33,6 @@ describe('<BaseError />', () => {
   })
 
   context('retry action', () => {
-    const { docsButton } = cy.i18n.launchpadErrors.generic
-
     const mountFragmentWithError = (errorProps = {}) => {
       const retrySpy = cy.spy().as('retry')
 
@@ -49,18 +47,18 @@ describe('<BaseError />', () => {
     it('renders the retry button and docs button', () => {
       mountFragmentWithError()
       cy.findAllByTestId('collapsible').should('be.visible')
-      cy.contains('h3', 'OriginalError')
-      cy.contains(retryButtonSelector, cy.i18n.launchpadErrors.generic.retryButton)
-      cy.contains(docsButtonSelector, docsButton.configGuide.text).should('have.attr', 'href', docsButton.configGuide.link)
+      cy.contains('h2', 'OriginalError')
+      cy.contains(retryButtonSelector, 'Try again')
+      cy.contains(docsButtonSelector, 'Configuration guide').should('have.attr', 'href', 'https://on.cypress.io/configuration')
     })
 
     it('renders the expected docs button for unknown errors', () => {
       mountFragmentWithError({ errorStack: 'UNKNOWN ERROR' })
       cy.findAllByTestId('collapsible').should('be.visible')
-      cy.contains('h3', 'OriginalError')
-      cy.contains(retryButtonSelector, cy.i18n.launchpadErrors.generic.retryButton)
-      cy.contains(docsButtonSelector, docsButton.docsHomepage.text)
-      .should('have.attr', 'href', docsButton.docsHomepage.link)
+      cy.contains('h2', 'OriginalError')
+      cy.contains(retryButtonSelector, 'Try again')
+      cy.contains(docsButtonSelector, 'Cypress docs')
+      .should('have.attr', 'href', 'https://docs.cypress.io')
 
       cy.contains('UNKNOWN ERROR')
     })
@@ -68,10 +66,10 @@ describe('<BaseError />', () => {
     it('renders the expected docs button for Cypress Cloud errors', () => {
       mountFragmentWithError({ errorType: 'CLOUD_GRAPHQL_ERROR' })
       cy.findAllByTestId('collapsible').should('be.visible')
-      cy.contains('h3', 'OriginalError')
-      cy.contains(retryButtonSelector, cy.i18n.launchpadErrors.generic.retryButton)
-      cy.contains(docsButtonSelector, docsButton.cloudGuide.text)
-      .should('have.attr', 'href', docsButton.cloudGuide.link)
+      cy.contains('h2', 'OriginalError')
+      cy.contains(retryButtonSelector, 'Try again')
+      cy.contains(docsButtonSelector, 'Cypress Cloud guide')
+      .should('have.attr', 'href', 'https://on.cypress.io/features-dashboard')
 
       cy.contains('OriginalError: foobar')
     })
@@ -79,16 +77,16 @@ describe('<BaseError />', () => {
     it('renders the expected docs button for errors that are known and unrelated to Cypress Cloud', () => {
       mountFragmentWithError({ errorType: 'CONFIG_VALIDATION_ERROR' })
       cy.findAllByTestId('collapsible').should('be.visible')
-      cy.contains('h3', 'OriginalError')
-      cy.contains(retryButtonSelector, cy.i18n.launchpadErrors.generic.retryButton)
-      cy.contains(docsButtonSelector, docsButton.configGuide.text)
-      .should('have.attr', 'href', docsButton.configGuide.link)
+      cy.contains('h2', 'OriginalError')
+      cy.contains(retryButtonSelector, 'Try again')
+      cy.contains(docsButtonSelector, 'Configuration guide')
+      .should('have.attr', 'href', 'https://on.cypress.io/configuration')
     })
 
     it(`emits a 'retry' event when clicked`, () => {
       mountFragmentWithError()
       cy.findAllByTestId('collapsible').should('be.visible')
-      cy.contains('h3', 'OriginalError')
+      cy.contains('h2', 'OriginalError')
       cy.get(retryButtonSelector)
       .should('not.be.disabled')
       .click()
@@ -105,7 +103,7 @@ describe('<BaseError />', () => {
       })
 
       cy.findAllByTestId('collapsible').should('be.visible')
-      cy.contains('h3', 'OriginalError')
+      cy.contains('h2', 'OriginalError')
       cy.get(retryButtonSelector).should('not.exist')
       cy.get(docsButtonSelector).should('not.exist')
       cy.contains('OriginalError: foobar')
@@ -120,9 +118,9 @@ describe('<BaseError />', () => {
       render: (gqlVal) => <BaseError gql={gqlVal} />,
     }).then(() => {
       cy.findAllByTestId('collapsible').should('be.visible')
-      cy.contains('h3', 'OriginalError')
+      cy.contains('h2', 'OriginalError')
       cy.get('[data-cy=stack-open-true]').should('not.exist')
-      cy.contains(cy.i18n.launchpadErrors.generic.stackTraceLabel).click()
+      cy.contains('Stack trace').click()
       cy.contains('Error: foobar').should('be.visible')
       cy.get('[data-cy=stack-open-true]')
     })
@@ -145,7 +143,7 @@ describe('<BaseError />', () => {
     .and('contain.text', customStack)
 
     cy.findAllByTestId('collapsible').should('be.visible')
-    cy.contains('h3', 'OriginalError')
+    cy.contains('h2', 'OriginalError')
   })
 
   it('renders the header and message slots', () => {
@@ -166,8 +164,8 @@ describe('<BaseError />', () => {
     .should('contain.text', customHeaderMessage)
     .and('contain.text', customMessage)
 
-    cy.contains(retryButtonSelector, cy.i18n.launchpadErrors.generic.retryButton)
-    cy.contains(docsButtonSelector, cy.i18n.launchpadErrors.generic.docsButton.configGuide.text).should('have.attr', 'href', cy.i18n.launchpadErrors.generic.docsButton.configGuide.link)
+    cy.contains(retryButtonSelector, 'Try again')
+    cy.contains(docsButtonSelector, 'Configuration guide').should('have.attr', 'href', 'https://on.cypress.io/configuration')
   })
 
   it('renders the header and message slots with codeframe', () => {
@@ -206,9 +204,9 @@ describe('<BaseError />', () => {
     })
 
     cy.findAllByTestId('collapsible').should('be.visible')
-    cy.contains('h3', 'OriginalError')
-    cy.contains(retryButtonSelector, cy.i18n.launchpadErrors.generic.retryButton)
-    cy.contains(docsButtonSelector, cy.i18n.launchpadErrors.generic.docsButton.configGuide.text).should('have.attr', 'href', cy.i18n.launchpadErrors.generic.docsButton.configGuide.link)
+    cy.contains('h2', 'OriginalError')
+    cy.contains(retryButtonSelector, 'Try again')
+    cy.contains(docsButtonSelector, 'Configuration guide').should('have.attr', 'href', 'https://on.cypress.io/configuration')
     cy.findByText('cypress/e2e/file.cy.js:12:25').should('be.visible')
     cy.contains('Error: foobar').should('be.visible')
   })
@@ -252,9 +250,9 @@ describe('<BaseError />', () => {
 
     cy.findByText(`${longFileName}:12:25`).should('have.css', 'word-break', 'break-all')
     cy.findAllByTestId('collapsible').should('be.visible')
-    cy.contains('h3', 'OriginalError')
-    cy.contains(retryButtonSelector, cy.i18n.launchpadErrors.generic.retryButton)
-    cy.contains(docsButtonSelector, cy.i18n.launchpadErrors.generic.docsButton.configGuide.text).should('have.attr', 'href', cy.i18n.launchpadErrors.generic.docsButton.configGuide.link)
+    cy.contains('h2', 'OriginalError')
+    cy.contains(retryButtonSelector, 'Try again')
+    cy.contains(docsButtonSelector, 'Configuration guide').should('have.attr', 'href', 'https://on.cypress.io/configuration')
     cy.contains('Error: foobar').should('be.visible')
     cy.percySnapshot('')
   })

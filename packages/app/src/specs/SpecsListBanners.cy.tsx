@@ -1,13 +1,15 @@
+import { assignIn, set } from 'lodash'
 import SpecsListBanners from './SpecsListBanners.vue'
 import { ref } from 'vue'
 import type { Ref } from 'vue'
-import { SpecsListBannersFragment, SpecsListBannersFragmentDoc, UseCohorts_DetermineCohortDocument } from '../generated/graphql-test'
+import type { SpecsListBannersFragment } from '../generated/graphql-test'
+import { SpecsListBannersFragmentDoc, UseCohorts_DetermineCohortDocument } from '../generated/graphql-test'
 import interval from 'human-interval'
-import { CloudUserStubs, CloudProjectStubs } from '@packages/graphql/test/stubCloudTypes'
-import { AllowedState, BannerIds } from '@packages/types'
-import { assignIn, set } from 'lodash'
-import { UserProjectStatusStore, useUserProjectStatusStore } from '@packages/frontend-shared/src/store/user-project-status-store'
-import type { UserProjectStatusState } from '@packages/frontend-shared/src/store/user-project-status-store'
+import { CloudUserStubs, CloudProjectStubs } from '@packages/data-context/test/graphql/stubCloudTypes'
+import { BannerIds } from '@packages/types'
+import type { AllowedState } from '@packages/types'
+import { useUserProjectStatusStore } from '@packages/frontend-shared/src/store/user-project-status-store'
+import type { UserProjectStatusStore, UserProjectStatusState } from '@packages/frontend-shared/src/store/user-project-status-store'
 
 const AlertSelector = 'alert-header'
 const AlertBody = 'alert-body'
@@ -120,23 +122,52 @@ describe('<SpecsListBanners />', { viewportHeight: 260, defaultCommandTimeout: 1
         }
 
         const bannerTrueConditions: Record<string, DeepPartial<UserProjectStatusState>> = {
-          'login-banner': {},
-          'create-organization-banner': {
+          'login': {},
+          'create-organization': {
             user: { isLoggedIn: true, isOrganizationLoaded: true },
           },
-          'connect-project-banner': {
+          'connect-project': {
             user: { isLoggedIn: true, isMemberOfOrganization: true },
             project: { isConfigLoaded: true },
           },
-          'record-banner': {
+          'record': {
             user: { isLoggedIn: true, isMemberOfOrganization: true },
             project: { isProjectConnected: true, hasNoRecordedRuns: true, hasNonExampleSpec: true, isConfigLoaded: true },
           },
-          'component-testing-banner': {
+          'component-testing': {
             testingType: 'e2e',
             user: { isLoggedIn: true, isMemberOfOrganization: true },
             project: { isProjectConnected: true, hasNonExampleSpec: true, isConfigLoaded: true, hasDetectedCtFramework: true },
           },
+        }
+
+        const bannerMessages: Record<string, string[]> = {
+          'login': [
+            'Optimize and record your CI test runs with Cypress Cloud',
+            'When you configure Cypress to record tests to Cypress Cloud, you\'ll see data from your latest recorded runs in the Cypress app. This increased visibility into your test history allows you to debug your tests faster and more effectively, all within your local workflow.',
+            'Get started with Cypress Cloud',
+          ],
+          'create-organization': [
+            'Finish setting up Cypress Cloud',
+            'Join or create an organization in Cypress Cloud to access your projects and recorded test runs.',
+            'Set up your organization',
+          ],
+          'connect-project': [
+            'Connect your project to Cypress Cloud',
+            'Bring your recorded test results into your local development workflow to monitor, run, and fix tests all in the Cypress app.',
+            'Connect your project',
+          ],
+          'record': [
+            'Record your first run',
+            'Record a run to see your test results in Cypress Cloud. You can then optimize your test suite, debug failing and flaky tests, and integrate with your favorite tools.',
+          ],
+          'component-testing': [
+            'React component testing is available for this project',
+            'You can now use Cypress to develop and test individual components without running your whole application. Generate the config in just a few clicks.',
+            'Quick setup',
+            'Read our guide',
+            'Give feedback',
+          ],
         }
 
         const userProjectStatusStore = useUserProjectStatusStore()
@@ -153,7 +184,12 @@ describe('<SpecsListBanners />', { viewportHeight: 260, defaultCommandTimeout: 1
           }
         })
 
-        cy.get(`[data-cy="${bannerTestId}"]`).should('be.visible')
+        cy.get(`[data-cy="${bannerTestId}-banner"]`)
+        .should('be.visible')
+
+        cy.wrap(bannerMessages[bannerTestId]).each((message: string) => {
+          cy.contains(message).should('be.visible')
+        })
       })
 
       it('should be preempted by spec not found banner', () => {
@@ -382,7 +418,7 @@ describe('<SpecsListBanners />', { viewportHeight: 260, defaultCommandTimeout: 1
       } as any,
     }
 
-    validateSmartNotificationBehaviors(BannerIds.ACI_082022_LOGIN, 'login-banner', gql)
+    validateSmartNotificationBehaviors(BannerIds.ACI_082022_LOGIN, 'login', gql)
   })
 
   describe('create organization', () => {
@@ -404,7 +440,7 @@ describe('<SpecsListBanners />', { viewportHeight: 260, defaultCommandTimeout: 1
       cy.gqlStub.Query.cloudViewer = gql.cloudViewer as any
     })
 
-    validateSmartNotificationBehaviors(BannerIds.ACI_082022_CREATE_ORG, 'create-organization-banner', gql)
+    validateSmartNotificationBehaviors(BannerIds.ACI_082022_CREATE_ORG, 'create-organization', gql)
   })
 
   describe('connect project', () => {
@@ -423,7 +459,7 @@ describe('<SpecsListBanners />', { viewportHeight: 260, defaultCommandTimeout: 1
       } as any,
     }
 
-    validateSmartNotificationBehaviors(BannerIds.ACI_082022_CONNECT_PROJECT, 'connect-project-banner', gql)
+    validateSmartNotificationBehaviors(BannerIds.ACI_082022_CONNECT_PROJECT, 'connect-project', gql)
   })
 
   describe('record', () => {
@@ -456,7 +492,7 @@ describe('<SpecsListBanners />', { viewportHeight: 260, defaultCommandTimeout: 1
       cy.gqlStub.Query.cloudViewer = gql.cloudViewer as any
     })
 
-    validateSmartNotificationBehaviors(BannerIds.ACI_082022_RECORD, 'record-banner', gql)
+    validateSmartNotificationBehaviors(BannerIds.ACI_082022_RECORD, 'record', gql)
   })
 
   describe('component testing', () => {
@@ -525,7 +561,7 @@ describe('<SpecsListBanners />', { viewportHeight: 260, defaultCommandTimeout: 1
     )
 
     validateCloseControl()
-    validateSmartNotificationBehaviors(BannerIds.CT_052023_AVAILABLE, 'component-testing-banner', gql)
+    validateSmartNotificationBehaviors(BannerIds.CT_052023_AVAILABLE, 'component-testing', gql)
 
     it('should not render when another smart banner has been dismissed within two days', () => {
       userProjectStatusStore.setBannersState({
@@ -543,6 +579,34 @@ describe('<SpecsListBanners />', { viewportHeight: 260, defaultCommandTimeout: 1
 
         cy.findByTestId('component-testing-banner').should('not.exist')
       })
+    })
+  })
+
+  // Renders an onboarding banner once cloudAppMessages resolves. The
+  // in-flight (`undefined`) case is exercised at the E2E layer rather than
+  // here because mountFragment's auto-mock normalizes nullable list fields
+  // to `null` at the GraphQL response boundary, so a true `undefined` state
+  // can't be simulated through this mocking layer. Scope-routing for cloud
+  // banner dismissal is unit-tested in `CloudMessageBanner.cy.tsx`.
+  describe('cloudAppMessages fallthrough', () => {
+    it('renders the onboarding banner when cloudAppMessages resolves to null (cloud error / services not yet deployed)', () => {
+      const userProjectStatusStore = useUserProjectStatusStore()
+
+      userProjectStatusStore.setCypressFirstOpened(Date.now() - interval('4 days'))
+
+      mountWithState({ cloudAppMessages: null } as any)
+
+      cy.findByTestId('login-banner').should('be.visible')
+    })
+
+    it('renders the onboarding banner when cloudAppMessages resolves to an empty array', () => {
+      const userProjectStatusStore = useUserProjectStatusStore()
+
+      userProjectStatusStore.setCypressFirstOpened(Date.now() - interval('4 days'))
+
+      mountWithState({ cloudAppMessages: [] })
+
+      cy.findByTestId('login-banner').should('be.visible')
     })
   })
 })

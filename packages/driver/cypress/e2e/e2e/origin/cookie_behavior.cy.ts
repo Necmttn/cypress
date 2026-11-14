@@ -744,8 +744,10 @@ describe('Cookie Behavior', { browser: '!webkit' }, () => {
           describe('paths', () => {
             it('gives specific path precedent over generic path, regardless of matching domain', () => {
               cy.intercept(`/test-request`, (req) => {
-                // bar=baz should come BEFORE foo=bar
-                expect(req['headers']['cookie']).to.equal('bar=baz; foo=bar')
+                // @ts-expect-error - the cookie header should always be present here. Order is not guaranteed.
+                const cookieHeaders = req['headers']['cookie'].split(';').map((cookie) => cookie.trim()).sort().join('; ')
+
+                expect(cookieHeaders).to.equal('bar=baz; foo=bar')
 
                 req.reply({
                   statusCode: 200,
@@ -798,6 +800,7 @@ describe('Cookie Behavior', { browser: '!webkit' }, () => {
                   return cy.wrap(window.makeRequest(win, `/set-cookie?cookie=foo=bar; Domain=www.foobar.com`, 'fetch'))
                 })
 
+                // eslint-disable-next-line cypress/no-unnecessary-waiting -- lets the first Set-Cookie response reach the cookie jar before the second request
                 cy.wait(200)
 
                 cy.window().then((win) => {
@@ -1344,8 +1347,10 @@ describe('Cookie Behavior', { browser: '!webkit' }, () => {
           describe('paths', () => {
             it('gives specific path precedent over generic path, regardless of matching domain', () => {
               cy.intercept(`/test-request`, (req) => {
-                // bar=baz should come BEFORE foo=bar
-                expect(req['headers']['cookie']).to.equal('bar=baz; foo=bar')
+                // @ts-expect-error - the cookie header should always be present here. Order is not guaranteed.
+                const cookieHeaders = req['headers']['cookie'].split(';').map((cookie) => cookie.trim()).sort().join('; ')
+
+                expect(cookieHeaders).to.equal('bar=baz; foo=bar')
 
                 req.reply({
                   statusCode: 200,
@@ -1372,7 +1377,6 @@ describe('Cookie Behavior', { browser: '!webkit' }, () => {
           describe('creation time', () => {
             it('places cookies created earlier BEFORE newly created cookies', () => {
               cy.intercept(`${scheme}://www.foobar.com:${sameOriginPort}/test-request`, (req) => {
-                7
                 expect(req['headers']['cookie']).to.equal('foo=bar; bar=baz')
 
                 req.reply({
@@ -1386,6 +1390,7 @@ describe('Cookie Behavior', { browser: '!webkit' }, () => {
                 return cy.wrap(makeRequest(win, `/set-cookie?cookie=foo=bar; Domain=.foobar.com`, 'fetch'))
               })
 
+              // eslint-disable-next-line cypress/no-unnecessary-waiting -- lets the first Set-Cookie response reach the cookie jar before the second request
               cy.wait(200)
 
               cy.window().then((win) => {

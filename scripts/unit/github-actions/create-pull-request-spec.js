@@ -1,8 +1,12 @@
-const { expect } = require('chai')
+const chai = require('chai')
+const sinon = require('sinon')
+
+chai.use(require('sinon-chai'))
+
+const { expect } = chai
 const {
   createPullRequest,
 } = require('../../github-actions/create-pull-request')
-const sinon = require('sinon')
 
 describe('pull requests', () => {
   context('.createPullRequest', () => {
@@ -84,6 +88,76 @@ describe('pull requests', () => {
         repo: 'cypress',
         pull_number: 123,
         reviewers: ['ryanthemanuel'],
+      })
+    })
+
+    it('creates pull request with team reviewers using team slug', async () => {
+      const github = {
+        rest: {
+          pulls: {
+            create: sinon.stub().returns(Promise.resolve({ data: { number: 123 } })),
+            requestReviewers: sinon.stub().returns(Promise.resolve()),
+          },
+        },
+      }
+
+      const context = {
+        repo: {
+          owner: 'cypress-io',
+          repo: 'cypress',
+        },
+      }
+
+      await createPullRequest({
+        context,
+        github,
+        baseBranch: 'develop',
+        branchName: 'some-branch-name',
+        description: 'Update Chrome',
+        body: 'This PR was auto-generated to update the version(s) of Chrome for driver tests',
+        team_reviewers: ['app'],
+      })
+
+      expect(github.rest.pulls.requestReviewers).to.be.calledWith({
+        owner: 'cypress-io',
+        repo: 'cypress',
+        pull_number: 123,
+        team_reviewers: ['app'],
+      })
+    })
+
+    it('does not fail when requesting reviewers errors', async () => {
+      const github = {
+        rest: {
+          pulls: {
+            create: sinon.stub().returns(Promise.resolve({ data: { number: 123 } })),
+            requestReviewers: sinon.stub().returns(Promise.reject(new Error('Validation Failed: "Could not resolve to a node with the global id of \'MDQ6VGVhbTMxMTc0NDg=\'."'))),
+          },
+        },
+      }
+
+      const context = {
+        repo: {
+          owner: 'cypress-io',
+          repo: 'cypress',
+        },
+      }
+
+      await createPullRequest({
+        context,
+        github,
+        baseBranch: 'develop',
+        branchName: 'some-branch-name',
+        description: 'Update Chrome',
+        body: 'This PR was auto-generated to update the version(s) of Chrome for driver tests',
+        team_reviewers: ['app'],
+      })
+
+      expect(github.rest.pulls.requestReviewers).to.be.calledWith({
+        owner: 'cypress-io',
+        repo: 'cypress',
+        pull_number: 123,
+        team_reviewers: ['app'],
       })
     })
   })

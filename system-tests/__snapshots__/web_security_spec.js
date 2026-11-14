@@ -30,32 +30,47 @@ exports['e2e web security / when enabled / fails'] = `
 
   1) web security
        fails when clicking <a> to another origin:
+     CypressError: Timed out retrying after 4000ms: The command was expected to run against origin \`http://localhost:4466\` but the application is at origin \`https://www.foo.com:44665\`.
 
-      Timed out retrying after 4000ms
-      + expected - actual
+This commonly happens when you have either not navigated to the expected origin or have navigated away unexpectedly.
 
-      +'https://www.foo.com:44665/cross_origin'
-      
+Use \`cy.origin()\` to wrap the commands run on \`https://www.foo.com:44665\`.
+
+\`cy.origin('https://www.foo.com:44665', () => {\`
+\`  <commands targeting https://www.foo.com:44665 go here>\`
+\`})\`
+
+https://on.cypress.io/cy-visit-succeeded-but-commands-fail
       [stack trace lines]
 
   2) web security
        fails when submitted a form and being redirected to another origin:
+     CypressError: Timed out retrying after 4000ms: The command was expected to run against origin \`http://localhost:4466\` but the application is at origin \`https://www.foo.com:44665\`.
 
-      Timed out retrying after 4000ms
-      + expected - actual
+This commonly happens when you have either not navigated to the expected origin or have navigated away unexpectedly.
 
-      +'https://www.foo.com:44665/cross_origin'
-      
+Use \`cy.origin()\` to wrap the commands run on \`https://www.foo.com:44665\`.
+
+\`cy.origin('https://www.foo.com:44665', () => {\`
+\`  <commands targeting https://www.foo.com:44665 go here>\`
+\`})\`
+
+https://on.cypress.io/cy-visit-succeeded-but-commands-fail
       [stack trace lines]
 
   3) web security
        fails when using a javascript redirect to another origin:
+     CypressError: Timed out retrying after 4000ms: The command was expected to run against origin \`http://localhost:4466\` but the application is at origin \`https://www.foo.com:44665\`.
 
-      Timed out retrying after 4000ms
-      + expected - actual
+This commonly happens when you have either not navigated to the expected origin or have navigated away unexpectedly.
 
-      +'https://www.foo.com:44665/cross_origin'
-      
+Use \`cy.origin()\` to wrap the commands run on \`https://www.foo.com:44665\`.
+
+\`cy.origin('https://www.foo.com:44665', () => {\`
+\`  <commands targeting https://www.foo.com:44665 go here>\`
+\`})\`
+
+https://on.cypress.io/cy-visit-succeeded-but-commands-fail
       [stack trace lines]
 
   4) web security
@@ -74,23 +89,11 @@ exports['e2e web security / when enabled / fails'] = `
   │ Failing:      4                                                                                │
   │ Pending:      0                                                                                │
   │ Skipped:      0                                                                                │
-  │ Screenshots:  4                                                                                │
+  │ Screenshots:  0                                                                                │
   │ Video:        false                                                                            │
   │ Duration:     X seconds                                                                        │
   │ Spec Ran:     web_security.cy.js                                                               │
   └────────────────────────────────────────────────────────────────────────────────────────────────┘
-
-
-  (Screenshots)
-
-  -  /XXX/XXX/XXX/cypress/screenshots/web_security.cy.js/web security -- fails when c     (1280x720)
-     licking a to another origin (failed).png                                                       
-  -  /XXX/XXX/XXX/cypress/screenshots/web_security.cy.js/web security -- fails when s     (1280x720)
-     ubmitted a form and being redirected to another origin (failed).png                            
-  -  /XXX/XXX/XXX/cypress/screenshots/web_security.cy.js/web security -- fails when u     (1280x720)
-     sing a javascript redirect to another origin (failed).png                                      
-  -  /XXX/XXX/XXX/cypress/screenshots/web_security.cy.js/web security -- fails when d     (1280x720)
-     oing a CORS request cross-origin (failed).png                                                  
 
 
 ====================================================================================================

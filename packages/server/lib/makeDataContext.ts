@@ -1,6 +1,10 @@
 import { DataContext, getCtx, clearCtx, setCtx } from '@packages/data-context'
-import electron, { OpenDialogOptions, SaveDialogOptions, BrowserWindow } from 'electron'
+// tslint:disable-next-line no-implicit-dependencies - electron dep needs to be defined
+import type { OpenDialogOptions, SaveDialogOptions, BrowserWindow } from 'electron'
+import electron from 'electron'
+import Debug from 'debug'
 
+import { cypressSessions } from './cypress-sessions'
 import { isListening } from './util/ensure-url'
 import { isMainWindowFocused, focusMainWindow } from './gui/windows'
 
@@ -17,17 +21,22 @@ import type {
 import browserUtils from './browsers/utils'
 import auth from './cloud/auth'
 import user from './cloud/user'
-import cohorts from './cohorts'
+import commitInfo from './util/commit-info'
+import * as cohorts from './cohorts'
 import { openProject } from './open_project'
-import cache from './cache'
-import { graphqlSchema } from '@packages/graphql/src/schema'
+import { cache } from './cache'
+import { graphqlSchema } from '@packages/data-context/graphql/schema'
 import { openExternal } from './gui/links'
-import { getUserEditor } from './util/editors'
+import { getUserEditors } from './util/editors'
 import * as savedState from './saved_state'
-import appData from './util/app_data'
+import * as appData from './util/app_data'
 import browsers from './browsers'
 import devServer from './plugins/dev-server'
-import { remoteSchemaWrapped } from '@packages/graphql'
+import { remoteSchemaWrapped } from '@packages/data-context/graphql'
+import { GracefulExit } from './util/graceful-exit'
+import type { ExitStepKey } from './util/graceful-exit'
+
+const debug = Debug('cypress:server:makeDataContext')
 
 const { getBrowsers, ensureAndGetByNameOrPath } = browserUtils
 
@@ -37,6 +46,23 @@ interface MakeDataContextOptions {
 }
 
 export { getCtx, setCtx, clearCtx }
+
+async function resolveAuthRemoteOrigin (): Promise<string | undefined> {
+  const ctx = getCtx()
+  const projectRoot = ctx.coreData.currentProject
+
+  if (!projectRoot) {
+    return
+  }
+
+  return commitInfo.getRemoteOrigin(projectRoot)
+    .then((value) => value ?? undefined)
+}
+
+// The teardown step below destroys whatever context is currently set, so a replaced
+// context must not leave its step behind — every stale copy is another concurrent
+// `clearCtx()` racing the same global context during graceful exit.
+let clearCtxStepKey: ExitStepKey | undefined
 
 export function makeDataContext (options: MakeDataContextOptions): DataContext {
   const ctx = new DataContext({
@@ -59,14 +85,30 @@ export function makeDataContext (options: MakeDataContextOptions): DataContext {
       },
     },
     appApi: {
-      appData,
+      appData: {
+        path: appData.path,
+        toHashName: appData.toHashName,
+        ensure: appData.ensure,
+        remove: appData.remove,
+      },
     },
     authApi: {
       getUser () {
         return user.get()
       },
-      logIn (onMessage, utmSource, utmMedium, utmContent) {
-        return auth.start(onMessage, utmSource, utmMedium, utmContent)
+      logIn (onMessage, utmSource, utmMedium, utmContent, signal) {
+        return resolveAuthRemoteOrigin().catch(() => {}).then((remoteOrigin) => {
+          if (signal?.aborted) return
+
+          return auth.start(onMessage, utmSource, utmMedium, utmContent, remoteOrigin)
+        })
+      },
+      signUp (onMessage, utmSource, utmMedium, utmContent, signal) {
+        return resolveAuthRemoteOrigin().catch(() => {}).then((remoteOrigin) => {
+          if (signal?.aborted) return
+
+          return auth.startSignup(onMessage, utmSource, utmMedium, utmContent, remoteOrigin)
+        })
       },
       logOut () {
         return user.logOut()
@@ -76,6 +118,12 @@ export function makeDataContext (options: MakeDataContextOptions): DataContext {
       },
     },
     projectApi: {
+      setSessionLoadError (args) {
+        return cypressSessions.addPendingSession(args)
+      },
+      clearSessionLoadError () {
+        return cypressSessions.clearPending()
+      },
       async launchProject (browser: FoundBrowser, spec: Cypress.Spec, options: OpenProjectLaunchOpts) {
         await openProject.launch({ ...browser }, spec, options)
       },
@@ -108,9 +156,7 @@ export function makeDataContext (options: MakeDataContextOptions): DataContext {
         return cache.removeAllProjectPreferences()
       },
       insertProjectPreferencesToCache (projectTitle: string, preferences: Preferences) {
-        // FIXME: this should be awaited (since it writes to disk asynchronously) but is not
-        // https://cypress-io.atlassian.net/browse/UNIFY-1705
-        cache.insertProjectPreferences(projectTitle, preferences)
+        return cache.insertProjectPreferences(projectTitle, preferences)
       },
       removeProjectFromCache (path: string) {
         return cache.removeProject(path)
@@ -155,8 +201,8 @@ export function makeDataContext (options: MakeDataContextOptions): DataContext {
         return devServer
       },
       isListening,
-      resetBrowserTabsForNextTest (shouldKeepTabOpen: boolean) {
-        return openProject.resetBrowserTabsForNextTest(shouldKeepTabOpen)
+      resetBrowserTabsForNextSpec (shouldKeepTabOpen: boolean) {
+        return openProject.resetBrowserTabsForNextSpec(shouldKeepTabOpen)
       },
       resetServer () {
         return openProject.getProject()?.server.reset()
@@ -205,10 +251,8 @@ export function makeDataContext (options: MakeDataContextOptions): DataContext {
       async getPreferences () {
         return (await savedState.create()).get()
       },
-      async getAvailableEditors () {
-        const { availableEditors } = await getUserEditor(true)
-
-        return availableEditors
+      getAvailableEditors () {
+        return getUserEditors()
       },
     },
     cohortsApi: {
@@ -219,10 +263,23 @@ export function makeDataContext (options: MakeDataContextOptions): DataContext {
         return cohorts.getByName(name)
       },
       async insertCohort (cohort) {
-        cohorts.set(cohort)
+        // The picked cohort is still used for this session if it can't be cached
+        try {
+          await cohorts.set(cohort)
+        } catch (error) {
+          debug('failed to cache cohort %o', { cohort, error })
+        }
       },
     },
   })
+
+  if (clearCtxStepKey) {
+    GracefulExit.removeStep(clearCtxStepKey)
+  }
+
+  clearCtxStepKey = GracefulExit.addStep(async () => {
+    await clearCtx()
+  }, 'clear data context')
 
   return ctx
 }

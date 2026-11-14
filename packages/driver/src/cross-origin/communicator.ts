@@ -1,11 +1,13 @@
 import debugFn from 'debug'
 import { EventEmitter } from 'events'
-import { preprocessConfig, preprocessEnv } from '../util/config'
+import { preprocessConfig, preprocessExpose } from '../util/config'
 import { preprocessForSerialization, reifySerializedError } from '../util/serialization'
 import { $Location } from '../cypress/location'
 import { preprocessLogForSerialization, reifyLogFromSerialization, preprocessSnapshotForSerialization, reifySnapshotFromSerialization } from '../util/serialization/log'
 
 const debug = debugFn('cypress:driver:multi-origin')
+// for logs emitted on every promisified cross-origin message
+const debugVerbose = debugFn('cypress-verbose:driver:multi-origin')
 
 const CROSS_ORIGIN_PREFIX = 'cross:origin:'
 const LOG_EVENTS = [`${CROSS_ORIGIN_PREFIX}log:added`, `${CROSS_ORIGIN_PREFIX}log:changed`]
@@ -30,23 +32,23 @@ const sharedPromiseSetup = ({
   communicator,
   timeout = 1000,
 }: {
-  resolve: Function
-  reject: Function
+  resolve: (value: any) => void
+  reject: (err: Error) => void
   event: string
   specBridgeName: string
   communicator: EventEmitter
   timeout: number
 }) => {
-  let timeoutId
-
   const responseEvent = `${event}:${Date.now()}`
+  const sentAt = Date.now()
 
   const handler = (result) => {
     clearTimeout(timeoutId)
+    debugVerbose('%s received a response from %s spec bridge %dms after setup (timeout %dms)', event, specBridgeName, Date.now() - sentAt, timeout)
     resolve(result)
   }
 
-  timeoutId = setTimeout(() => {
+  const timeoutId = setTimeout(() => {
     communicator.off(responseEvent, handler)
     reject(new Error(`${event} failed to receive a response from ${specBridgeName} spec bridge within ${timeout / 1000} second.`))
   }, timeout)
@@ -68,8 +70,28 @@ const sharedPromiseSetup = ({
  * @extends EventEmitter
  */
 export class PrimaryOriginCommunicator extends EventEmitter {
-  private crossOriginDriverWindows: {[key: string]: Window} = {}
+  private crossOriginDriverWindows: { [key: string]: Window } = {}
   userInvocationStack?: string
+
+  /**
+   * Clears all cached spec-bridge windows. The runner calls this after
+   * `test:before:after:run:async` (e.g. about:blank) so `window:load` can still
+   * use `toAllSpecBridges('window:load', ...)` before references are dropped.
+   */
+  clearCrossOriginDriverWindows () {
+    this.crossOriginDriverWindows = {}
+  }
+
+  override removeAllListeners (eventName?: string | symbol): this {
+    if (arguments.length === 0) {
+      super.removeAllListeners()
+      this.crossOriginDriverWindows = {}
+    } else {
+      super.removeAllListeners(eventName)
+    }
+
+    return this
+  }
 
   /**
    * The callback handler that receives messages from secondary origins.
@@ -231,7 +253,8 @@ export class PrimaryOriginCommunicator extends EventEmitter {
  */
 export class SpecBridgeCommunicator extends EventEmitter {
   private handleSubjectAndErr = (data: Cypress.ObjectLike = {}, send: (data: Cypress.ObjectLike) => void) => {
-    let { subject, err, ...rest } = data
+    const { subject, err: dataErr, ...rest } = data
+    let err = dataErr
 
     // check to see if the 'err' key is defined, and if it is, we have an error of any type
     const hasError = !!Object.getOwnPropertyDescriptor(data, 'err')
@@ -272,7 +295,7 @@ export class SpecBridgeCommunicator extends EventEmitter {
   private syncGlobalsToPrimary = () => {
     this.toPrimary('sync:globals', {
       config: preprocessConfig(Cypress.config()),
-      env: preprocessEnv(Cypress.env()),
+      expose: preprocessExpose(Cypress.expose()),
     })
   }
 
@@ -320,6 +343,7 @@ export class SpecBridgeCommunicator extends EventEmitter {
       }, '*')
     })
   }
+
   /**
    * Promisified event sent to the primary communicator that expects the same event reflected back with the response.
    * @param {string} event - the name of the event to be sent.
@@ -336,7 +360,7 @@ export class SpecBridgeCommunicator extends EventEmitter {
   }: {
     event: string
     data?: Cypress.ObjectLike
-    options: {syncGlobals: boolean}
+    options?: { syncGlobals: boolean }
     timeout: number
   }) {
     return new Promise<T>((resolve, reject) => {

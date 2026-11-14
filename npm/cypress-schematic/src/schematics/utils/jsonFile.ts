@@ -6,11 +6,13 @@
  * found in the LICENSE file at https://angular.io/license
  */
 
-import { JsonValue } from '@angular-devkit/core'
-import { Tree } from '@angular-devkit/schematics'
-import {
+import type { JsonValue } from '@angular-devkit/core'
+import type { Tree } from '@angular-devkit/schematics'
+import type {
   Node,
   ParseError,
+} from 'jsonc-parser'
+import {
   applyEdits,
   findNodeAtLocation,
   getNodeValue,
@@ -19,13 +21,13 @@ import {
   printParseErrorCode,
 } from 'jsonc-parser'
 
-export type InsertionIndex = (properties: string[]) => number;
+export type InsertionIndex = (properties: string[]) => number
 
-export type JSONPath = (string | number)[];
+export type JSONPath = (string | number)[]
 
 /** @internal */
 export class JSONFile {
-  content: string;
+  content: string
 
   constructor (private readonly host: Tree, private readonly path: string) {
     const buffer = this.host.read(this.path)
@@ -37,7 +39,7 @@ export class JSONFile {
     }
   }
 
-  private _jsonAst: Node | undefined;
+  private _jsonAst: Node | undefined
   private get JsonAst (): Node | undefined {
     if (this._jsonAst) {
       return this._jsonAst

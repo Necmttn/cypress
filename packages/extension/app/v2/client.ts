@@ -1,9 +1,8 @@
-import { client } from '@packages/socket/lib/browser'
+import { client } from '@packages/socket/browser/client'
 
-export const connect = (host, path, extraOpts = {}) => {
+export const connect = (host: string, path: string) => {
   return client(host, {
     path,
     transports: ['websocket'],
-    ...extraOpts,
   })
 }

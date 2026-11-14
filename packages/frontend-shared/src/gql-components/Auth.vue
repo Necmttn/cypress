@@ -5,6 +5,7 @@
   >
     <Button
       size="lg"
+      data-cy="auth-try-again-button"
       @click="handleTryAgain"
     >
       <template
@@ -14,14 +15,14 @@
           class=" icon-light-white"
         />
       </template>
-      {{ t('topNav.login.actionTryAgain') }}
+      Try again
     </Button>
     <Button
       variant="outline"
       size="lg"
       @click="handleCancel"
     >
-      {{ t('topNav.login.actionCancel') }}
+      Cancel
     </Button>
   </div>
   <div v-else-if="props.showLogout">
@@ -29,7 +30,7 @@
       class="bg-white border-rounded outline-transparent border-gray-100 border w-full py-[8px] text-[14px] text-indigo-500 block whitespace-nowrap hocus:border-gray-200 hover:no-underline"
       @click="handleLogout"
     >
-      {{ t('topNav.login.actionLogout') }}
+      Log out
     </button>
   </div>
   <div v-else>
@@ -47,13 +48,14 @@
           class="animate-spin icon-dark-white icon-light-gray-400"
         />
       </template>
-      {{ browserOpened ? t('topNav.login.actionWaiting') : t('topNav.login.actionOpening') }}
+      {{ browserOpened ? 'Waiting for browser...' : 'Opening browser' }}
     </Button>
     <Button
       v-else
       ref="loginButtonRef"
       size="lg"
       variant="primary"
+      data-cy="auth-login-button"
       aria-live="polite"
       :disabled="!cloudViewer && !isOnline"
       :prefix-icon="buttonPrefixIcon"
@@ -65,7 +67,7 @@
 </template>
 
 <script lang="ts" setup>
-import { computed, ref, onMounted, onBeforeUnmount } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { gql } from '@urql/core'
 import { useMutation } from '@urql/vue'
 import { useOnline } from '@vueuse/core'
@@ -76,27 +78,33 @@ import {
   Auth_LoginDocument,
   Auth_LogoutDocument,
   Auth_ResetAuthStateDocument,
+  Auth_SignupDocument,
 } from '../generated/graphql'
 import type {
   AuthFragment,
 } from '../generated/graphql'
 import Button from '@cy/components/Button.vue'
-import { useI18n } from '@cy/i18n'
 import { useUserProjectStatusStore } from '@packages/frontend-shared/src/store/user-project-status-store'
+import type { AuthFlow } from '@packages/frontend-shared/src/store/user-project-status-store'
 
 const userProjectStatusStore = useUserProjectStatusStore()
 
-const { t } = useI18n()
-
 const isOnline = useOnline()
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   gql: AuthFragment
+  authFlow?: AuthFlow
+  /** When true (e.g. login modal), start login/signup as soon as preconditions are met without a second click */
+  autoStartAuth?: boolean
   showRetry?: boolean
   showLogout?: boolean
   utmMedium: string
   utmContent?: string
-}>()
+}>(), {
+  authFlow: 'login',
+  autoStartAuth: false,
+  utmContent: undefined,
+})
 
 gql`
 fragment Auth on Query {
@@ -145,6 +153,14 @@ mutation Auth_Login ($utmSource: String!, $utmMedium: String!, $utmContent: Stri
 `
 
 gql`
+mutation Auth_Signup ($utmSource: String!, $utmMedium: String!, $utmContent: String) {
+  signup (utmSource: $utmSource, utmContent: $utmContent, utmMedium: $utmMedium) {
+    ...Auth
+  }
+}
+`
+
+gql`
 mutation Auth_ResetAuthState {
   resetAuthState {
     ...Auth
@@ -153,14 +169,64 @@ mutation Auth_ResetAuthState {
 `
 
 const login = useMutation(Auth_LoginDocument)
+const signup = useMutation(Auth_SignupDocument)
 const logout = useMutation(Auth_LogoutDocument)
 const reset = useMutation(Auth_ResetAuthStateDocument)
 
 const loginButtonRef = ref(Button)
 const loginInitiated = ref(false)
+const didAttemptAutoStart = ref(false)
+
+const startAuthFlow = () => {
+  loginInitiated.value = true
+  executeAuthMutation()
+}
+
+const tryStartAuthIfNeeded = () => {
+  if (!props.autoStartAuth || props.showRetry || props.showLogout) {
+    return
+  }
+
+  if (didAttemptAutoStart.value) {
+    return
+  }
+
+  if (!isOnline.value) {
+    return
+  }
+
+  if (userProjectStatusStore.user.isLoggedIn) {
+    didAttemptAutoStart.value = true
+    if (props.gql.cloudViewer) {
+      return
+    }
+
+    emit('close')
+
+    return
+  }
+
+  didAttemptAutoStart.value = true
+
+  if (browserOpened.value) {
+    return
+  }
+
+  startAuthFlow()
+}
 
 onMounted(() => {
-  loginButtonRef?.value?.$el?.focus()
+  if (!props.autoStartAuth) {
+    loginButtonRef?.value?.$el?.focus()
+  }
+
+  tryStartAuthIfNeeded()
+})
+
+watch(isOnline, () => {
+  if (props.autoStartAuth) {
+    tryStartAuthIfNeeded()
+  }
 })
 
 onBeforeUnmount(() => {
@@ -194,6 +260,12 @@ const browserOpened = computed(() => {
   return props.gql.authState.browserOpened
 })
 
+const executeAuthMutation = () => {
+  const variables = { utmMedium: props.utmMedium, utmContent: props.utmContent || null, utmSource: getUtmSource() }
+
+  return props.authFlow === 'signup' ? signup.executeMutation(variables) : login.executeMutation(variables)
+}
+
 // We determine that a login is pending if there is no current cloudViewer and
 // either a login has been initiated from this component, or the browser has been
 // successfully opened.
@@ -213,10 +285,7 @@ const handleLoginOrContinue = async () => {
   }
 
   // user has not already logged in, kick off the login process
-
-  loginInitiated.value = true
-
-  login.executeMutation({ utmMedium: props.utmMedium, utmContent: props.utmContent || null, utmSource: getUtmSource() })
+  startAuthFlow()
 }
 
 const handleCancel = () => {
@@ -230,14 +299,15 @@ const handleLogout = () => {
 const handleTryAgain = async () => {
   await reset.executeMutation({})
 
-  login.executeMutation({ utmMedium: props.utmMedium, utmContent: props.utmContent || null, utmSource: getUtmSource() })
+  startAuthFlow()
 }
 
 const buttonText = computed(() => {
   const strings = {
-    login: t('topNav.login.actionLogin'),
-    connectProject: t('runs.connect.modal.selectProject.connectProject'),
-    continue: t('topNav.login.actionContinue'),
+    login: 'Log in',
+    signup: 'Sign up',
+    connectProject: 'Connect project',
+    continue: 'Continue',
   }
 
   if (showConnectButton.value) {
@@ -248,7 +318,7 @@ const buttonText = computed(() => {
     return strings.continue
   }
 
-  return strings.login
+  return props.authFlow === 'signup' ? strings.signup : strings.login
 })
 
 const buttonPrefixIcon = computed(() => {

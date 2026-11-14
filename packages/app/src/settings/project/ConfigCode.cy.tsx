@@ -1,6 +1,5 @@
 import ConfigCode from './ConfigCode.vue'
 import config from '@packages/frontend-shared/cypress/fixtures/config.json'
-import { defaultMessages } from '@cy/i18n'
 
 const selector = '[data-cy=code]'
 
@@ -66,9 +65,7 @@ describe('<ConfigCode />', () => {
       </div>))
 
       Cypress._.each(arrayTest, (val) => {
-        const valElement = cy.findByText(`'${val}',`)
-
-        valElement.realHover()
+        cy.findByText(`'${val}',`).realHover()
 
         cy.get('.v-popper__popper--shown')
         .should('be.visible')
@@ -110,9 +107,7 @@ describe('<ConfigCode />', () => {
       </div>))
 
       Cypress._.each(Object.values(objectTest), (value) => {
-        const valElement = cy.findByText(`'${value}',`)
-
-        valElement.realHover()
+        cy.findByText(`'${value}',`).realHover()
 
         cy.get('.v-popper__popper--shown')
         .should('have.length', 1)
@@ -152,7 +147,7 @@ describe('<ConfigCode />', () => {
 
       cy.get(selector).within(($selector) => {
         cy.get('span').each(($el: any) => {
-          let configText = $el[0].innerText.split(':')[0]
+          const configText = $el[0].innerText.split(':')[0]
 
           if (configText === '{') {
             nesting++
@@ -172,7 +167,7 @@ describe('<ConfigCode />', () => {
     })
 
     it('has an edit button', () => {
-      cy.findByText(defaultMessages.file.edit).should('be.visible').click()
+      cy.findByText('Edit').should('be.visible').click()
     })
 
     it('shows object values properly', () => {
@@ -190,7 +185,6 @@ describe('<ConfigCode />', () => {
           browser.displayName && cy.contains(`displayName: '${browser.displayName}',`)
           browser.version && cy.contains(`version: '${browser.version}',`)
           browser.path && cy.contains(`path: '${browser.path}',`)
-          browser.minSupportedVersion && cy.contains(`minSupportedVersion: ${browser.minSupportedVersion},`)
           browser.majorVersion && cy.contains(`majorVersion: ${browser.majorVersion},`)
         })
       } else {

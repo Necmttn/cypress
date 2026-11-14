@@ -1,15 +1,17 @@
 @mixin nested-command-dashes($color) {
   border-left: 1px dotted $color;
   border-image-slice: 0 0 0 1;
-  border-image-source: repeating-linear-gradient(0deg, transparent, $color, $color 4px);
+  border-image-source: repeating-linear-gradient(0deg, transparent, $color, $color 2px);
 }
 
 .reporter {
   // rendered within ../hooks/hooks.tsx
   .commands-container {
-    background-color: $reporter-section-background;
     min-width: $reporter-contents-min-width;
     padding: 0;
+    border: 1px solid $gray-900;
+    margin: 6px 8px 0 8px;
+    border-radius: 4px;
 
     &:empty {
       display: none;
@@ -19,19 +21,6 @@
   .command {
     min-height: 28px;
     font-family: $monospace;
-  }
-
-  .command-is-studio {
-    cursor: auto;
-    
-    &.command-type-parent .commands-controls .studio-command-remove {
-      display: block;
-      padding-left: 5px;
-
-      &:hover {
-        color: #565554;
-      }
-    }
   }
 
   // System Command Styles
@@ -52,7 +41,7 @@
 
   // Child Styles
   .command-type-child {
-    .command-method {
+    .command-method-child {
       &:before {
         float: left;
         content: "-";
@@ -62,12 +51,12 @@
   }
 
   .command-wrapper {
-    border-left: 2px solid $reporter-section-background;
-    background-color: $reporter-section-background;
+    border-left: 2px solid transparent;
+    border-radius: 4px;
     color: $gray-500;
     display: flex;
     min-height: 28px;
-    padding-right: 2px;
+    align-items: center;
 
     &.command-is-interactive:hover {
       background-color: $gray-900;
@@ -81,6 +70,7 @@
     .command-wrapper-text {
       display: flex;
       flex-wrap: nowrap;
+      width: 100%;
     }
 
     .command-interceptions {
@@ -95,58 +85,99 @@
     .alias-container {
       margin-left: 0;
       white-space: nowrap;
-  
+
       > * {
         display: inline-block;
         margin-left: 2px;
       }
-    
+
       > *:first-child {
         margin-left: 0;
       }
     }
+
+    .command-wrapper-container {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+
+      .command-prompt-get-code-feedback-container {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 4px;
+        width: 100%;
+
+        .command-prompt-get-code,
+        .command-prompt-get-feedback {
+          cursor: pointer;
+          font-family: $font-system;
+          font-size: 12px;
+        }
+
+        // Override inline fill="#D0D2E0" on the chat bubble icon path - inline SVG attributes take precedence over Tailwind classes
+        .command-prompt-get-feedback svg path.icon-light-fill {
+          fill: $purple-900;
+        }
+      }
+      
+    }
   }
 
   .command-number-column {
-    color: #5a5f7a;
-    flex-shrink: 0;
-    min-height: 1px; // because some numbers are empty
-    max-height: 28px; // because some numbers are empty
-    padding-top: 4px;
-    padding-bottom: 4px;
-    text-align: right;
-    width: 24px;
+    @include gutter-alignment;
+    color: $gray-500;
   }
 
   // when no children, add padding to act as the .command-expander-column's width
   // to prevent adding another element to the page
   .command-number-column + span.command-pin-target {
-    margin-left: 25px;
+    margin-left: $gutter-margin;
   }
 
   .command-pin-target.command-group {
-    @include nested-command-dashes($gray-600);
-    padding-left: 12px;
+    @include nested-command-dashes($gray-700);
     min-height: 28px;
 
     .command-group-block {
-      @include nested-command-dashes($gray-600);
-      width: 12px;
+      @include nested-command-dashes($gray-700);
+      @include group-indent-width;
       min-height: 28px;
-      min-width: 12px;
+    }
+  }
+
+  .command-group-no-children {
+    padding-left: 15px;
+  }
+
+  .command-wrapper-text-group {
+    margin-left: 15px;
+    width: 100%;
+  }
+
+  .command-wrapper-text-group-parent {
+    padding-left: 5px;
+  }
+
+  .nested-group-expander {
+    .command-expander {
+      position: relative;
+
+      margin-left: -16px !important; // Adjust this value to center the caret on the border
     }
   }
 
   .command-info {
+    @include command-info-padding;
+
     display: -webkit-box;
     font-weight: 600;
     margin-left: 0;
     overflow: hidden;
-    padding-top: 4px;
-    padding-bottom: 4px;
-    -webkit-line-clamp: 50;
-    -webkit-box-orient: vertical;
     width: 100%;
+    -webkit-line-clamp: 100;
+    -webkit-box-orient: vertical;
 
     .command-aliases,
     .command-message {
@@ -167,7 +198,7 @@
       }
 
       .fa-circle.command-message-indicator-bad {
-        color: $red-500
+        color: $red-500;
       }
 
       .fa-circle.command-message-indicator-pending {
@@ -193,12 +224,13 @@
 
     &.command-is-interactive:hover {
       border-left: 2px solid $gray-900;
+      border-radius: 0;
     }
 
     &:not(.command-is-event) .command-number {
       color: $gray-700;
     }
-  
+
     &:not(.command-is-event, .command-type-system) .command-method {
       color: $gray-200;
     }
@@ -208,8 +240,10 @@
     }
   }
 
+  // pending is running in this case
   .command-state-pending {
     border-left: 2px solid $indigo-800;
+    border-radius: 0;
     background-color: $gray-900;
     cursor: default;
     color: $indigo-200;
@@ -221,7 +255,7 @@
       .fa-circle {
         line-height: 18px;
         display: inline-block;
-  
+
         .icon-light {
           stroke: $gray-800;
         }
@@ -231,6 +265,7 @@
 
   .command-state-pending + .command-progress {
     height: 2px;
+    background-color: $gray-900;
 
     span {
       animation-fill-mode: forwards;
@@ -257,6 +292,7 @@
 
     &:not(.command-type-system) {
       border-left: $warn-border;
+      border-radius: 0 4px 4px 0;
     }
 
     .command-number-column,
@@ -280,7 +316,8 @@
     color: $err-header-text;
 
     &:not(.command-type-system) {
-      border-left: $err-border;
+      border-left: 2px solid transparent;
+      border-radius: 0 4px 4px 0;
       background-color: $err-header-background;
 
       &.command-is-interactive:hover {
@@ -292,10 +329,6 @@
     .command-method,
     .command-message {
       color: $err-header-text;
-    }
-
-    .failed-indicator {
-      vertical-align: middle;
     }
 
     .command-group {
@@ -348,7 +381,7 @@
         color: $pending;
 
         strong {
-          color: $indigo-300;
+          color: $gray-500;
         }
       }
     }
@@ -403,6 +436,7 @@
     white-space: initial;
     word-wrap: inherit;
     width: 100%;
+    margin-right: 8px;
   }
 
   // Styles for Uncaught Exception
@@ -420,7 +454,7 @@
     padding-top: 4px;
 
     svg {
-      color: rgba($gray-600, .25);
+      color: rgba($gray-600, 0.25);
       color: $gray-600;
       vertical-align: text-top;
     }
@@ -439,7 +473,7 @@
       display: inline-block;
       margin-left: 2px;
     }
-  
+
     > *:first-child {
       margin-left: 0;
     }
@@ -453,8 +487,6 @@
     color: $pinned;
     font-size: 12px;
     line-height: 1;
-    margin-top: -1px;
-    margin-left: 10px;
     outline: none;
     text-align: right;
     width: 15px;
@@ -465,20 +497,15 @@
     }
   }
 
-  .command-expander-column {
+  %command-expander-base {
     flex-shrink: 0;
-    padding-left: 10px;
-    padding-right: 5px;
-    padding-top: 4px;
-    padding-bottom: 4px;
-    width: 25px;
     display: flex;
 
     .command-expander {
       color: $gray-500;
       transform: rotate(-90deg);
+      transform-origin: center;
       transition: transform 150ms ease-out;
-      margin-top: 5px;
 
       path {
         stroke: $gray-700;
@@ -490,9 +517,36 @@
     }
   }
 
+  .command-expander-column {
+    @extend %command-expander-base;
+    height: 28px;
+    width: 24px;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .command-expander-column-group {
+    @extend %command-expander-base;
+    @include group-indent-width;
+
+    padding: 0;
+    align-items: center;
+    justify-content: center;
+    max-width: 33px;
+    height: 28px;
+    width: 33px;
+    padding-left: 15px;
+    margin-left: -15px;
+
+    .command-expander {
+      margin: 0;
+    }
+  }
+
   .command-is-pinned {
     background: $indigo-1000;
     border-left: 2px solid $pinned;
+    border-radius: 0 4px 4px 0;
 
     &,
     &:hover {
@@ -502,17 +556,18 @@
     &:hover {
       background: $indigo-900;
       border-left: 2px solid $pinned;
+      border-radius: 0 4px 4px 0;
     }
   }
 
   // rendered within ../attempts/attempts.tsx
   .no-commands {
-    background-color: $gray-1000;
+    background-color: $gray-1100;
     border: 1px solid $gray-900;
     border-radius: 3px;
     box-shadow: inset 0 1px 1px rgba($white, 0.05);
     min-height: 28px;
     padding: 9px;
+    margin: 8px 0;
   }
 }
-

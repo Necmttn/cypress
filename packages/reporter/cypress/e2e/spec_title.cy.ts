@@ -1,19 +1,24 @@
+import { MobxRunnerStore } from '@packages/app/src/store/mobx-runner-store'
 import { EventEmitter } from 'events'
 import { itHandlesFileOpening } from '../support/utils'
 
 describe('spec title', () => {
   let runner: EventEmitter
-  let start: Function
+  let start: (spec: Cypress.Cypress['spec']) => void
 
   beforeEach(() => {
     runner = new EventEmitter()
 
     start = (spec: Cypress.Cypress['spec']) => {
+      const runnerStore = new MobxRunnerStore()
+
+      runnerStore.setSpec(spec)
+
       cy.visit('/').then((win) => {
-        win.render({ runner, runnerStore: { spec } })
+        win.render({ runner, runnerStore })
       })
 
-      cy.get('.reporter').then(() => {
+      cy.get('.reporter.mounted').then(() => {
         runner.emit('runnables:ready', {})
         runner.emit('reporter:start', {})
       })
@@ -55,19 +60,23 @@ describe('spec title', () => {
     })
 
     it('displays name without path', () => {
-      cy.get('.runnable-header').find('a').should('have.text', 'foo.js')
+      cy.get('.spec-file-name').contains('foo.js')
 
       cy.percySnapshot()
     })
 
-    it('displays tooltip on hover', () => {
-      cy.get('.runnable-header a').first().trigger('mouseover')
-      cy.get('.cy-tooltip').first().should('have.text', 'Open in IDE')
+    it('displays Open in IDE button on more actions button', () => {
+      cy.get('[data-cy="runnable-options-button"]').click()
+      cy.get('[data-cy="more-options-runnable-popover"]').should('be.visible')
+      cy.get('[data-cy="runnable-popover-open-ide"]').contains('Open in IDE')
+
+      cy.percySnapshot()
     })
 
     itHandlesFileOpening({
       getRunner: () => runner,
-      selector: '.runnable-header a',
+      previousClickSelector: '[data-cy="runnable-options-button"]',
+      selector: '[data-cy="runnable-popover-open-ide"]',
       file: {
         file: '/absolute/path/to/foo.js',
         line: 0,

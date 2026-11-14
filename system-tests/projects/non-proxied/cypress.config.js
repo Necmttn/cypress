@@ -1,7 +1,8 @@
 const { expect } = require('chai')
+const { execFileSync } = require('child_process')
 const HttpsProxyAgent = require('https-proxy-agent')
 const os = require('os')
-const socketIo = require('@packages/socket/lib/browser')
+const socketIo = require('@packages/socket/browser/client')
 
 module.exports = {
   'e2e': {
@@ -10,6 +11,18 @@ module.exports = {
       on('task', {
         'get:tmp:path': () => {
           return os.tmpdir()
+        },
+        'screenshot:with:browser': ({ browserPath, userDataDir, screenshotPath, url }) => {
+          execFileSync(browserPath, [
+            '--headless',
+            '--disable-gpu',
+            '--no-sandbox',
+            `--user-data-dir=${userDataDir}`,
+            `--screenshot=${screenshotPath}`,
+            url,
+          ], { stdio: 'pipe' })
+
+          return null
         },
         'assert:ws:fails': ({ proxyUrl, socketIoRoute }) => {
           const wsClient = socketIo.client(proxyUrl, {
@@ -36,6 +49,7 @@ module.exports = {
             agent,
             path: socketIoRoute,
             transports: ['websocket'],
+            extraHeaders: { origin: new URL(proxyUrl).origin },
           })
 
           return new Promise((resolve, reject) => {

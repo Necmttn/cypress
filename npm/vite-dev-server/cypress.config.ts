@@ -1,4 +1,8 @@
+import { createRequire } from 'module'
 import { defineConfig } from 'cypress'
+
+// @ts-expect-error — cypress.config is test-only; not included in the build tsconfig (import.meta requires ESM module settings, not node16)
+const require = createRequire(import.meta.url)
 
 export default defineConfig({
   projectId: 'ypt4pf',
@@ -14,6 +18,15 @@ export default defineConfig({
       delete process.env.CYPRESS_INTERNAL_E2E_TESTING_SELF_PARENT_PROJECT
       process.env.CYPRESS_INTERNAL_E2E_TESTING_SELF = 'true'
       process.env.CYPRESS_INTERNAL_VITE_OPEN_MODE_TESTING = 'true'
+
+      const { setupCyInCyVariables } = require('@packages/frontend-shared/cypress/tasks/cy-in-cy-variables') as typeof import('@packages/frontend-shared/cypress/tasks/cy-in-cy-variables')
+      const { setCyInCyVariables, getCyInCyVariables } = setupCyInCyVariables()
+
+      on('task', {
+        setCyInCyVariables,
+        getCyInCyVariables,
+      })
+
       const { e2ePluginSetup } = require('@packages/frontend-shared/cypress/e2e/e2ePluginSetup') as typeof import('@packages/frontend-shared/cypress/e2e/e2ePluginSetup')
 
       return await e2ePluginSetup(on, config)
@@ -22,7 +35,7 @@ export default defineConfig({
   retries: {
     runMode: 2,
   },
-  // @ts-ignore We are setting these namespaces in order to properly test Cypress in Cypress
+  // @ts-expect-error We are setting these namespaces in order to properly test Cypress in Cypress
   clientRoute: '/__app/',
   namespace: '__cypress-app',
   socketIoRoute: '/__app-socket',

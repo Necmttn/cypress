@@ -1,38 +1,24 @@
 <template>
   <div
     id="selector-playground"
-    class="border-t border-b bg-gray-50 border-gray-200 h-[56px] grid py-[12px] px-[16px] gap-[12px] grid-cols-[40px,1fr,auto] items-center "
+    class="border-t border-b bg-gray-1000 border-gray-800 h-[56px] grid py-[12px] px-[16px] gap-[12px] grid-cols-[1fr,auto] items-center "
   >
-    <SelectorPlaygroundTooltip
-      :hover-text="t('runner.selectorPlayground.playgroundTooltip')"
-      class="flex h-full"
-    >
-      <button
-        class="border rounded-md flex h-full outline-none border-gray-200 text-white transition w-[40px] duration-150 items-center justify-center hocus-default"
-        data-cy="playground-toggle"
-        @click="toggleEnabled"
-      >
-        <i-cy-selector_x16 :class="{ 'icon-dark-indigo-500': selectorPlaygroundStore.isEnabled, 'icon-dark-gray-500': !selectorPlaygroundStore.isEnabled }" />
-      </button>
-    </SelectorPlaygroundTooltip>
     <div
       class="flex h-full flex-1 w-full relative items-center"
       @mouseover="setShowingHighlight"
     >
       <Menu #="{ open }">
         <MenuButton
-          :aria-label="t('runner.selectorPlayground.selectorMethodsLabel')"
-          class="border border-r-transparent rounded-l-md flex h-full outline-none border-gray-200 text-white w-[40px] items-center justify-center hocus-default"
+          aria-label="Selector methods"
+          class="border border-r-transparent rounded-l-md flex h-full outline-solid outline-indigo-500 border-gray-800 text-gray-300 w-[40px] items-center justify-center hover:bg-gray-800"
           @click.stop
         >
           <i-cy-chevron-down-small_x16
             class="transition transition-color duration-300"
-            :class="open ? 'icon-dark-indigo-500' : 'icon-dark-gray-500'"
+            :class="open ? 'icon-gray-500' : 'icon-dark-gray-500'"
           />
         </MenuButton>
-        <MenuItems
-          class="rounded flex flex-col outline-transparent bg-gray-900 text-white top-[34px] z-40 absolute overflow-scroll"
-        >
+        <MenuItems class="rounded flex flex-col outline-transparent bg-gray-900 text-white top-[34px] z-40 absolute">
           <MenuItem
             v-for="method in methods"
             :key="method.display"
@@ -53,82 +39,85 @@
         :style="{height: 'calc(100% + 4px)'}"
       >
         <span
-          class="flex pl-[12px] inset-y-0 text-gray-600 absolute items-center pointer-events-none"
+          class="flex pl-[12px] inset-y-0 text-gray-300 absolute items-center pointer-events-none"
           data-cy="selected-playground-method"
         >
-          <span class="text-gray-800">cy</span>.<span class="text-purple-500">{{ selectorPlaygroundStore.method }}</span>(‘
+          <span class="text-gray-300">cy</span>.<span class="text-jade-300">{{ selectorPlaygroundStore.method }}</span>(‘
         </span>
+        <!--
+          `autocorrect` reflects as a boolean IDL property, so Vue setting it as a DOM
+          property coerces the string `off` to `true` and reflects back as
+          `autocorrect="on"`, autocorrecting typed selectors. Bind it as an attribute.
+        -->
         <input
           v-model="selector"
           autocapitalize="none"
           autocomplete="off"
-          autocorrect="off"
+          :autocorrect.attr="'off'"
           spellcheck="false"
+          aria-label="selector"
           data-cy="playground-selector"
           :style="{paddingLeft: leftOfInputText + 'ch', paddingRight: widthOfMatchesHelperText + 'px'}"
-          class="border rounded-r-md font-medium h-full outline-none border-gray-200 w-full text-indigo-500 hocus-default overflow-ellipsis"
-          :class="{'hocus-default': selectorPlaygroundStore.isValid, 'hocus-error': !selectorPlaygroundStore.isValid}"
+          class="bg-gray-950 border text-gray-400 rounded-r-md font-medium h-full outline-solid outline-indigo-500 border-gray-800 w-full overflow-ellipsis"
         >
         <span
-          class="flex inset-y-0 text-gray-600 absolute items-center pointer-events-none"
+          class="flex inset-y-0 text-gray-300 absolute items-center pointer-events-none"
           :style="{
             left: `${leftOffsetForClosingParens}ch`,
           }"
         >’)</span>
         <div
           ref="match"
-          class="bg-white border-l flex font-sans border-l-gray-200 my-[6px] px-[16px] inset-y-0 right-[3px] text-gray-600 absolute items-center"
+          class="bg-gray-900 rounded-r-md flex font-sans border-l-[1px] border-gray-800 px-[16px] inset-y-[3px] right-[3px] text-gray-300 absolute items-center"
           data-cy="playground-num-elements"
         >
           <template v-if="!selectorPlaygroundStore.isValid">
-            <span class="text-error-400">{{ t('runner.selectorPlayground.invalidSelector') }}</span>
+            <span class="text-error-300">Invalid</span>
           </template>
           <template v-else>
-            {{ t('runner.selectorPlayground.matches', selectorPlaygroundStore.numElements) }}
+            {{ matchesText }}
           </template>
         </div>
       </code>
     </div>
 
-    <div class="flex gap-[12px]">
+    <div class="flex gap-[12px] h-full">
       <SelectorPlaygroundTooltip
-        :hover-text="t('runner.selectorPlayground.copyTooltip')"
-        :click-text="t('runner.selectorPlayground.copyTooltipAction')"
+        color="light"
+        placement="top"
+        hover-text="Copy to clipboard"
+        click-text="Copied!"
       >
-        <template
-          #default="{focus}"
-        >
-          <Button
-            size="md"
-            variant="outline"
+        <template #default="{focus}">
+          <button
             data-cy="playground-copy"
-            class="override-border"
+            class="border rounded-md flex h-full border-gray-800 outline-solid outline-indigo-500 text-white transition w-[40px] duration-150 items-center justify-center hover:bg-gray-800"
+            aria-label="Click to copy command to clipboard"
             @click="copyToClipboard"
             @focus="focus"
           >
-            <i-cy-copy-clipboard_x16 class="icon-dark-gray-500" />
-          </Button>
+            <i-cy-copy-clipboard_x16 class="icon-dark-gray-300" />
+          </button>
         </template>
       </SelectorPlaygroundTooltip>
 
       <SelectorPlaygroundTooltip
-        :hover-text="t('runner.selectorPlayground.printTooltip')"
-        :click-text="t('runner.selectorPlayground.printTooltipAction')"
+        color="light"
+        placement="top"
+        hover-text="Print to console"
+        click-text="Printed!"
       >
-        <template
-          #default="{focus}"
-        >
-          <Button
+        <template #default="{focus}">
+          <button
             key="fudge"
-            size="md"
-            variant="outline"
+            class="border rounded-md flex h-full border-gray-800 outline-solid outline-indigo-500 text-white transition w-[40px] duration-150 items-center justify-center hover:bg-gray-800"
             data-cy="playground-print"
-            class="override-border"
+            aria-label="Click to print command to console"
             @click="printSelected()"
             @focus="focus"
           >
-            <i-cy-technology-terminal_x16 class="icon-dark-gray-600" />
-          </Button>
+            <i-cy-technology-terminal_x16 class="icon-dark-gray-300" />
+          </button>
         </template>
       </SelectorPlaygroundTooltip>
     </div>
@@ -136,41 +125,36 @@
 </template>
 
 <script lang="ts" setup>
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useSelectorPlaygroundStore } from '../../store/selector-playground-store'
 import type { AutIframe } from '../aut-iframe'
 import type { EventManager } from '../event-manager'
-import Button from '@packages/frontend-shared/src/components/Button.vue'
+import { openPlayground, closePlayground, SELECTOR_METHODS, getMethodPrefixLength } from './utils'
 import { Menu, MenuButton, MenuItems, MenuItem } from '@headlessui/vue'
 import { useElementSize } from '@vueuse/core'
-import { useI18n } from 'vue-i18n'
 import { useClipboard } from '@cy/gql-components/useClipboard'
 import SelectorPlaygroundTooltip from './SelectorPlaygroundTooltip.vue'
-
-const { t } = useI18n()
 
 const props = defineProps<{
   eventManager: EventManager
   getAutIframe: () => AutIframe
 }>()
 
-const methods = [
-  {
-    display: 'cy.get',
-    value: 'get',
-  }, {
-    display: 'cy.contains',
-    value: 'contains',
-  },
-] as const
+const methods = SELECTOR_METHODS
 
 const selectorPlaygroundStore = useSelectorPlaygroundStore()
 const match = ref<HTMLDivElement>()
 const { width: matcherWidth } = useElementSize(match)
 
+const matchesText = computed(() => {
+  const n = selectorPlaygroundStore.numElements
+
+  return n === 0 ? 'No matches' : n === 1 ? `${n} match` : `${n} matches`
+})
+
 // Text that is printed to the LEFT of the input
 const leftOfInputText = computed(() => {
-  return (selectorPlaygroundStore.method === 'get' ? 'cy.get(‘' : 'cy.contains(’').length + 1
+  return getMethodPrefixLength(selectorPlaygroundStore.method)
 })
 
 const widthOfMatchesHelperText = computed(() => {
@@ -180,6 +164,24 @@ const widthOfMatchesHelperText = computed(() => {
 
 const leftOffsetForClosingParens = computed(() => {
   return leftOfInputText.value + selector.value.length
+})
+
+// Ensure the playground is always enabled when it's open (visible)
+onMounted(() => {
+  if (!selectorPlaygroundStore.isEnabled) {
+    openPlayground(props.getAutIframe())
+  }
+})
+
+// Defensive cleanup in case component is unmounted without going through togglePlayground
+onUnmounted(() => {
+  if (selectorPlaygroundStore.isEnabled) {
+    closePlayground(props.getAutIframe())
+  }
+
+  // Always reset show state when component unmounts to prevent inconsistent state
+  // where show=true but component is not rendered, causing unexpected re-appearance
+  selectorPlaygroundStore.setShow(false)
 })
 
 watch(() => selectorPlaygroundStore.method, () => {
@@ -210,14 +212,6 @@ function setShowingHighlight () {
   props.getAutIframe().toggleSelectorHighlight(true)
 }
 
-function toggleEnabled () {
-  const newVal = !selectorPlaygroundStore.isEnabled
-
-  selectorPlaygroundStore.setEnabled(newVal)
-
-  props.getAutIframe().toggleSelectorPlayground(newVal)
-}
-
 function printSelected () {
   props.getAutIframe().printSelectorElementsToConsole()
 }
@@ -229,13 +223,15 @@ const copyToClipboard = () => {
 </script>
 
 <style scoped lang="scss">
-button.override-border {
-  @apply border-gray-200
+/* button.override-border {
+  @apply border-gray-800
 }
 button.override-border:hover {
-  @apply border-indigo-300
+  @apply border-indigo-500;
+  outline: none;
 }
 button.override-border:focus {
-  @apply border-indigo-300
-}
+  @apply border-indigo-500;
+  outline: 1px solid red;
+} */
 </style>

@@ -5,37 +5,29 @@ hookRequire({ forceTypeScript: false })
 // Important!!! Ensure to import the prod dependencies (i.e. things that will be executing from the inner Cypress of Cypress in Cypress)
 // from ./prod-dependencies.ts as this is pre-loaded in the v8 snapshot via ./v8-snapshot-entry.ts. Otherwise, these dependencies
 // will not properly be marked as loaded in the v8 snapshot and may be reloaded when referenced from within the snapshot itself.
-import {
-  getOperationName,
-  Response,
-  makeGraphQLServer,
-  clearCtx,
-  DataContext,
-  globalPubSub,
-  setCtx,
-  buildSchema,
-  execute,
-  ExecutionResult,
-  GraphQLError,
-  parse,
-} from './prod-dependencies'
+import { getOperationName, Response, makeGraphQLServer, clearCtx, globalPubSub, setCtx, buildSchema, execute, GraphQLError, parse } from './prod-dependencies'
+import type { ExecutionResult } from './prod-dependencies'
 
 import path from 'path'
 import execa from 'execa'
 import _ from 'lodash'
 
-import type { CyTaskResult, OpenGlobalModeOptions, RemoteGraphQLBatchInterceptor, RemoteGraphQLInterceptor, ResetOptionsResult, WithCtxInjected, WithCtxOptions } from '../support/e2e'
+import type { CyTaskResult, OpenGlobalModeOptions, RemoteGraphQLBatchInterceptor, RemoteGraphQLInterceptor, ResetOptionsResult, WithCtxInjected, WithCtxOptions, MockNodeCloudRequestOptions, MockNodeCloudStreamingRequestOptions } from '../support/e2e'
 import { fixtureDirs } from '@tooling/system-tests'
 import * as inspector from 'inspector'
+// tslint:disable-next-line: no-implicit-dependencies - requires cypress
 import sinonChai from '@cypress/sinon-chai'
 import sinon from 'sinon'
 import fs from 'fs-extra'
+import nock from 'nock'
 import { CYPRESS_REMOTE_MANIFEST_URL, NPM_CYPRESS_REGISTRY_URL } from '@packages/types'
 
-import { CloudQuery } from '@packages/graphql/test/stubCloudTypes'
-import pDefer from 'p-defer'
+import { CloudQuery } from '@packages/data-context/test/graphql/stubCloudTypes'
+import { Readable } from 'stream'
 
 const pkg = require('@packages/root')
+
+const dummyProtocolPath = path.join(__dirname, '../fixtures/dummy-protocol.js')
 
 interface InternalOpenProjectArgs {
   argv: string[]
@@ -47,7 +39,7 @@ interface InternalAddProjectOpts {
   open?: boolean
 }
 
-const cloudSchema = buildSchema(fs.readFileSync(path.join(__dirname, '../../../graphql/schemas/cloud.graphql'), 'utf8'))
+const cloudSchema = buildSchema(fs.readFileSync(path.join(__dirname, '../../../data-context/schemas/cloud.graphql'), 'utf8'))
 
 // require'd so we don't conflict with globals loaded in @packages/types
 const chai = require('chai')
@@ -61,12 +53,18 @@ chai.use(chaiSubset)
 chai.use(sinonChai)
 
 export async function e2ePluginSetup (on: Cypress.PluginEvents, config: Cypress.PluginConfigOptions) {
-  // @ts-ignore getSnapshotResult is injected by the snapshot script
+  // @ts-expect-error - getSnapshotResult is injected by the snapshot script
   if (!['1', 'true'].includes(process.env.DISABLE_SNAPSHOT_REQUIRE) && typeof global.getSnapshotResult === 'undefined') {
     throw new Error('getSnapshotResult is undefined. v8 snapshots are not being used in Cypress in Cypress. This can happen if CYPRESS_INTERNAL_E2E_TESTING_SELF_PARENT_PROJECT is not set')
   }
 
   process.env.CYPRESS_INTERNAL_E2E_TESTING_SELF = 'true'
+
+  // The app under test runs in this process and reads its environment, so a run started from
+  // an AI agent's shell would skip the welcome screen and the setup confirmation these tests
+  // expect to see.
+  process.env.CYPRESS_AGENT_MODE = '0'
+
   delete process.env.CYPRESS_INTERNAL_GRAPHQL_PORT
   delete process.env.CYPRESS_INTERNAL_VITE_DEV
   delete process.env.CYPRESS_INTERNAL_VITE_APP_PORT
@@ -103,14 +101,15 @@ interface FixturesShape {
 async function makeE2ETasks () {
   // require'd from @packages/server & @tooling/system-tests so we don't import
   // types which would pollute strict type checking
-  const argUtils = require('@packages/server/lib/util/args')
+
+  const { toObject } = require('@packages/server/lib/util/args')
   const { makeDataContext } = require('./prod-dependencies')
   const Fixtures = require('@tooling/system-tests') as FixturesShape
-  const { scaffoldCommonNodeModules, scaffoldProjectNodeModules } = require('@tooling/system-tests/lib/dep-installer')
+  const { scaffoldCommonNodeModules, scaffoldProjectNodeModules, clearCachedNodeModules } = require('@tooling/system-tests/lib/dep-installer')
 
-  const cli = require('../../../../cli/lib/cli')
-  const cliUtil = require('../../../../cli/lib/util')
-  const cliOpen = require('../../../../cli/lib/exec/open')
+  const cli = require('../../../../cli/lib/cli').default
+  const cliUtil = require('../../../../cli/lib/util').default
+  const cliOpen = require('../../../../cli/lib/exec/open').default
 
   // Remove all the fixtures when the plugin starts
   Fixtures.remove()
@@ -126,21 +125,41 @@ async function makeE2ETasks () {
     // interceptCloudExecute: (config: CloudExecuteRemote) => {}
   }
 
-  let ctx: DataContext
   let testState: Record<string, any> = {}
   let remoteGraphQLIntercept: RemoteGraphQLInterceptor | undefined
   let remoteGraphQLOptions: Record<string, any> | undefined
   let remoteGraphQLInterceptBatched: RemoteGraphQLBatchInterceptor | undefined
   let scaffoldedProjects = new Set<string>()
+  let cachedCommercialRecommendations: string | undefined
 
   const cachedCwd = process.cwd()
 
   await clearCtx()
-  ctx = setCtx(makeDataContext({ mode: 'open', modeOptions: { cwd: process.cwd() } }))
+  const ctx = setCtx(makeDataContext({ mode: 'open', modeOptions: { cwd: process.cwd() } }))
 
   const launchpadPort = await makeGraphQLServer()
 
-  const __internal_scaffoldProject = async (projectName: string, isRetry = false): Promise<string> => {
+  const scaffoldsInProgress = new Map<string, Promise<string>>()
+
+  const __internal_scaffoldProject = async (projectName: string): Promise<string> => {
+    // A timed-out cy.task leaves its install running, so a test retry must not
+    // re-scaffold the project until that install finishes.
+    const scaffold = (scaffoldsInProgress.get(projectName) ?? Promise.resolve())
+    .catch(() => {})
+    .then(() => scaffoldProjectWithDeps(projectName))
+
+    scaffoldsInProgress.set(projectName, scaffold)
+
+    try {
+      return await scaffold
+    } finally {
+      if (scaffoldsInProgress.get(projectName) === scaffold) {
+        scaffoldsInProgress.delete(projectName)
+      }
+    }
+  }
+
+  const scaffoldProjectWithDeps = async (projectName: string, isRetry = false): Promise<string> => {
     if (fs.existsSync(Fixtures.projectPath(projectName))) {
       Fixtures.removeProject(projectName)
     }
@@ -158,12 +177,16 @@ async function makeE2ETasks () {
         throw e
       }
 
+      // Clear the cached node_modules to avoid reusing a corrupted cache
+      // (e.g. from a previously interrupted install)
+      await clearCachedNodeModules(projectName)
+
       // If we have an error, it's likely that we don't have a lockfile, or it's out of date.
       // Let's run a quick "yarn" in the directory, kill the node_modules, and try again
       await execa('yarn', { cwd: Fixtures.projectFixturePath(projectName), stdio: 'inherit', shell: true })
       await fs.remove(path.join(Fixtures.projectFixturePath(projectName), 'node_modules'))
 
-      return await __internal_scaffoldProject(projectName, true)
+      return await scaffoldProjectWithDeps(projectName, true)
     }
 
     scaffoldedProjects.add(projectName)
@@ -183,6 +206,18 @@ async function makeE2ETasks () {
       process.chdir(cachedCwd)
 
       return { launchpadPort }
+    },
+
+    /**
+     * Clear out any capability specific environment variables that were set during the test
+     */
+    __internal__afterEach () {
+      delete process.env.CYPRESS_IN_CYPRESS_MOCK_FULL_SNAPSHOT
+      // A test that turned agent mode on does not leave it on for the next one
+      process.env.CYPRESS_AGENT_MODE = '0'
+      nock.cleanAll()
+
+      return null
     },
 
     /**
@@ -346,6 +381,12 @@ async function makeE2ETasks () {
           }), { status: 200 })
         }
 
+        const urlStr = String(url)
+
+        if (urlStr.endsWith('/machine-collect') || urlStr.endsWith('/anon-collect')) {
+          return new Response('{}', { status: 200 })
+        }
+
         return fetchApi(url, init)
       })
 
@@ -363,6 +404,21 @@ async function makeE2ETasks () {
     },
     __internal_remoteGraphQLInterceptBatched (fn: string) {
       remoteGraphQLInterceptBatched = new Function('console', 'obj', 'testState', `return (${fn})(obj, testState)`).bind(null, console) as RemoteGraphQLBatchInterceptor
+
+      return null
+    },
+    __internal_optInToCloudAppMessages () {
+      cachedCommercialRecommendations = process.env.CYPRESS_COMMERCIAL_RECOMMENDATIONS
+      delete process.env.CYPRESS_COMMERCIAL_RECOMMENDATIONS
+
+      return null
+    },
+    __internal_restoreCommercialRecommendations () {
+      if (cachedCommercialRecommendations !== undefined) {
+        process.env.CYPRESS_COMMERCIAL_RECOMMENDATIONS = cachedCommercialRecommendations
+      }
+
+      cachedCommercialRecommendations = undefined
 
       return null
     },
@@ -389,7 +445,7 @@ async function makeE2ETasks () {
       // which probably needs a bit of refactoring / consolidating
       const cliOptions = await cli.parseOpenCommand(['open', ...argv])
       const processedArgv = cliOpen.processOpenOptions(cliOptions)
-      const modeOptions = { ...argUtils.toObject(processedArgv), invokedFromCli: true }
+      const modeOptions = { ...toObject(processedArgv), invokedFromCli: true }
 
       // Reset the state of the context
       await ctx.reinitializeCypress(modeOptions)
@@ -405,6 +461,10 @@ async function makeE2ETasks () {
       }
     },
     async __internal_openProject ({ argv, projectName }: InternalOpenProjectArgs): Promise<ResetOptionsResult> {
+      // Cypress in Cypress testing breaks pretty heavily in terms of the inner Cypress's protocol. For now, we essentially
+      // disable the protocol by using a dummy protocol that does nothing and allowing tests to mock studio full snapshots as needed.
+      process.env.CYPRESS_LOCAL_PROTOCOL_PATH = dummyProtocolPath
+
       let projectMatched = false
 
       for (const scaffoldedProject of scaffoldedProjects.keys()) {
@@ -425,13 +485,13 @@ async function makeE2ETasks () {
         port = '4456'
       }
 
-      const openArgv = [...argv, '--project', Fixtures.projectPath(projectName), '--port', port]
+      const openArgv = [...argv, '--project', Fixtures.projectPath(projectName), '--port', port, '--expose', 'INTERNAL_E2E_TESTING_SELF=true']
 
       // Runs the launchArgs through the whole pipeline for the CLI open process,
       // which probably needs a bit of refactoring / consolidating
       const cliOptions = await cli.parseOpenCommand(['open', ...openArgv])
       const processedArgv = cliOpen.processOpenOptions(cliOptions)
-      const modeOptions = { ...argUtils.toObject(processedArgv), invokedFromCli: true }
+      const modeOptions = { ...toObject(processedArgv), invokedFromCli: true }
 
       // Reset the state of the context
       await ctx.reinitializeCypress(modeOptions)
@@ -444,6 +504,56 @@ async function makeE2ETasks () {
         e2eServerPort: ctx.coreData.servers.appServerPort,
       }
     },
+    __internal_mockStudioFullSnapshot (fullSnapshot: Record<string, any>) {
+      // This is the outlet to provide a mock full snapshot for studio tests.
+      // This is necessary because protocol does not capture things properly in the inner Cypress
+      // when running in Cypress in Cypress.
+      process.env.CYPRESS_IN_CYPRESS_MOCK_FULL_SNAPSHOT = JSON.stringify(fullSnapshot)
+
+      return null
+    },
+    __internal_mockNodeCloudRequest ({ url, method, body, persist = false }: MockNodeCloudRequestOptions) {
+      const nocked = nock('https://cloud.cypress.io', {
+        allowUnmocked: true,
+      })
+
+      if (persist) {
+        nocked.persist()
+      }
+
+      nocked[method](url).reply(200, body)
+
+      return null
+    },
+    __internal_mockNodeCloudStreamingRequest ({ url, method, body }: MockNodeCloudStreamingRequestOptions) {
+      const nocked = nock('https://cloud.cypress.io', {
+        allowUnmocked: true,
+      })
+
+      // This format is exactly what is expected by our cloud streaming requests (currently just our
+      // interactions with studio AI). Note that this does not replicate how the event streaming
+      // works exactly, but it is good enough for these Cypress in Cypress purposes and we test
+      // the full functionality with all edge cases alongside the Studio cloud code.
+      nocked[method](url).reply(200, () => {
+        const stream = new Readable({
+          read () {
+            this.push('event: chunk\n')
+            this.push(`data: ${JSON.stringify(body)}\n\n`)
+            this.push('event: end\n')
+            this.push('data: \n\n')
+            this.push(null)
+          },
+        })
+
+        return stream
+      }, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      })
+
+      return null
+    },
     async __internal_withCtx (obj: WithCtxObj): Promise<CyTaskResult<any>> {
       const options: WithCtxInjected = {
         ...obj.options,
@@ -451,7 +561,6 @@ async function makeE2ETasks () {
         require,
         process,
         sinon,
-        pDefer,
         projectDir (projectName) {
           if (!fixtureDirs.includes(projectName)) {
             throw new Error(`${projectName} is not a fixture project`)

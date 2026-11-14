@@ -4,17 +4,21 @@
  * You can find it here https://github.com/vitest-dev/vitest/blob/main/packages/vitest/src/node/create.ts
  */
 import debugFn from 'debug'
-import type { InlineConfig } from 'vite'
+import type { InlineConfig } from 'vite-8'
 import path from 'path'
-import semverGte from 'semver/functions/gte'
-
-import { configFiles } from './constants'
-import type { ViteDevServerConfig } from './devServer'
-import { Cypress, CypressSourcemap } from './plugins/index'
-import type { Vite } from './getVite'
-import { dynamicImport } from './dynamic-import'
+import { createRequire } from 'module'
+import { configFiles } from './constants.js'
+import type { ViteDevServerConfig } from './devServer.js'
+import { Cypress, CypressSourcemap } from './plugins/index.js'
+import type { Vite } from './getVite.js'
 
 const debug = debugFn('cypress:vite-dev-server:resolve-config')
+
+// Limit jsxRefreshInclude/exclude matching to scripts. With only jsxRefreshExclude set, Vite builds
+// createFilter(undefined, exclude) which matches every non-excluded path — CSS would hit transformWithOxc and fail.
+// @see https://github.com/vitejs/vite/blob/main/packages/vite/src/node/plugins/oxc.ts (transform + jsxRefreshFilter)
+/** Passed as `oxc.jsxRefreshInclude` so JSX refresh excludes do not match CSS or other assets. */
+export const JSX_REFRESH_SCRIPT_RE = /\.(?:[cm]?js|[cm]?ts|[jt]sx)$/
 
 export const createViteDevServerConfig = async (config: ViteDevServerConfig, vite: Vite): Promise<InlineConfig> => {
   const { viteConfig: inlineViteConfig, cypressConfig: { projectRoot } } = config
@@ -32,7 +36,7 @@ export const createViteDevServerConfig = async (config: ViteDevServerConfig, vit
     // Set "configFile: false" to disable auto resolution of <project-root>/vite.config.js
     resolvedOverrides = { configFile: false, ...resolvedOverrides }
   } else {
-    const { findUp } = await dynamicImport<typeof import('find-up')>('find-up')
+    const { findUp } = await import('find-up')
 
     const configFile = await findUp(configFiles, { cwd: projectRoot })
 
@@ -77,38 +81,32 @@ function makeCypressViteConfig (config: ViteDevServerConfig, vite: Vite): Inline
 
   const vitePort = port ?? undefined
 
+  const require = createRequire(import.meta.url)
+
   // Vite caches its output in the .vite directory in the node_modules where vite lives.
   // So we want to find that node_modules path and ensure it's added to the "allow" list
   const vitePathNodeModules = path.dirname(path.dirname(require.resolve(`vite/package.json`, {
     paths: [projectRoot],
   })))
 
-  // Our Vite typings do not have the 'incremental' field since it was removed in 4.2, but users' version
-  // of Vite may be older and we want to use it if it's there
-  type Vite_4_1_Config = { optimizeDeps: { esbuildOptions: { incremental?: boolean } } }
-
-  const viteConfig: InlineConfig & Vite_4_1_Config = {
+  const viteConfig: InlineConfig = {
     root: projectRoot,
     base: `${devServerPublicPathRoute}/`,
+    // Vite 8 Rolldown/react-plugin can wrap JSX specs with `import.meta.hot.accept`, re-evaluating
+    // the module in headed mode and registering describe/it twice. Excluding CT specs from JSX refresh fixes it.
+    // @see https://github.com/cypress-io/cypress/issues/33750
+    oxc: {
+      jsxRefreshInclude: JSX_REFRESH_SCRIPT_RE,
+      jsxRefreshExclude: specs.map((s) => s.absolute),
+    },
+    // No rolldown plugin to downgrade dep-optimizer errors to warnings (see #21599).
+    // The original workaround was an esbuild plugin under `optimizeDeps.esbuildOptions.plugins`;
+    // when Vite 8 switched dep optimization to rolldown (#33580) the callback was moved to
+    // `rolldownOptions.plugins` but kept esbuild's `setup(build).onEnd(...)` shape, which
+    // rolldown never invokes. Rolldown reports per-module parse errors without aborting the
+    // optimizer, so the mitigation is no longer needed; re-add via `onLog`/`onwarn` only if
+    // a real hang regression appears.
     optimizeDeps: {
-      esbuildOptions: {
-        incremental: true,
-        plugins: [
-          {
-            name: 'cypress-esbuild-plugin',
-            setup (build) {
-              build.onEnd(function (result) {
-                // We don't want to completely fail the build here on errors so we treat the errors as warnings
-                // which will handle things more gracefully. Vite will 500 on files that have errors when they
-                // are requested later and Cypress will display an error message.
-                // See: https://github.com/cypress-io/cypress/pull/21599
-                result.warnings = [...result.warnings, ...result.errors]
-                result.errors = []
-              })
-            },
-          },
-        ],
-      },
       entries: [
         ...specs.map((s) => path.relative(projectRoot, s.relative)),
         ...(supportFile ? [path.resolve(projectRoot, supportFile)] : []),
@@ -136,10 +134,6 @@ function makeCypressViteConfig (config: ViteDevServerConfig, vite: Vite): Inline
       Cypress(config, vite),
       CypressSourcemap(config, vite),
     ],
-  }
-
-  if (vite.version && semverGte(vite.version, '4.2.0')) {
-    delete viteConfig.optimizeDeps?.esbuildOptions?.incremental
   }
 
   return viteConfig

@@ -1,6 +1,8 @@
 // NOTE: this is for internal Cypress types that we don't want exposed in the public API but want for development
 // TODO: find a better place for this
 /// <reference path="./internal-types-lite.d.ts" />
+/// <reference path="./spec-types.d.ts" />
+/// <reference path="./cypress/log.d.ts" />
 
 interface InternalWindowLoadDetails {
   type: 'same:origin' | 'cross:origin' | 'cross:origin:failure'
@@ -8,35 +10,88 @@ interface InternalWindowLoadDetails {
   window?: AUTWindow
 }
 
+interface InternalTypeOptions extends Partial<Cypress.TypeOptions> {
+  _log?: Log
+  $el: JQuery
+  ensure?: object
+  verify: boolean
+  interval?: number
+}
+
+interface InternalClearOptions extends Partial<Cypress.CheckClearOptions> {
+  _log?: Log
+  ensure?: object
+  interval?: number
+}
+
+interface InternalCheckOptions extends Partial<Cypress.CheckClearOptions> {
+  interval?: number
+}
+
+// `Cypress.Keyboard` is published with only the documented `defaults()` and
+// `Keys`, so internal callers cast to this. Merging it onto `Cypress.Cypress`
+// does not work: a duplicate member needs an identical type, and the mismatch
+// is an error inside a .d.ts, which `skipLibCheck` drops.
+type InternalKeyboard = typeof import('../src/cy/keyboard').default
+
+// `Cypress.Screenshot` is published with only the documented `defaults()`, so
+// internal callers cast to this for the same reason.
+type InternalScreenshot = typeof import('../src/cypress/screenshot').default
+
 declare namespace Cypress {
+  // Checks that `$ensure` exposes for internal callers only
+  interface Ensure {
+    commandCanCommunicateWithAUT: typeof import('../src/cypress/ensure').default.commandCanCommunicateWithAUT
+    isStrictlyVisible: typeof import('../src/cypress/ensure').default.isStrictlyVisible
+  }
+
   interface Cypress {
+    browserMajorVersion: () => number
     backend: (eventName: string, ...args: any[]) => Promise<any>
     // TODO: how to pull this from proxy-logging.ts? can't import in a d.ts file...
     ProxyLogging: any
-    // TODO: how to pull these from resolvers.ts? can't import in a d.ts file...
-    resolveWindowReference: any
-    resolveLocationReference: any
     routes: {
       [routeId: string]: any
     }
     sinon: sinon.SinonApi
     utils: CypressUtils
-    state: State
     events: Events
-    emit: (event: string, payload?: any) => void
-    primaryOriginCommunicator: import('../src/cross-origin/communicator').PrimaryOriginCommunicator
     specBridgeCommunicator: import('../src/cross-origin/communicator').SpecBridgeCommunicator
+    handleCrossOriginSocketEvent?: typeof handleCrossOriginSocketEvent
     mocha: $Mocha
     configure: (config: Cypress.ObjectLike) => void
     isCrossOriginSpecBridge: boolean
     originalConfig: Cypress.ObjectLike
     cy: $Cy
+    Chainer: typeof import('../src/cypress/chainer').$Chainer
     Location: {
       create: (url: string) => ({ domain: string, superDomain: string })
     }
+    Log: typeof import('../src/cypress/log').LogUtils
+    $Cypress: {
+      $: JQueryStatic
+    }
+  }
+
+  interface Chainable {
+    // Invokes a command by name rather than by property access, so that specs can
+    // exercise commands whose names are not valid identifiers or not yet registered.
+    command(name: string, ...args: any[]): Chainable<any>
+  }
+
+  interface cy {
+    isStopped: () => boolean
   }
 
   interface CypressUtils {
+    addTwentyYears: () => number
+    encodeBase64Unicode: (str: string) => string
+    getDistanceBetween: (point1: { x: number, y: number }, point2: { x: number, y: number }) => number
+    isInstanceOf: (instance: any, constructor: any) => boolean
+    locExisting: () => ReturnType<Cypress['Location']['create']>
+    locHref: (url: string, win: Window) => void
+    locReload: (forceReload: boolean, win: Window) => void
+    log: (...msgs: any[]) => void
     throwErrByPath: (path: string, obj?: { args: object }) => void
     warnByPath: (path: string, obj?: { args: object }) => void
     warning: (message: string) => void
@@ -47,7 +102,7 @@ declare namespace Cypress {
   }
 
   interface TestConfigOverrides extends Cypress.TestConfigOverrides {
-    protocolEnabled?: boolean
+    isDefaultProtocolEnabled?: boolean
   }
 
   interface ResolvedConfigOptions {
@@ -64,7 +119,7 @@ declare namespace Cypress {
     (action: 'before:stability:release', fn: () => void)
     (action: '_log:added', fn: (attributes: ObjectLike, log: Cypress.Log) => void): Cypress
     (action: '_log:changed', fn: (attributes: ObjectLike, log: Cypress.Log) => void): Cypress
-    (action: 'paused', fn: (nextCommandName: string) => void)
+    (action: 'resume:all', fn: () => void)
   }
 
   interface Backend {
@@ -75,6 +130,7 @@ declare namespace Cypress {
 
 declare namespace InternalCypress {
   interface Cypress extends Cypress.Cypress, NodeEventEmitter {
+    sourceMapProjectRoot: string
     backend: (eventName: string, ...args: any[]) => Promise<any>
   }
 

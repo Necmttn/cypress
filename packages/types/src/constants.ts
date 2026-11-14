@@ -1,8 +1,9 @@
+import semverMajor from 'semver/functions/major'
+import packageInfo from '@packages/root'
+
 import type { SpecFile } from './spec'
 
 export const PLUGINS_STATE = ['uninitialized', 'initializing', 'initialized', 'error'] as const
-
-export type PluginsState = typeof PLUGINS_STATE[number]
 
 export const CODE_LANGUAGES = [
   {
@@ -17,15 +18,14 @@ export const CODE_LANGUAGES = [
 
 export type CodeLanguage = typeof CODE_LANGUAGES[number]
 
-export const MIGRATION_STEPS = ['renameAuto', 'renameManual', 'renameSupport', 'configFile', 'setupComponent'] as const
+export const PACKAGE_MANAGERS = ['npm', 'yarn', 'pnpm', 'bun'] as const
 
-export type MigrationStep = typeof MIGRATION_STEPS[number]
-
-export const PACKAGE_MANAGERS = ['npm', 'yarn', 'pnpm'] as const
-
-// Note: ONLY change this in code that will be merged into a release branch
-// for a new major version of Cypress
-export const MAJOR_VERSION_FOR_CONTENT = '13'
+export const GET_MAJOR_VERSION_FOR_CONTENT = () => {
+  // @packages/root's Rollup build replaces the 0.0.0-development sentinel with
+  // the next computed release version (via scripts/get-next-version.js), so
+  // semverMajor always returns the correct major (e.g. 15) rather than 0.
+  return semverMajor(packageInfo.version).toString()
+}
 
 export const RUN_ALL_SPECS_KEY = '__all' as const
 
@@ -48,3 +48,17 @@ export const CY_IN_CY_SIMULATE_RUN_MODE = 'CY_IN_CY_SIMULATE_RUN_MODE'
 export const CYPRESS_REMOTE_MANIFEST_URL = 'https://download.cypress.io/desktop.json'
 
 export const NPM_CYPRESS_REGISTRY_URL = 'https://registry.npmjs.org/cypress'
+
+/**
+ * Maximum number of elements to check for visibility for the command log.
+ * Beyond this limit, the visibility check is skipped to prevent browser crashes
+ * when dealing with very large element sets.
+ * This number is fairly arbitrary.
+ */
+export const MAX_VISIBILITY_CHECK_ELEMENTS = 10
+
+export const RUNNABLE_LOGS = ['routes', 'agents', 'commands', 'hooks'] as const
+
+export const RUNNABLE_PROPS = [
+  '_cypressTestStatusInfo', '_testConfig', 'id', 'order', 'title', '_titlePath', 'root', 'hookName', 'hookId', 'err', 'state', 'pending', 'failedFromHookId', 'failedFromHookName', 'body', 'speed', 'type', 'duration', 'wallClockStartedAt', 'wallClockDuration', 'timings', 'file', 'originalTitle', 'invocationDetails', 'final', 'currentRetry', 'retries', '_slow',
+] as const

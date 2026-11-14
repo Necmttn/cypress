@@ -1,13 +1,13 @@
 import { EventEmitter } from 'events'
-import { RootRunnable } from '../../src/runnables/runnables-store'
+import type { RootRunnable } from '../../src/runnables/runnables-store'
 import { itHandlesFileOpening } from '../support/utils'
 import type { BaseReporterProps } from '../../src/main'
 import type { RunnablesErrorModel } from '../../src/runnables/runnable-error'
 import appState from '../../src/lib/app-state'
-import { MobxRunnerStore } from '@packages/app/src/store'
+import { MobxRunnerStore } from '@packages/app/src/store/mobx-runner-store'
 import scroller from '../../src/lib/scroller'
 
-const runnerStore = new MobxRunnerStore('e2e')
+const runnerStore = new MobxRunnerStore()
 
 runnerStore.setSpec({
   name: 'foo.js',
@@ -45,7 +45,7 @@ describe('runnables', () => {
     start = (renderProps?: Partial<BaseReporterProps>) => {
       render(renderProps)
 
-      return cy.get('.reporter').then(() => {
+      return cy.get('.reporter.mounted').then(() => {
         runner.emit('runnables:ready', runnables)
         runner.emit('reporter:start', {})
       })
@@ -78,7 +78,7 @@ describe('runnables', () => {
     start({ error })
 
     cy.contains(error.title)
-    cy.contains(error.callout)
+    cy.contains(error.callout!)
     cy.contains(error.message)
 
     cy.get('.error a').should('have.attr', 'href', error.link)
@@ -132,13 +132,13 @@ describe('runnables', () => {
       runner.emit('reporter:start', { startTime: startTime.toISOString() })
     })
 
-    cy.get('.runnable-header span:last').should('have.text', '00:12')
+    cy.get('.runnable-header .duration').should('have.text', '00:12')
   })
 
   it('does not display time if no time taken', () => {
     start()
-    cy.get('.runnable-header span:first').should('have.text', 'foo.js')
-    cy.get('.runnable-header span:last').should('not.have.text', '--')
+    cy.get('.runnable-header .spec-file-name').contains('foo.js')
+    cy.get('.runnable-header .duration').should('not.exist')
   })
 
   describe('when there are no tests', () => {
@@ -164,7 +164,7 @@ describe('runnables', () => {
 
         cy.contains('Cypress Studio').click()
 
-        cy.wrap(runner.emit).should('be.calledWith', 'studio:init:suite', 'r1')
+        cy.wrap(runner.emit).should('be.calledWith', 'studio:init:suite', { suiteId: 'r1', entrySource: 'new-test-root' })
       })
     })
 
@@ -204,22 +204,30 @@ describe('runnables', () => {
     })
 
     it('contains name of spec and emits when clicked', () => {
-      const selector = '.runnable-header a'
+      const selector = '.spec-file-name'
 
       cy.stub(runner, 'emit').callThrough()
 
-      cy.get(selector).as('spec-title').contains('foo.js')
+      cy.get('[data-cy="runnable-options-button"]').click()
+      cy.get('[data-cy="more-options-runnable-popover"]').should('be.visible')
+      cy.get('[data-cy="runnable-popover-open-ide"]').click()
       cy.get(selector).click().then(() => {
         expect(runner.emit).to.be.calledWith('open:file:unified')
       })
     })
 
     it('adds a scroll listener in open mode', () => {
+      appState.autoScrollingEnabled = false
       appState.startRunning()
-      cy.get('.container')
-      .trigger('scroll')
-      .trigger('scroll')
-      .trigger('scroll').then(() => {
+      cy.get('.container').then(($el) => {
+        // dispatch synchronously so the user-scroll threshold timer can't
+        // reset the counter between events under CI load
+        $el[0].dispatchEvent(new Event('scroll'))
+        $el[0].dispatchEvent(new Event('scroll'))
+        $el[0].dispatchEvent(new Event('scroll'))
+      })
+
+      cy.then(() => {
         expect(spy).to.have.been.calledWith(false)
       })
     })

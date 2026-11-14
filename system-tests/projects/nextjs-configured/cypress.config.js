@@ -1,9 +1,20 @@
-// TODO: once Zach W finishes NextJS support, cut over devServer
-// onto the proper Object API
+import { defineConfig } from 'cypress'
+import path from 'path'
 
-module.exports = {
+export default defineConfig({
+  fixturesFolder: false,
   component: {
-    experimentalSingleTabRunMode: true,
-    devServer: {},
+    devServer: {
+      framework: 'next',
+      bundler: 'webpack',
+      webpackConfig: {
+        resolve: {
+          alias: {
+            'react': path.resolve(import.meta.dirname, './node_modules/react'),
+            'react-dom': path.resolve(import.meta.dirname, './node_modules/react-dom'),
+          },
+        },
+      },
+    },
   },
-}
+})

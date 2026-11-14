@@ -1,13 +1,12 @@
+import { expect, it, describe, beforeEach, afterAll } from 'vitest'
 import * as Fixtures from '@tooling/system-tests'
 import * as FixturesScaffold from '@tooling/system-tests/lib/dep-installer'
 import type { fixtureDirs } from '@tooling/system-tests'
-import { expect } from 'chai'
 import path from 'path'
 import fs from 'fs'
 
-import { sourceDefaultWebpackDependencies } from '../src/helpers/sourceRelativeWebpackModules'
-import { WebpackDevServerConfig } from '../src/devServer'
-import './support'
+import { restoreLoadHook, sourceDefaultWebpackDependencies } from '../src/helpers/sourceRelativeWebpackModules'
+import type { WebpackDevServerConfig } from '../src/devServer'
 
 type ProjectDirs = typeof fixtureDirs
 
@@ -18,24 +17,14 @@ const WEBPACK_REACT: Partial<Record<ProjectDirs[number], {
   webpackDevServer: number
   htmlWebpackPlugin: number
 }>> = {
-  'webpack4_wds3-react': {
-    webpack: 4,
-    webpackDevServer: 3,
-    htmlWebpackPlugin: 4,
-  },
-  'webpack4_wds4-react': {
-    webpack: 4,
-    webpackDevServer: 4,
-    htmlWebpackPlugin: 4,
-  },
-  'webpack5_wds3-react': {
+  'webpack5_wds5-react': {
     webpack: 5,
-    webpackDevServer: 3,
+    webpackDevServer: 5,
     htmlWebpackPlugin: 5,
   },
-  'webpack5_wds4-react': {
+  'webpack5_wds6-react': {
     webpack: 5,
-    webpackDevServer: 4,
+    webpackDevServer: 6,
     htmlWebpackPlugin: 5,
   },
 }
@@ -58,31 +47,39 @@ async function sourceModulesForProject (fixture: ProjectDirs[number]) {
 // Ensures that we are properly sourcing the webpacks from the node_modules in the given project,
 // rather than from the node_modules in the project root
 describe('sourceDefaultWebpackDependencies', () => {
+  beforeEach(() => {
+    restoreLoadHook()
+  })
+
+  afterAll(() => {
+    restoreLoadHook()
+  })
+
   for (const [fixture, versionsToMatch] of Object.entries(WEBPACK_REACT)) {
     describe(fixture, () => {
-      it(`sources the correct webpack versions for ${fixture}`, async () => {
+      it(`sources the correct webpack versions for ${fixture}`, { timeout: 30000 }, async () => {
         const { result, projectRoot } = await sourceModulesForProject(fixture as ProjectDirs[number])
         const projectNodeModules = fs.realpathSync(path.resolve(projectRoot, 'node_modules'))
 
-        expect(result.webpack.majorVersion).to.eq(versionsToMatch.webpack, 'match webpackVersion')
-        expect(result.webpackDevServer.majorVersion).to.eq(versionsToMatch.webpackDevServer, 'match webpackDevServerVersion')
-        expect(result.webpack.importPath).to.include(projectNodeModules)
-        expect(result.webpackDevServer.importPath).to.include(projectNodeModules)
+        expect(result.webpack.majorVersion, 'match webpackVersion').toEqual(versionsToMatch.webpack)
+        expect(result.webpackDevServer.majorVersion, 'match webpackDevServerVersion').toEqual(versionsToMatch.webpackDevServer)
+        expect(result.webpack.importPath).toContain(projectNodeModules)
+        expect(result.webpackDevServer.importPath).toContain(projectNodeModules)
       })
     })
   }
 
-  it('sources the webpack path from the correct location once imported', async () => {
-    expect(require.resolve('webpack')).to.include(CY_ROOT)
+  it('sources the webpack path from the correct location once imported', { timeout: 30000 }, async () => {
+    expect(require.resolve('webpack')).toContain(CY_ROOT)
     const localWebpack = require('webpack')
 
-    const { result, projectRoot } = await sourceModulesForProject('webpack4_wds3-react')
+    const { result, projectRoot } = await sourceModulesForProject('webpack5_wds5-react')
     const projectNodeModules = fs.realpathSync(path.resolve(projectRoot, 'node_modules'))
 
-    expect(localWebpack).not.to.eq(result.webpack.module)
-    expect(result.webpack.importPath).to.include(projectNodeModules)
-    expect(result.webpack.majorVersion).to.eq(4, 'match webpackVersion')
-    expect(require('webpack')).to.eq(result.webpack.module)
-    expect(require.resolve('webpack')).to.include(projectNodeModules)
+    expect(localWebpack).not.toEqual(result.webpack.module)
+    expect(result.webpack.importPath).toContain(projectNodeModules)
+    expect(result.webpack.majorVersion, 'match webpackVersion').toEqual(5)
+    expect(require('webpack')).toEqual(result.webpack.module)
+    expect(require.resolve('webpack')).toContain(projectNodeModules)
   })
 })

@@ -1,5 +1,4 @@
 import CopyText from './CopyText.vue'
-import { defaultMessages } from '@cy/i18n'
 
 describe('<CopyText />', () => {
   it('renders without overflow', { viewportWidth: 800, viewportHeight: 120 }, () => {
@@ -9,7 +8,7 @@ describe('<CopyText />', () => {
       </div>
     ))
 
-    cy.contains('button', defaultMessages.clipboard.copy)
+    cy.contains('button', 'Copy')
     .should('be.visible')
   })
 
@@ -23,7 +22,7 @@ describe('<CopyText />', () => {
     ))
 
     cy.contains(text)
-    cy.contains('button', defaultMessages.clipboard.copy)
+    cy.contains('button', 'Copy')
     .should('be.visible')
     .percySnapshot()
   })

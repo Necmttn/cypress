@@ -1,5 +1,3 @@
-import defaultMessages from '@packages/frontend-shared/src/locales/en-US.json'
-
 import type { SinonStub } from 'sinon'
 
 function moveToRunsPage (): void {
@@ -30,6 +28,7 @@ function scaffoldTestingTypeAndVisitRunsPage (testingType: 'e2e' | 'component'):
   })
 
   cy.visitApp()
+  cy.specsPageIsVisible()
 
   moveToRunsPage()
 }
@@ -45,6 +44,7 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
     it('resolves the runs page', () => {
       cy.loginUser()
       cy.visitApp()
+      cy.specsPageIsVisible()
       moveToRunsPage()
       cy.get('[data-cy="runs"]')
       cy.get('[data-cy="app-header-bar"]').findByText('Runs').should('be.visible')
@@ -59,6 +59,7 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
       })
 
       cy.visitApp()
+      cy.specsPageIsVisible()
       cy.findByTestId('sidebar-link-runs-page').click()
       cy.get('[data-cy*="runsSkeleton-"]')
       cy.get('[data-cy="runs"]')
@@ -74,21 +75,22 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
 
     it('when logged out, shows call to action', () => {
       cy.visitApp()
+      cy.specsPageIsVisible()
       moveToRunsPage()
-      cy.contains(defaultMessages.runs.connect.buttonUser).should('exist')
+      cy.contains('Connect to Cypress Cloud').should('exist')
     })
 
     it('clicking the login button will open the login modal', () => {
       cy.visitApp()
+      cy.specsPageIsVisible()
       moveToRunsPage()
-      cy.contains(defaultMessages.runs.connect.buttonUser).click()
       cy.withCtx((ctx, o) => {
         o.sinon.stub(ctx._apis.authApi, 'logIn')
       })
 
-      cy.findByRole('dialog', { name: 'Log in to Cypress' }).within(() => {
-        cy.contains('button', 'Log in').click()
-      })
+      cy.contains('Connect to Cypress Cloud').click()
+
+      cy.getByRole('dialog', { name: 'Continue in your browser', native: false }).should('be.visible')
 
       cy.withCtx((ctx, o) => {
         // validate utmSource
@@ -101,6 +103,7 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
     it('if logged in and connected', { viewportWidth: 1200 }, () => {
       cy.loginUser()
       cy.visitApp()
+      cy.specsPageIsVisible()
 
       moveToRunsPage()
       cy.findByTestId('runNumber-status-OVERLIMIT').click()
@@ -131,22 +134,23 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
 
       cy.loginUser()
       cy.visitApp()
+      cy.specsPageIsVisible()
 
       moveToRunsPage()
 
-      cy.findByText(defaultMessages.runs.connect.buttonProject).click()
+      cy.findByText('Connect a Cypress Cloud project').click()
       cy.get('[aria-modal="true"]').should('exist')
 
       cy.validateExternalLink({
-        name: defaultMessages.runs.connect.modal.createOrg.button,
+        name: 'Create organization',
         href: 'http://dummy.cypress.io/organizations/create',
       })
 
       // validateExternalLink includes clicking on the createOrg button, which triggers the waiting state
-      cy.contains('button', defaultMessages.runs.connect.modal.createOrg.waitingButton).should('be.visible')
+      cy.contains('button', 'Waiting for you to create an organization...').should('be.visible')
 
       cy.validateExternalLink({
-        name: defaultMessages.links.needHelp,
+        name: 'Need help',
         href: 'https://on.cypress.io/adding-new-project',
       })
 
@@ -175,10 +179,11 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
 
       cy.loginUser()
       cy.visitApp()
+      cy.specsPageIsVisible()
 
       moveToRunsPage()
 
-      cy.findByText(defaultMessages.runs.connect.buttonProject).click()
+      cy.findByText('Connect a Cypress Cloud project').click()
       cy.get('[aria-modal="true"]').should('exist')
 
       // Clear existing remote GQL intercept to allow new queries to execute normally
@@ -186,9 +191,9 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
         return obj.result
       })
 
-      cy.contains('button', defaultMessages.runs.connect.modal.createOrg.refreshButton).click()
+      cy.contains('button', 'Refresh organizations list').click()
 
-      cy.findByText(defaultMessages.runs.connect.modal.selectProject.manageOrgs)
+      cy.findByText('Manage organizations')
     })
 
     it('refetches cloudViewer data on open', () => {
@@ -210,10 +215,11 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
 
       cy.loginUser()
       cy.visitApp()
+      cy.specsPageIsVisible()
 
       moveToRunsPage()
 
-      cy.findByText(defaultMessages.runs.connect.buttonProject).click()
+      cy.findByText('Connect a Cypress Cloud project').click()
       cy.get('[aria-modal="true"]').should('exist')
 
       cy.withCtx((_, o) => {
@@ -239,14 +245,15 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
 
       cy.loginUser()
       cy.visitApp()
+      cy.specsPageIsVisible()
 
       moveToRunsPage()
 
-      cy.findByText(defaultMessages.runs.connect.buttonProject).click()
+      cy.findByText('Connect a Cypress Cloud project').click()
       cy.get('[aria-modal="true"]').should('exist')
 
       cy.validateExternalLink({
-        name: defaultMessages.runs.connect.modal.selectProject.manageOrgs,
+        name: 'Manage organizations',
         href: 'http://dummy.cypress.io/organizations',
       })
 
@@ -263,6 +270,7 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
       cy.startAppServer('component')
 
       cy.visitApp()
+      cy.specsPageIsVisible()
       moveToRunsPage()
 
       cy.withCtx(async (ctx, options) => {
@@ -287,15 +295,13 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
 
       cy.contains('button', 'Connect to Cypress Cloud').click()
 
-      cy.findByRole('dialog', { name: 'Log in to Cypress' }).as('logInModal').within(() => {
-        cy.findByRole('button', { name: 'Log in' }).click()
+      cy.getByRole('dialog', { name: 'Continue in your browser', native: false }).as('logInModal').should('be.visible')
+
+      cy.getByRole('dialog', { name: 'Login successful', native: false }).within(() => {
+        cy.getByRole('button', { name: 'Connect project' }).click()
       })
 
-      cy.findByRole('dialog', { name: 'Login successful' }).within(() => {
-        cy.findByRole('button', { name: 'Connect project' }).click()
-      })
-
-      cy.findByRole('dialog', { name: 'Create project' }).should('be.visible')
+      cy.getByRole('dialog', { name: 'Create project', native: false }).should('be.visible')
     })
   })
 
@@ -318,6 +324,7 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
       cy.startAppServer('e2e')
       cy.loginUser()
       cy.visitApp()
+      cy.specsPageIsVisible()
 
       cy.withCtx(async (ctx, o) => {
         o.sinon.spy(ctx.cloud, 'executeRemoteGraphQL')
@@ -329,9 +336,9 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
       })
 
       moveToRunsPage()
-      cy.findByText(defaultMessages.runs.connect.buttonProject).click()
-      cy.contains('button', defaultMessages.runs.connect.modal.selectProject.createProject).click()
-      cy.findByText(defaultMessages.runs.connectSuccessAlert.title, { timeout: 10000 }).scrollIntoView().should('be.visible')
+      cy.findByText('Connect a Cypress Cloud project').click()
+      cy.contains('button', 'Create project').click()
+      cy.findByText('This project is now connected to Cypress Cloud!', { timeout: 10000 }).scrollIntoView().should('be.visible')
 
       cy.withCtx(async (ctx) => {
         const config = await ctx.project.getConfig()
@@ -360,6 +367,7 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
       cy.startAppServer('e2e')
       cy.loginUser()
       cy.visitApp()
+      cy.specsPageIsVisible()
 
       cy.withCtx(async (ctx) => {
         const config = await ctx.project.getConfig()
@@ -368,11 +376,11 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
       })
 
       cy.get('[href="#/runs"]').click()
-      cy.findByText(defaultMessages.runs.connect.buttonProject).click()
-      cy.contains('button', defaultMessages.runs.connect.modal.selectProject.createProject).click()
+      cy.findByText('Connect a Cypress Cloud project').click()
+      cy.contains('button', 'Create project').click()
 
       cy.get('[data-cy="alert"]').within(() => {
-        cy.contains(defaultMessages.runs.connect.errors.baseError.title)
+        cy.contains('Cypress Cloud error')
         cy.get('[data-cy="alert-suffix-icon"]').should('not.exist')
       })
 
@@ -395,6 +403,7 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
       cy.startAppServer('e2e')
       cy.loginUser()
       cy.visitApp()
+      cy.specsPageIsVisible()
 
       cy.withCtx(async (ctx) => {
         const config = await ctx.project.getConfig()
@@ -403,16 +412,16 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
       })
 
       cy.get('[href="#/runs"]').click()
-      cy.findByText(defaultMessages.runs.connect.buttonProject).click()
-      cy.contains('button', defaultMessages.runs.connect.modal.selectProject.createProject).click()
+      cy.findByText('Connect a Cypress Cloud project').click()
+      cy.contains('button', 'Create project').click()
 
       cy.get('[data-cy="alert"]').within(() => {
-        cy.contains(defaultMessages.runs.connect.errors.internalServerError.title)
+        cy.contains('Cannot connect to Cypress Cloud')
         cy.get('[data-cy="alert-suffix-icon"]').should('exist')
       })
 
       cy.get('[data-cy="alert-body"]').within(() => {
-        cy.contains(defaultMessages.runs.connect.errors.internalServerError.description.replace('{0}', 'Support Page'))
+        cy.contains('The request times out when trying to retrieve the info from Cypress Cloud. Please refresh the page to try again and visit our Support Page if this behavior continues.')
       })
     })
   })
@@ -449,17 +458,18 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
       })
 
       cy.visitApp()
+      cy.specsPageIsVisible()
 
       moveToRunsPage()
     })
 
     it('if project Id is specified in config file that does not exist, shows call to action', () => {
-      cy.findByText(defaultMessages.runs.errors.notFound.button).should('be.visible')
+      cy.findByText('Reconnect your project').should('be.visible')
     })
 
     // TODO: fix flaky test
     it.skip('opens Connect Project modal after clicking Reconnect Project button', () => {
-      cy.findByText(defaultMessages.runs.errors.notFound.button).click()
+      cy.findByText('Reconnect your project').click()
 
       cy.get('[aria-modal="true"]').should('exist')
       cy.contains('[data-cy="selectProject"] button', 'Mock Project')
@@ -491,7 +501,7 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
       })
 
       cy.visitApp('/runs')
-      cy.findByText(defaultMessages.runs.errors.unauthorized.button).should('be.visible')
+      cy.findByText('Request access').should('be.visible')
     })
 
     it('clicking on the call to action should call the mutation', () => {
@@ -521,7 +531,7 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
 
       cy.visitApp('/runs')
 
-      cy.findByText(defaultMessages.runs.errors.unauthorized.button).click()
+      cy.findByText('Request access').click()
 
       cy.withCtx((ctx, o) => {
         expect(o.testState.cloudProjectRequestAccessWasCalled).to.eql(true)
@@ -549,8 +559,9 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
       })
 
       cy.visitApp('/runs')
-      cy.findByText(defaultMessages.runs.errors.unauthorized.button).click()
-      cy.findByText(defaultMessages.runs.errors.unauthorizedRequested.button).should('exist')
+      cy.findByText('Request access').should('be.visible')
+      cy.findByText('Request access').click()
+      cy.findByText('Request Sent').should('be.visible')
     })
   })
 
@@ -577,12 +588,13 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
       })
 
       cy.visitApp()
+      cy.specsPageIsVisible()
 
       moveToRunsPage()
     })
 
     it('if project Id is specified in config file that is not accessible, shows call to action', () => {
-      cy.findByText(defaultMessages.runs.errors.unauthorizedRequested.button).should('be.visible')
+      cy.findByText('Request Sent').should('be.visible')
     })
   })
 
@@ -604,20 +616,21 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
       })
 
       cy.visitApp()
+      cy.specsPageIsVisible()
       moveToRunsPage()
-      cy.findByText(defaultMessages.runs.connect.buttonProject).should('exist')
+      cy.findByText('Connect a Cypress Cloud project').should('exist')
     })
 
     it('displays how to record prompt when connected and no runs in Component Testing', () => {
       scaffoldTestingTypeAndVisitRunsPage('component')
-      cy.contains(defaultMessages.runs.empty.title).should('be.visible')
+      cy.contains('Copy the command below to record your first run').should('be.visible')
       cy.findByDisplayValue('npx cypress run --component --record --key 2aaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa').should('be.visible')
     })
 
     it('displays how to record prompt when connected and no runs in E2E', () => {
       scaffoldTestingTypeAndVisitRunsPage('e2e')
 
-      cy.contains(defaultMessages.runs.empty.title).should('be.visible')
+      cy.contains('Copy the command below to record your first run').should('be.visible')
       cy.findByDisplayValue('npx cypress run --record --key 2aaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa').should('be.visible')
     })
 
@@ -627,6 +640,7 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
         o.sinon.stub(ctx.config.electronApi, 'copyTextToClipboard')
       })
 
+      cy.get('[data-cy="terminal-prompt-input').should('have.value', 'npx cypress run --component --record --key 2aaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
       cy.get('[data-cy="copy-button"]').click()
       cy.contains('Copied!')
       cy.withRetryableCtx((ctx) => {
@@ -636,10 +650,12 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
 
     it('displays a copy button and copies correct command in E2E', () => {
       scaffoldTestingTypeAndVisitRunsPage('e2e')
+
       cy.withCtx(async (ctx, o) => {
         o.sinon.stub(ctx.config.electronApi, 'copyTextToClipboard')
       })
 
+      cy.get('[data-cy="terminal-prompt-input').should('have.value', 'npx cypress run --record --key 2aaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
       cy.get('[data-cy="copy-button"]').click()
       cy.contains('Copied!')
       cy.withRetryableCtx((ctx) => {
@@ -659,6 +675,7 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
       it('displays a list of recorded runs if a run has been recorded', () => {
         cy.loginUser()
         cy.visitApp()
+        cy.specsPageIsVisible()
         moveToRunsPage()
         cy.get('[data-cy="runs"]')
       })
@@ -666,6 +683,7 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
       it('displays each run with correct information', () => {
         cy.loginUser()
         cy.visitApp()
+        cy.specsPageIsVisible()
         moveToRunsPage()
 
         cy.get('[data-cy="runCard-status-CANCELLED"]').first().within(() => {
@@ -698,6 +716,7 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
       it('opens the run page if a run is clicked', () => {
         cy.loginUser()
         cy.visitApp()
+        cy.specsPageIsVisible()
 
         moveToRunsPage()
         cy.get('[data-cy="runNumber-status-CANCELLED"]').first().click()
@@ -723,6 +742,7 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
         })
 
         cy.visitApp()
+        cy.specsPageIsVisible()
 
         moveToRunsPage()
 
@@ -754,38 +774,40 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
       it('displays a list of recorded runs if a run has been recorded', () => {
         cy.loginUser()
         cy.visitApp()
+        cy.specsPageIsVisible()
         moveToRunsPage()
+        cy.findByText('fix: using Git data CANCELLED').should('be.visible')
         cy.get('[data-cy="runs"]')
       })
 
       it('displays each run with correct information', () => {
         cy.loginUser()
         cy.visitApp()
+        cy.specsPageIsVisible()
         moveToRunsPage()
 
-        cy.findByText('fix: using Git data CANCELLED')
-        cy.get('[href^="http://dummy.cypress.io/runs/0"]').first().within(() => {
-          cy.get('[data-cy="runNumber-status-CANCELLED"]')
-        })
+        cy.findByText('fix: using Git data CANCELLED').should('be.visible')
+
+        cy.get('[href^="http://dummy.cypress.io/runs/0"]').first()
+        .find('[data-cy="runNumber-status-CANCELLED"]')
 
         cy.get('[data-cy="runCard-status-CANCELLED"]').first().as('firstRun')
 
-        cy.get('@firstRun').within(() => {
-          cy.get('[data-cy="runCard-author"]').contains('John Appleseed')
-          cy.get('[data-cy="runCard-avatar"]')
-          cy.get('[data-cy="runCard-branchName"]').contains('main')
-          cy.get('[data-cy="runCard-createdAt"]').contains('01m 00s (an hour ago)')
+        cy.get('@firstRun').find('[data-cy="runCard-author"]').should('contain', 'John Appleseed')
+        cy.get('@firstRun').find('[data-cy="runCard-avatar"]')
+        cy.get('@firstRun').find('[data-cy="runCard-branchName"]').should('contain', 'main')
+        cy.get('@firstRun').find('[data-cy="runCard-createdAt"]').should('contain', '01m 00s (an hour ago)')
 
-          cy.contains('span', 'skipped')
-          cy.get('span').contains('pending')
-          cy.get('span').contains('passed')
-          cy.get('span').contains('failed')
-        })
+        cy.get('@firstRun').contains('span', 'skipped')
+        cy.get('@firstRun').find('span').contains('pending')
+        cy.get('@firstRun').find('span').contains('passed')
+        cy.get('@firstRun').find('span').contains('failed')
       })
 
       it('opens the run page if a run is clicked', () => {
         cy.loginUser()
         cy.visitApp()
+        cy.specsPageIsVisible()
 
         moveToRunsPage()
         cy.get('[data-cy="runNumber-status-CANCELLED"]').first().click()
@@ -807,7 +829,7 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
     it('shows alert warning if runs have been returned already', () => {
       cy.loginUser()
       cy.visitApp()
-      cy.wait(1000)
+      cy.specsPageIsVisible()
       moveToRunsPage()
       cy.get('[data-cy="runs"]')
 
@@ -821,7 +843,7 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
     it('should remove the alert warning if the app reconnects to the internet', () => {
       cy.loginUser()
       cy.visitApp()
-      cy.wait(1000)
+      cy.specsPageIsVisible()
       moveToRunsPage()
       cy.get('[data-cy="runs"]')
 
@@ -855,14 +877,15 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
 
       cy.loginUser()
       cy.visitApp()
+      cy.specsPageIsVisible()
 
       cy.get('[href="#/runs"]').click()
 
-      cy.findByText(defaultMessages.runs.connect.buttonProject).click()
+      cy.findByText('Connect a Cypress Cloud project').click()
       cy.get('[aria-modal="true"]').should('exist')
 
       cy.validateExternalLink({
-        name: defaultMessages.runs.connect.modal.createOrg.button,
+        name: 'Create organization',
         href: 'http://dummy.cypress.io/organizations/create',
       })
 
@@ -880,6 +903,7 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
 
       cy.loginUser()
       cy.visitApp()
+      cy.specsPageIsVisible()
 
       cy.remoteGraphQLIntercept(async (obj) => {
         if (obj.result.data?.cloudViewer?.organizations?.nodes) {
@@ -892,11 +916,11 @@ describe('App: Runs', { viewportWidth: 1200 }, () => {
       })
 
       cy.get('[href="#/runs"]').click()
-      cy.findByText(defaultMessages.runs.connect.buttonProject).click()
+      cy.findByText('Connect a Cypress Cloud project').click()
       cy.get('[aria-modal="true"]').should('exist')
 
       cy.validateExternalLink({
-        name: defaultMessages.runs.connect.modal.selectProject.manageOrgs,
+        name: 'Manage organizations',
         href: 'http://dummy.cypress.io/organizations',
       })
 
